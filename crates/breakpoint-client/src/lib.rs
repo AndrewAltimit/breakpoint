@@ -8,6 +8,7 @@ mod game_over;
 pub mod lobby;
 pub mod net_client;
 pub mod overlay;
+mod settings;
 
 use bevy::prelude::*;
 use wasm_bindgen::prelude::*;
@@ -22,6 +23,7 @@ use game_over::GameOverPlugin;
 use lobby::LobbyPlugin;
 use net_client::WsClient;
 use overlay::OverlayPlugin;
+use settings::SettingsPlugin;
 
 /// WASM entry point.
 #[wasm_bindgen(start)]
@@ -49,6 +51,7 @@ pub fn start() {
             GameOverPlugin,
             OverlayPlugin,
             AudioPlugin,
+            SettingsPlugin,
             EditorPlugin,
         ))
         .run();

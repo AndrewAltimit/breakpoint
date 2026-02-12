@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::events::Event;
 use crate::game_trait::PlayerId;
+use crate::overlay::config::OverlayConfigMsg;
 use crate::player::{Player, PlayerColor};
 use crate::room::{RoomConfig, RoomState};
 
@@ -31,6 +32,9 @@ pub enum MessageType {
     AlertEvent = 0x20,
     AlertClaimed = 0x21,
     AlertDismissed = 0x22,
+
+    // Overlay config
+    OverlayConfig = 0x23,
 }
 
 impl MessageType {
@@ -51,6 +55,7 @@ impl MessageType {
             0x20 => Some(Self::AlertEvent),
             0x21 => Some(Self::AlertClaimed),
             0x22 => Some(Self::AlertDismissed),
+            0x23 => Some(Self::OverlayConfig),
             _ => None,
         }
     }
@@ -165,6 +170,7 @@ pub enum ClientMessage {
     PlayerInput(PlayerInputMsg),
     ChatMessage(ChatMessageMsg),
     ClaimAlert(ClaimAlertMsg),
+    OverlayConfig(OverlayConfigMsg),
 }
 
 impl ClientMessage {
@@ -175,6 +181,7 @@ impl ClientMessage {
             Self::PlayerInput(_) => MessageType::PlayerInput,
             Self::ChatMessage(_) => MessageType::ChatMessage,
             Self::ClaimAlert(_) => MessageType::ClaimAlert,
+            Self::OverlayConfig(_) => MessageType::OverlayConfig,
         }
     }
 }
@@ -192,6 +199,7 @@ pub enum ServerMessage {
     AlertEvent(Box<AlertEventMsg>),
     AlertClaimed(AlertClaimedMsg),
     AlertDismissed(AlertDismissedMsg),
+    OverlayConfig(OverlayConfigMsg),
 }
 
 impl ServerMessage {
@@ -207,6 +215,7 @@ impl ServerMessage {
             Self::AlertEvent(_) => MessageType::AlertEvent,
             Self::AlertClaimed(_) => MessageType::AlertClaimed,
             Self::AlertDismissed(_) => MessageType::AlertDismissed,
+            Self::OverlayConfig(_) => MessageType::OverlayConfig,
         }
     }
 }

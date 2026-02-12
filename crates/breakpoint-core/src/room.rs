@@ -2,10 +2,11 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use crate::game_trait::PlayerId;
+use crate::overlay::config::OverlayRoomConfig;
 use crate::player::Player;
 
 /// Configuration for a Breakpoint room.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoomConfig {
     pub max_players: u8,
     pub round_count: u8,
@@ -13,6 +14,7 @@ pub struct RoomConfig {
     pub between_round_duration: Duration,
     pub host_migration_enabled: bool,
     pub host_disconnect_grace_period: Duration,
+    pub overlay_config: OverlayRoomConfig,
 }
 
 impl Default for RoomConfig {
@@ -24,6 +26,7 @@ impl Default for RoomConfig {
             between_round_duration: Duration::from_secs(30),
             host_migration_enabled: false,
             host_disconnect_grace_period: Duration::from_secs(60),
+            overlay_config: OverlayRoomConfig::default(),
         }
     }
 }

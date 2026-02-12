@@ -1,0 +1,15 @@
+services:
+  breakpoint:
+    build:
+      context: ..
+      dockerfile: docker/server.Dockerfile
+    image: ghcr.io/andrewaltimit/breakpoint:latest
+    ports:
+      - "8080:8080"
+    environment:
+      BREAKPOINT_API_TOKEN: ${BREAKPOINT_API_TOKEN:-changeme}
+      BREAKPOINT_GITHUB_SECRET: ${BREAKPOINT_GITHUB_SECRET:-}
+      RUST_LOG: ${RUST_LOG:-info}
+    volumes:
+      - ./breakpoint.toml:/app/breakpoint.toml:ro
+    restart: unless-stopped

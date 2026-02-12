@@ -16,20 +16,6 @@ pub struct AuthConfig {
     pub github_webhook_secret: Option<String>,
 }
 
-impl AuthConfig {
-    /// Load auth config from environment variables.
-    pub fn from_env() -> Self {
-        Self {
-            bearer_token: std::env::var("BREAKPOINT_API_TOKEN")
-                .ok()
-                .filter(|s| !s.is_empty()),
-            github_webhook_secret: std::env::var("BREAKPOINT_GITHUB_SECRET")
-                .ok()
-                .filter(|s| !s.is_empty()),
-        }
-    }
-}
-
 /// Axum middleware that validates Bearer token authentication.
 /// If no token is configured (`AuthConfig::bearer_token` is None), all
 /// requests are allowed through (auth disabled).

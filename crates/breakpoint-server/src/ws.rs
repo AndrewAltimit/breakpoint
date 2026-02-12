@@ -248,6 +248,11 @@ async fn read_loop(
                 rooms.broadcast_to_room(room_code, &data);
             },
 
+            // Overlay config from host broadcast to all
+            MessageType::OverlayConfig => {
+                rooms.broadcast_to_room(room_code, &data);
+            },
+
             _ => {},
         }
     }

@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::overlay::config::OverlayConfigMsg;
+
 use super::messages::{
     AlertClaimedMsg, AlertDismissedMsg, AlertEventMsg, ChatMessageMsg, ClaimAlertMsg,
     ClientMessage, GameEndMsg, GameStartMsg, GameStateMsg, JoinRoomMsg, JoinRoomResponseMsg,
@@ -69,6 +71,7 @@ pub fn encode_client_message(msg: &ClientMessage) -> Result<Vec<u8>, ProtocolErr
         ClientMessage::PlayerInput(m) => encode_message(MessageType::PlayerInput, m),
         ClientMessage::ChatMessage(m) => encode_message(MessageType::ChatMessage, m),
         ClientMessage::ClaimAlert(m) => encode_message(MessageType::ClaimAlert, m),
+        ClientMessage::OverlayConfig(m) => encode_message(MessageType::OverlayConfig, m),
     }
 }
 
@@ -85,6 +88,7 @@ pub fn encode_server_message(msg: &ServerMessage) -> Result<Vec<u8>, ProtocolErr
         ServerMessage::AlertEvent(m) => encode_message(MessageType::AlertEvent, m),
         ServerMessage::AlertClaimed(m) => encode_message(MessageType::AlertClaimed, m),
         ServerMessage::AlertDismissed(m) => encode_message(MessageType::AlertDismissed, m),
+        ServerMessage::OverlayConfig(m) => encode_message(MessageType::OverlayConfig, m),
     }
 }
 
@@ -123,6 +127,9 @@ pub fn decode_client_message(data: &[u8]) -> Result<ClientMessage, ProtocolError
         MessageType::ClaimAlert => Ok(ClientMessage::ClaimAlert(decode_payload::<ClaimAlertMsg>(
             data,
         )?)),
+        MessageType::OverlayConfig => Ok(ClientMessage::OverlayConfig(decode_payload::<
+            OverlayConfigMsg,
+        >(data)?)),
         _ => Err(ProtocolError::UnknownMessageType(data[0])),
     }
 }
@@ -158,6 +165,9 @@ pub fn decode_server_message(data: &[u8]) -> Result<ServerMessage, ProtocolError
         >(data)?)),
         MessageType::AlertDismissed => Ok(ServerMessage::AlertDismissed(decode_payload::<
             AlertDismissedMsg,
+        >(data)?)),
+        MessageType::OverlayConfig => Ok(ServerMessage::OverlayConfig(decode_payload::<
+            OverlayConfigMsg,
         >(data)?)),
         _ => Err(ProtocolError::UnknownMessageType(data[0])),
     }

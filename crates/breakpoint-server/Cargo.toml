@@ -7,8 +7,13 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[features]
+default = []
+github-poller = ["dep:breakpoint-github"]
+
 [dependencies]
 breakpoint-core = { path = "../breakpoint-core" }
+breakpoint-github = { path = "../adapters/breakpoint-github", optional = true }
 axum = { version = "0.8", features = ["ws"] }
 tokio.workspace = true
 serde.workspace = true
@@ -23,6 +28,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 hmac.workspace = true
 sha2.workspace = true
 hex.workspace = true
+toml.workspace = true
 tokio-stream.workspace = true
 
 [lints]

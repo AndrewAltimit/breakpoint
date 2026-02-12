@@ -1,5 +1,6 @@
 mod api;
 mod auth;
+mod config;
 mod event_store;
 mod room_manager;
 mod sse;
@@ -15,6 +16,7 @@ use tracing_subscriber::EnvFilter;
 use breakpoint_core::net::messages::{AlertEventMsg, ServerMessage};
 use breakpoint_core::net::protocol::encode_server_message;
 
+use config::ServerConfig;
 use state::AppState;
 
 #[tokio::main]
@@ -23,10 +25,23 @@ async fn main() {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    let state = AppState::new();
+    let config = ServerConfig::load();
+    let listen_addr = config.listen_addr.clone();
+    let web_root = config.web_root.clone();
+
+    let state = AppState::new(config);
 
     // Spawn background task: broadcast new events to all rooms via WSS
     spawn_event_broadcaster(state.clone());
+
+    // Conditionally spawn GitHub Actions poller
+    #[cfg(feature = "github-poller")]
+    if let Some(ref gh) = state.config.github
+        && gh.enabled
+        && gh.token.is_some()
+    {
+        spawn_github_poller(&state);
+    }
 
     // API routes (behind bearer auth middleware)
     let api_routes = Router::new()
@@ -52,14 +67,14 @@ async fn main() {
         .route("/ws", axum::routing::get(ws::ws_handler))
         .nest("/api/v1", api_routes)
         .nest("/api/v1/webhooks", webhook_routes)
-        .fallback_service(ServeDir::new("web"))
+        .fallback_service(ServeDir::new(&web_root))
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080")
+    let listener = tokio::net::TcpListener::bind(&listen_addr)
         .await
-        .expect("Failed to bind to port 8080");
+        .unwrap_or_else(|e| panic!("Failed to bind to {listen_addr}: {e}"));
 
-    tracing::info!("Breakpoint server listening on 0.0.0.0:8080");
+    tracing::info!("Breakpoint server listening on {listen_addr}");
 
     axum::serve(listener, app).await.expect("Server error");
 }
@@ -73,6 +88,36 @@ async fn bearer_auth_layer(
 ) -> Result<axum::response::Response, axum::http::StatusCode> {
     request.extensions_mut().insert(state.auth.clone());
     auth::bearer_auth_middleware(request.headers().clone(), request, next).await
+}
+
+/// Spawn the GitHub Actions polling monitor as a background task.
+#[cfg(feature = "github-poller")]
+fn spawn_github_poller(state: &AppState) {
+    let gh = state.config.github.as_ref().unwrap();
+    let poller_config = breakpoint_github::GitHubPollerConfig {
+        token: gh.token.clone().unwrap_or_default(),
+        repos: gh.repos.clone(),
+        poll_interval_secs: gh.poll_interval_secs,
+        agent_patterns: gh.agent_patterns.clone(),
+    };
+    let poller = breakpoint_github::GitHubPoller::new(poller_config);
+    let event_store = state.event_store.clone();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+    // Poller task
+    tokio::spawn(async move {
+        poller.run(tx).await;
+    });
+
+    // Relay events from poller into EventStore
+    tokio::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            let mut store = event_store.write().await;
+            store.insert(event);
+        }
+    });
+
+    tracing::info!("GitHub Actions poller started");
 }
 
 /// Background task that subscribes to the EventStore broadcast channel and

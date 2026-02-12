@@ -6,6 +6,7 @@ use breakpoint_core::events::{Event, Priority};
 use breakpoint_core::game_trait::PlayerId;
 use breakpoint_core::net::messages::{ClaimAlertMsg, ClientMessage};
 use breakpoint_core::net::protocol::encode_client_message;
+use breakpoint_core::overlay::dashboard::{DashboardFilter, is_agent_event, matches_filter};
 use breakpoint_core::overlay::ticker::TickerAggregator;
 use breakpoint_core::overlay::toast::ToastQueue;
 
@@ -26,6 +27,7 @@ impl Plugin for OverlayPlugin {
                     toast_tick,
                     toast_render,
                     dashboard_toggle,
+                    dashboard_filter_system,
                     dashboard_render,
                     alert_badge_render,
                     claim_button_system,
@@ -68,6 +70,7 @@ pub struct OverlayState {
     pub dashboard_visible: bool,
     pub unread_count: u32,
     pub local_player_id: Option<PlayerId>,
+    pub dashboard_filter: DashboardFilter,
 }
 
 impl OverlayState {
@@ -79,6 +82,7 @@ impl OverlayState {
             dashboard_visible: false,
             unread_count: 0,
             local_player_id: None,
+            dashboard_filter: DashboardFilter::default(),
         }
     }
 }
@@ -121,6 +125,9 @@ struct DashboardPanel;
 
 #[derive(Component)]
 struct DashboardContent;
+
+#[derive(Component)]
+struct DashboardFilterButton(DashboardFilter);
 
 // --- Setup ---
 
@@ -447,6 +454,19 @@ fn dashboard_toggle(
                         TextColor(Color::srgb(0.3, 0.7, 1.0)),
                     ));
 
+                    // Filter buttons row
+                    parent
+                        .spawn(Node {
+                            flex_direction: FlexDirection::Row,
+                            column_gap: Val::Px(6.0),
+                            ..default()
+                        })
+                        .with_children(|row| {
+                            spawn_filter_btn(row, "All", DashboardFilter::All);
+                            spawn_filter_btn(row, "Agent", DashboardFilter::AgentOnly);
+                            spawn_filter_btn(row, "Human", DashboardFilter::HumanOnly);
+                        });
+
                     parent.spawn((
                         DashboardContent,
                         Text::new(""),
@@ -457,6 +477,39 @@ fn dashboard_toggle(
                         TextColor(Color::srgb(0.8, 0.8, 0.8)),
                     ));
                 });
+        }
+    }
+}
+
+fn spawn_filter_btn(parent: &mut ChildSpawnerCommands, label: &str, filter: DashboardFilter) {
+    parent
+        .spawn((
+            DashboardFilterButton(filter),
+            Button,
+            Node {
+                padding: UiRect::axes(Val::Px(10.0), Val::Px(4.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.25, 0.25, 0.35)),
+        ))
+        .with_child((
+            Text::new(label),
+            TextFont {
+                font_size: 11.0,
+                ..default()
+            },
+            TextColor(Color::WHITE),
+        ));
+}
+
+/// Handle filter button clicks.
+fn dashboard_filter_system(
+    interaction_query: Query<(&Interaction, &DashboardFilterButton), Changed<Interaction>>,
+    mut overlay: ResMut<OverlayState>,
+) {
+    for (interaction, btn) in &interaction_query {
+        if *interaction == Interaction::Pressed {
+            overlay.dashboard_filter = btn.0;
         }
     }
 }
@@ -473,6 +526,12 @@ fn dashboard_render(
     if let Ok(mut text) = content_query.single_mut() {
         let mut lines = Vec::new();
 
+        let filter_label = match overlay.dashboard_filter {
+            DashboardFilter::All => "All",
+            DashboardFilter::AgentOnly => "Agent Only",
+            DashboardFilter::HumanOnly => "Human Only",
+        };
+        lines.push(format!("Filter: {filter_label}"));
         lines.push(format!(
             "Pending actions: {}",
             overlay.toasts.pending_count()
@@ -481,14 +540,22 @@ fn dashboard_render(
         lines.push(String::new());
 
         for event in overlay.recent_events.iter().rev() {
+            if !matches_filter(event, overlay.dashboard_filter) {
+                continue;
+            }
+
             let priority_tag = match event.priority {
                 Priority::Critical => "[CRIT]",
                 Priority::Urgent => "[URG]",
                 Priority::Notice => "[NOTE]",
                 Priority::Ambient => "[AMB]",
             };
+            let robot_tag = if is_agent_event(event) { " [BOT]" } else { "" };
             let actor = event.actor.as_deref().unwrap_or("");
-            lines.push(format!("{priority_tag} {} - {actor}", event.title));
+            lines.push(format!(
+                "{priority_tag}{robot_tag} {} - {actor}",
+                event.title
+            ));
         }
 
         **text = lines.join("\n");

@@ -1,5 +1,8 @@
+#[cfg(feature = "golf")]
 pub mod golf_plugin;
+#[cfg(feature = "lasertag")]
 pub mod lasertag_plugin;
+#[cfg(feature = "platformer")]
 pub mod platformer_plugin;
 
 use std::collections::HashMap;
@@ -19,17 +22,27 @@ use crate::app::AppState;
 use crate::lobby::LobbyState;
 use crate::net_client::WsClient;
 
+#[cfg(feature = "golf")]
 use golf_plugin::GolfPlugin;
+#[cfg(feature = "lasertag")]
 use lasertag_plugin::LaserTagPlugin;
+#[cfg(feature = "platformer")]
 use platformer_plugin::PlatformerPlugin;
 
 pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(GameRegistry::default())
-            .add_plugins((GolfPlugin, PlatformerPlugin, LaserTagPlugin))
-            .add_systems(OnEnter(AppState::InGame), setup_game)
+        app.insert_resource(GameRegistry::default());
+
+        #[cfg(feature = "golf")]
+        app.add_plugins(GolfPlugin);
+        #[cfg(feature = "platformer")]
+        app.add_plugins(PlatformerPlugin);
+        #[cfg(feature = "lasertag")]
+        app.add_plugins(LaserTagPlugin);
+
+        app.add_systems(OnEnter(AppState::InGame), setup_game)
             .add_systems(
                 Update,
                 (

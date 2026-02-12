@@ -10,11 +10,17 @@ authors.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = ["golf", "platformer", "lasertag"]
+golf = ["dep:breakpoint-golf"]
+platformer = ["dep:breakpoint-platformer"]
+lasertag = ["dep:breakpoint-lasertag"]
+
 [dependencies]
 breakpoint-core = { path = "../breakpoint-core" }
-breakpoint-golf = { path = "../games/breakpoint-golf" }
-breakpoint-platformer = { path = "../games/breakpoint-platformer" }
-breakpoint-lasertag = { path = "../games/breakpoint-lasertag" }
+breakpoint-golf = { path = "../games/breakpoint-golf", optional = true }
+breakpoint-platformer = { path = "../games/breakpoint-platformer", optional = true }
+breakpoint-lasertag = { path = "../games/breakpoint-lasertag", optional = true }
 serde.workspace = true
 serde_json.workspace = true
 rmp-serde.workspace = true
@@ -30,7 +36,6 @@ bevy = { workspace = true, features = [
     "bevy_color",
     "default_font",
     "webgl2",
-    "multi_threaded",
     "x11",
 ] }
 wasm-bindgen = "0.2"

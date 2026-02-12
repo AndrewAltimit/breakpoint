@@ -149,6 +149,7 @@ fn chrono_now() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ServerConfig;
     use breakpoint_core::events::{EventType, Priority};
     use std::collections::HashMap;
 
@@ -173,7 +174,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_single_event() {
-        let state = AppState::new();
+        let state = AppState::new(ServerConfig::default());
         let body = Json(PostEventsBody::Single(Box::new(make_event("evt-1"))));
         let result = post_events(State(state.clone()), body).await;
         assert!(result.is_ok());
@@ -188,7 +189,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_batch_events() {
-        let state = AppState::new();
+        let state = AppState::new(ServerConfig::default());
         let body = Json(PostEventsBody::Batch(vec![
             make_event("evt-1"),
             make_event("evt-2"),
@@ -201,7 +202,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_empty_batch_fails() {
-        let state = AppState::new();
+        let state = AppState::new(ServerConfig::default());
         let body = Json(PostEventsBody::Batch(vec![]));
         let result = post_events(State(state), body).await;
         assert!(result.is_err());
@@ -211,7 +212,7 @@ mod tests {
 
     #[tokio::test]
     async fn claim_event_works() {
-        let state = AppState::new();
+        let state = AppState::new(ServerConfig::default());
         {
             let mut store = state.event_store.write().await;
             store.insert(make_event("evt-1"));
@@ -233,7 +234,7 @@ mod tests {
 
     #[tokio::test]
     async fn claim_nonexistent_event_fails() {
-        let state = AppState::new();
+        let state = AppState::new(ServerConfig::default());
         let body = Json(ClaimEventBody {
             claimed_by: "alice".to_string(),
         });
@@ -246,7 +247,7 @@ mod tests {
 
     #[tokio::test]
     async fn status_endpoint() {
-        let state = AppState::new();
+        let state = AppState::new(ServerConfig::default());
         {
             let mut store = state.event_store.write().await;
             store.insert(make_event("evt-1"));

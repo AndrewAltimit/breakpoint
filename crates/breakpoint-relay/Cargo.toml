@@ -1,0 +1,20 @@
+[package]
+name = "breakpoint-relay"
+description = "Stateless WebSocket relay for Breakpoint NAT traversal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+breakpoint-core = { path = "../breakpoint-core" }
+axum = { version = "0.8", features = ["ws"] }
+tokio.workspace = true
+futures.workspace = true
+rand.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[lints]
+workspace = true

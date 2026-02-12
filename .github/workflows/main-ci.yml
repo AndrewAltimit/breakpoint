@@ -80,13 +80,65 @@ jobs:
             fi
           done
 
+  # ── Docker Image ──────────────────────────────────────────────────
+  docker:
+    name: Docker Image
+    needs: ci
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_release == 'true'
+    runs-on: self-hosted
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Determine image tags
+        id: tags
+        run: |
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/${REPO_LOWER}"
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            echo "tags=${IMAGE}:${VERSION},${IMAGE}:latest" >> $GITHUB_OUTPUT
+          else
+            SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+            echo "tags=${IMAGE}:sha-${SHA}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build and push Docker image
+        run: |
+          IFS=',' read -ra TAGS <<< "${{ steps.tags.outputs.tags }}"
+          TAG_ARGS=""
+          for tag in "${TAGS[@]}"; do
+            TAG_ARGS="${TAG_ARGS} -t ${tag}"
+          done
+          docker build -f docker/server.Dockerfile ${TAG_ARGS} .
+          for tag in "${TAGS[@]}"; do
+            docker push "${tag}"
+          done
+
   # ── Build Release Artifacts ──────────────────────────────────────
   build-release:
-    name: Build Release Artifacts
+    name: Build Release (${{ matrix.target }})
     needs: ci
     if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_release == 'true'
     runs-on: self-hosted
     timeout-minutes: 30
+    strategy:
+      matrix:
+        include:
+          - target: linux-x86_64
+            arch: x86_64
+          - target: linux-aarch64
+            arch: aarch64
+            cross: true
     steps:
       - name: Pre-checkout cleanup
         run: |
@@ -112,25 +164,44 @@ jobs:
       - name: Create output directory
         run: mkdir -p release-artifacts
 
-      - name: Build server binary (release)
+      - name: Build server + relay binaries (native)
+        if: '!matrix.cross'
         run: |
-          ARCH=$(uname -m)
-          echo "Building breakpoint-server for linux-${ARCH}..."
-
           docker compose --profile ci run --rm rust-ci bash -c "
             set -e
-            cargo build --release -p breakpoint-server
+            cargo build --release -p breakpoint-server --features github-poller
+            cargo build --release -p breakpoint-relay
 
-            if [ -f 'target/release/breakpoint-server' ]; then
-              cp 'target/release/breakpoint-server' '/app/release-artifacts/breakpoint-server-linux-${ARCH}'
-              echo 'Built breakpoint-server for linux-${ARCH}'
-            else
-              echo 'Error: breakpoint-server binary not found'
-              exit 1
+            cp target/release/breakpoint-server /app/release-artifacts/breakpoint-server-${{ matrix.target }}
+            cp target/release/breakpoint-relay /app/release-artifacts/breakpoint-relay-${{ matrix.target }}
+            echo 'Built binaries for ${{ matrix.target }}'
+          "
+
+      - name: Build server + relay binaries (cross-compile)
+        if: matrix.cross
+        run: |
+          docker compose --profile ci run --rm rust-ci bash -c "
+            set -e
+            rustup target add aarch64-unknown-linux-gnu 2>/dev/null || true
+            apt-get update -qq && apt-get install -y -qq gcc-aarch64-linux-gnu 2>/dev/null || true
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+
+            cargo build --release -p breakpoint-server --features github-poller --target aarch64-unknown-linux-gnu || {
+              echo '::warning::Cross-compilation for aarch64 failed — skipping'
+              exit 0
+            }
+            cargo build --release -p breakpoint-relay --target aarch64-unknown-linux-gnu || true
+
+            if [ -f target/aarch64-unknown-linux-gnu/release/breakpoint-server ]; then
+              cp target/aarch64-unknown-linux-gnu/release/breakpoint-server /app/release-artifacts/breakpoint-server-${{ matrix.target }}
+            fi
+            if [ -f target/aarch64-unknown-linux-gnu/release/breakpoint-relay ]; then
+              cp target/aarch64-unknown-linux-gnu/release/breakpoint-relay /app/release-artifacts/breakpoint-relay-${{ matrix.target }}
             fi
           "
 
       - name: Build WASM client
+        if: '!matrix.cross'
         run: |
           docker compose --profile ci run --rm rust-ci bash -c "
             set -e
@@ -147,14 +218,14 @@ jobs:
       - name: Upload binary artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: release-artifacts
+          name: release-artifacts-${{ matrix.target }}
           path: release-artifacts/*
           retention-days: 90
 
   # ── Create GitHub Release ──────────────────────────────────────
   create-release:
     name: Create GitHub Release
-    needs: [ci, build-release]
+    needs: [ci, build-release, docker]
     if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_release == 'true'
     runs-on: self-hosted
     timeout-minutes: 10
@@ -163,7 +234,7 @@ jobs:
     steps:
       - name: Pre-checkout cleanup
         run: |
-          for item in outputs .git/index.lock; do
+          for item in outputs release-artifacts .git/index.lock; do
             if [ -d "$item" ] || [ -f "$item" ]; then
               docker run --rm -v "$(pwd):/workspace" busybox:1.36.1 sh -c \
                 "rm -rf /workspace/$item" 2>/dev/null || \
@@ -176,11 +247,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download release artifacts
+      - name: Download all release artifacts
         uses: actions/download-artifact@v4
         with:
-          name: release-artifacts
+          pattern: release-artifacts-*
           path: release-artifacts
+          merge-multiple: true
 
       - name: Determine version
         id: version
@@ -230,15 +302,17 @@ jobs:
           | Artifact | Description |
           |----------|-------------|
           | `breakpoint-server-linux-*` | Host server binary (Axum + WSS + REST) |
+          | `breakpoint-relay-linux-*` | Stateless WS relay for NAT traversal |
           | `wasm-client/` | WASM browser client bundle |
 
           ### Quick Start
 
           ```bash
-          # Make server executable
-          chmod +x breakpoint-server-linux-*
+          # Using Docker
+          docker run -p 8080:8080 -e BREAKPOINT_API_TOKEN=secret ghcr.io/andrewaltimit/breakpoint:latest
 
-          # Run the server
+          # Or from binary
+          chmod +x breakpoint-server-linux-*
           ./breakpoint-server-linux-x86_64
           ```
 
@@ -272,7 +346,7 @@ jobs:
   # ── CI Summary ─────────────────────────────────────────────────
   notify:
     name: CI Summary
-    needs: [ci, build-release, create-release]
+    needs: [ci, build-release, docker, create-release]
     if: always()
     runs-on: self-hosted
     steps:
@@ -287,6 +361,7 @@ jobs:
           echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| CI | ${{ needs.ci.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Build Release | ${{ needs.build-release.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Image | ${{ needs.docker.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| GitHub Release | ${{ needs.create-release.result }} |" >> $GITHUB_STEP_SUMMARY
 
           if [[ "${{ needs.ci.result }}" == "failure" ]]; then
