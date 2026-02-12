@@ -77,7 +77,7 @@ docker compose --profile ci run --rm rust-ci cargo test --workspace
 - Clippy thresholds: cognitive-complexity 25, too-many-lines 100, too-many-arguments 7
 - Formatting: 100 char max width, 4-space indent, Unix newlines, tall fn params
 - Shared dependencies declared in `[workspace.dependencies]` and referenced with `.workspace = true`
-- Dual license: MIT OR Apache-2.0
+- Dual license: Unlicense OR MIT
 
 ## CI/CD Pipeline
 

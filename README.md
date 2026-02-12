@@ -190,4 +190,4 @@ See [BREAKPOINT-DESIGN-DOC.md](BREAKPOINT-DESIGN-DOC.md) for the full event sche
 
 ## License
 
-Dual-licensed under MIT and Apache 2.0.
+Dual-licensed under Unlicense and MIT.
