@@ -2,7 +2,7 @@
 
 **Office Hours Gaming Platform with Agent Monitoring Overlay**
 
-Comprehensive Design Document — Version 1.0 — February 2026
+Comprehensive Design Document — Version 1.1 — February 2026
 
 Open Source • Rust + WASM • Real-Time Multiplayer • Agent-Aware
 
@@ -109,12 +109,14 @@ External Event Sources:
 
 | Component | Technology | Responsibility |
 |-----------|-----------|----------------|
-| Game Engine | Rust + WASM (Bevy or custom) | Physics, rendering, game logic, input handling |
-| Network Layer | WSS via web-sys / wasm-bindgen | State sync, player management, latency compensation |
-| Overlay System | Rust/WASM + HTML/CSS overlay | Alert rendering, notification queue, dashboard toggle |
-| Alert Bus | SSE or WSS channel | Receives agent events, routes to overlay based on priority |
-| Data Integration API | REST (JSON) + webhooks | Standard interface for external systems to push events |
-| Host Server | Rust (Axum) | Serves static assets, WSS endpoint, alert ingestion API |
+| Game Engine | Rust + WASM (Bevy 0.18) | Physics, rendering, game logic, input handling |
+| Network Layer | WSS via web-sys / wasm-bindgen | State sync, player management, MessagePack protocol |
+| Overlay System | Bevy UI (Rust/WASM) | Ticker, toasts, dashboard, claim system, agent badges |
+| Alert Bus | SSE + WSS broadcast | Receives agent events, routes to overlay based on priority |
+| Data Integration API | REST (JSON) + webhooks | Event ingestion, claiming, SSE streaming |
+| Host Server | Rust (Axum 0.8) | Static assets, WSS relay, REST/SSE, room management |
+| Relay Server | Rust (Axum 0.8) | Stateless WS forwarding for NAT traversal |
+| GitHub Adapter | Rust (reqwest + tokio) | Actions polling, agent detection, event emission |
 
 ### 3.3 Network Architecture
 
@@ -122,7 +124,7 @@ All network communication uses WSS (WebSocket Secure) over port 443 to ensure co
 
 **Direct Host Mode:** The hosting player runs a lightweight Rust server binary on their machine that serves the WASM game client and handles WebSocket connections. Other players connect directly to the host's URL. This is the simplest mode and works when the host has a reachable address (e.g., within a corporate VPN or LAN).
 
-**Relay Mode:** A stateless relay server (deployable as a Cloudflare Worker, Fly.io app, or similar) handles connection brokering. The host connects to the relay as a privileged client, and all game state flows through the relay. This adds ~10–30ms latency but eliminates NAT traversal issues entirely. The relay is intentionally stateless — it forwards messages between the host and clients without understanding game logic, making it cheap to run and trivial to scale.
+**Relay Mode:** The `breakpoint-relay` crate provides a stateless WebSocket relay server. The host connects to the relay as a privileged client, and all game state flows through the relay. This adds ~10–30ms latency but eliminates NAT traversal issues entirely. The relay only peeks at the message type byte for routing — it never deserializes payloads, making it cheap to run and trivial to scale. Room codes are auto-generated in ABCD-1234 format with automatic cleanup on disconnect.
 
 **Hybrid Mode (recommended for enterprise):** The host server is deployed as a persistent internal service (e.g., on a shared team server or Kubernetes pod) rather than on a developer's laptop. This provides a stable URL, avoids port-forwarding issues, and allows the alert ingestion endpoints to receive webhooks reliably. The game still runs in the browser; only the coordination layer is centralized.
 
@@ -165,7 +167,7 @@ All players putt simultaneously on the same course. Each player sees their own b
 **Course Design:**
 - Courses are defined as JSON data — geometry, obstacles, and spawn points — making them easy to create, share, and contribute.
 - Obstacle types include static walls, bumpers (elastic bounce), windmills (rotating blockers), teleporter pads, conveyor surfaces, and moving platforms.
-- A course editor (stretch goal) allows the host to build custom courses in the lobby and share them with the room.
+- A course editor (implemented) allows the host to build custom courses in the lobby and share them with the room.
 - Course packs can be themed (e.g., "corporate campus," "retro arcade," "space station") for variety.
 
 **Physics Model:**
@@ -282,20 +284,22 @@ All overlay sounds are independently volume-controlled and can be muted without 
 
 ### 5.4 Overlay Customization
 
-The overlay is configurable per room and per player:
+The overlay is configurable per room and per player. Configuration types are defined in `breakpoint-core/src/overlay/config.rs` and exposed through the client settings UI (`settings.rs`). Player preferences persist to localStorage across sessions.
 
-**Room-level settings (host controls):**
-- Which event sources are enabled
-- Priority mapping overrides (e.g., elevate all deploy events to urgent)
-- Ticker position (top/bottom)
+**Room-level settings (`OverlayRoomConfig`, host controls):**
+- Which event sources are enabled (`enabled_sources: Vec<String>`)
+- Priority mapping overrides (`priority_overrides: HashMap<String, Priority>`)
+- Ticker position (Top / Bottom)
 - Dashboard auto-expand between rounds (on/off)
-- Critical alert behavior (pause game for all players vs. only the claiming player)
+- Critical alert behavior (pause game for all players)
 
-**Player-level settings:**
-- Sound volume for each priority tier
-- Toast position (any corner)
+**Player-level settings (`OverlayPlayerPrefs`, persisted to localStorage):**
+- Per-priority sound volume (ambient, notice, urgent, critical)
+- Toast position (TopRight / TopLeft / BottomRight / BottomLeft)
 - Dashboard hotkey binding
-- Notification density preference (show all / compact / critical only)
+- Notification density preference (All / Compact / CriticalOnly)
+
+Room overlay settings are broadcast via the `OverlayConfig` (0x23) message type when the host changes configuration.
 
 ---
 
@@ -492,27 +496,29 @@ The GitHub adapter registers for the following webhook events and transforms the
 | `check_suite` | `pipeline.*` | Alternative to `workflow_run` for check-based CI systems |
 | `dependabot_alert` | `security.alert` | Auto-elevates to `critical` priority for high/critical severity |
 
-### 7.2 GitHub Actions Monitor
+### 7.2 GitHub Actions Monitor — IMPLEMENTED
 
-Beyond webhooks, the GitHub adapter includes a polling component that queries the GitHub Actions API every 30 seconds to provide richer pipeline monitoring. This catches events that webhooks may miss (e.g., manual re-runs, queued workflows) and provides aggregate statistics:
+The GitHub adapter (`crates/adapters/breakpoint-github/`) includes a polling component that queries the GitHub Actions API at a configurable interval (default 30 seconds). It is implemented in `poller.rs` and integrated into the server via the `github-poller` feature flag.
 
-- Active workflow runs with real-time step progress (which step is currently executing)
-- Queue depth and estimated wait times for self-hosted runners
-- Historical success/failure rates per workflow (rolling 24-hour window)
-- Runner utilization and billing minute consumption
-- Stale workflow detection (runs exceeding expected duration thresholds)
+Implemented capabilities:
+- Active workflow run tracking with state change detection (started → completed)
+- Historical success/failure rates (rolling 24-hour window) with pass rate calculation
+- Aggregate ticker events ("CI: 94% pass rate, 3 active runs")
+- Per-run event emission for started, succeeded, and failed transitions
+- Configurable via `breakpoint.toml` `[github]` section or environment variables
 
-This data feeds both the ambient ticker (aggregate stats like "CI: 94% pass rate today") and the dashboard overlay (detailed per-workflow view with step-level progress).
+The poller is conditionally spawned at server startup when `github.enabled = true` and a token is provided.
 
-### 7.3 Agent Activity Inference
+### 7.3 Agent Activity Inference — IMPLEMENTED
 
-The adapter infers agent vs. human activity by examining commit authors, PR creators, and comment authors against a configurable list of known bot/agent accounts. Default detection patterns include:
+The `AgentDetector` (`agent_detect.rs`) infers agent vs. human activity using glob-style pattern matching against actor usernames. Default detection patterns:
 
-- GitHub's built-in bots: `dependabot[bot]`, `github-actions[bot]`, `renovate[bot]`
-- Common AI coding agents: configurable patterns like `*[bot]`, `*-agent`, or explicit username lists
-- Custom agent identifiers specified in the Breakpoint configuration
+- `dependabot[bot]`, `github-actions[bot]`, `renovate[bot]` — exact matches
+- `*[bot]` — suffix wildcard for any bot account
+- `*-agent` — suffix wildcard for agent accounts
+- Custom patterns configurable via `agent_patterns` in config
 
-Agent-originated events are visually distinguished in the overlay with a robot icon badge and a different accent color, allowing the team to quickly differentiate between human team activity and autonomous agent activity. The dashboard provides filtered views: "All Events," "Agent Only," and "Human Only."
+Agent-originated events are tagged with `metadata["is_agent"] = true`. The client overlay renders a `[BOT]` indicator on agent events in both toasts and dashboard entries. The dashboard provides filtered views via `DashboardFilter`: "All," "Agent Only," and "Human Only" — implemented as toggle buttons in the dashboard header.
 
 ### 7.4 Example: Complete GitHub Setup
 
@@ -602,8 +608,8 @@ Rooms persist as long as the host is connected. If the host disconnects, a confi
 |-------|-----------|-----------|
 | Core Language | Rust | Memory safety, performance, single codebase for server + WASM client |
 | Client Runtime | WASM (wasm-bindgen, web-sys) | Near-native browser performance, no plugins, broad browser support |
-| Game Framework | Bevy (or custom ECS) | Bevy has WASM support and active ecosystem; fallback to custom for lighter WASM footprint |
-| Rendering | wgpu via Bevy / Canvas2D fallback | WebGPU where available, Canvas2D as universal fallback for corporate browsers |
+| Game Framework | Bevy 0.18 | ECS architecture with WASM support; bundle size managed via feature flags |
+| Rendering | Bevy renderer (wgpu/WebGL2) | WebGL2 for broad browser compatibility |
 | Networking | WSS (tokio-tungstenite server, web-sys client) | Firewall-friendly, bidirectional, low overhead |
 | Host Server | Axum | Lightweight, async, Rust-native, excellent WebSocket support |
 | Alert Ingestion | Axum REST endpoints + SSE | Standard HTTP for webhook compatibility, SSE for real-time streaming |
@@ -613,11 +619,9 @@ Rooms persist as long as the host is connected. If the host disconnects, a confi
 | CI/CD | GitHub Actions | Automated build, test, WASM compilation, and release packaging |
 | Testing | cargo test + wasm-bindgen-test | Native tests for game logic, WASM tests for browser integration |
 
-### 9.1 Bevy vs. Custom Engine Decision
+### 9.1 Bevy Decision
 
-Bevy is the default choice due to its ECS architecture, WASM support, and growing ecosystem. However, Bevy's WASM bundle size (~5–10MB) may be problematic for fast initial loads on corporate networks. If bundle size becomes an issue, a lighter custom engine using `web-sys` Canvas2D directly is the fallback. The game trait interface (Section 11) is designed to be engine-agnostic, so games can be ported between Bevy and a custom renderer without rewriting game logic.
-
-The decision point is during Phase 1: if the Bevy WASM build exceeds 8MB gzipped, switch to custom Canvas2D rendering. 2D games with simple geometry do not need a full ECS engine.
+Bevy 0.18 was selected as the game framework. WASM bundle size is managed through careful feature selection (removing `multi_threaded`, unused rendering backends) and release profile optimization (`opt-level = "z"`, LTO, strip). Game crates are behind feature flags allowing selective compilation to further reduce bundle size when not all games are needed.
 
 ---
 
@@ -627,169 +631,155 @@ The decision point is during Phase 1: if the Bevy WASM build exceeds 8MB gzipped
 breakpoint/
 ├── Cargo.toml                          # Workspace root
 ├── README.md
-├── LICENSE-MIT
-├── LICENSE-APACHE
+├── CHANGELOG.md
+├── CONTRIBUTING.md
+├── LICENSE-MIT / LICENSE-UNLICENSE
+├── BREAKPOINT-DESIGN-DOC.md            # This document
+├── breakpoint.toml                     # Server config (optional)
 ├── crates/
-│   ├── breakpoint-core/                   # Shared types, traits, event schema
+│   ├── breakpoint-core/                # Shared types, traits, event schema
 │   │   └── src/
 │   │       ├── lib.rs
 │   │       ├── events.rs               # Event schema, priority types, serialization
-│   │       ├── game_trait.rs            # BreakpointGame trait definition
-│   │       ├── player.rs               # Player identity, state, avatar
-│   │       ├── room.rs                 # Room configuration, lifecycle
+│   │       ├── game_trait.rs           # BreakpointGame trait definition
+│   │       ├── player.rs              # Player identity, state, avatar
+│   │       ├── room.rs                # Room configuration (+ overlay config)
 │   │       ├── net/
 │   │       │   ├── mod.rs
-│   │       │   ├── messages.rs         # Network message types (input, state, alert)
-│   │       │   └── protocol.rs         # Versioned protocol definition
+│   │       │   ├── messages.rs        # Network message types (input, state, alert, overlay config)
+│   │       │   └── protocol.rs        # MessagePack protocol with 1-byte type prefix
 │   │       └── overlay/
 │   │           ├── mod.rs
-│   │           ├── ticker.rs           # Ambient ticker aggregation logic
-│   │           ├── toast.rs            # Toast notification queue
-│   │           └── dashboard.rs        # Dashboard data model
+│   │           ├── config.rs          # Room + player overlay configuration types
+│   │           ├── ticker.rs          # Ambient ticker aggregation logic
+│   │           ├── toast.rs           # Toast notification queue
+│   │           └── dashboard.rs       # Dashboard data model + agent filtering
 │   │
-│   ├── breakpoint-server/                 # Axum host server
+│   ├── breakpoint-server/              # Axum host server
 │   │   └── src/
-│   │       ├── main.rs                 # Server entry point, configuration
-│   │       ├── ws.rs                   # WebSocket game state relay
-│   │       ├── api.rs                  # REST event ingestion endpoints
-│   │       ├── sse.rs                  # SSE event stream
-│   │       ├── room_manager.rs         # Room lifecycle, player tracking
-│   │       ├── auth.rs                 # Token verification, webhook signatures
-│   │       └── webhooks/               # Webhook adapter modules
+│   │       ├── main.rs                # Server entry point, GitHub poller spawn
+│   │       ├── config.rs              # TOML config loading + env var overrides
+│   │       ├── state.rs               # Shared application state
+│   │       ├── ws.rs                  # WebSocket game state relay
+│   │       ├── api.rs                 # REST event ingestion endpoints
+│   │       ├── sse.rs                 # SSE event stream
+│   │       ├── event_store.rs         # In-memory event store + broadcast
+│   │       ├── room_manager.rs        # Room lifecycle, player tracking
+│   │       ├── auth.rs               # Bearer token + GitHub HMAC verification
+│   │       └── webhooks/
 │   │           ├── mod.rs
-│   │           ├── github.rs           # GitHub webhook → Breakpoint event
-│   │           └── generic.rs          # Passthrough for pre-formatted events
+│   │           └── github.rs          # GitHub webhook → Breakpoint event
 │   │
-│   ├── breakpoint-client/                 # WASM browser client
+│   ├── breakpoint-client/              # WASM browser client (Bevy)
 │   │   └── src/
-│   │       ├── lib.rs                  # WASM entry point
-│   │       ├── app.rs                  # Application state machine (lobby/game/between)
-│   │       ├── lobby.rs                # Room join/create UI
-│   │       ├── renderer.rs             # Canvas2D / wgpu rendering abstraction
-│   │       ├── input.rs                # Keyboard/mouse/touch input handling
-│   │       ├── net_client.rs           # WSS client, message send/receive
-│   │       ├── overlay.rs              # Alert overlay rendering
-│   │       ├── dashboard.rs            # Full dashboard toggle view
-│   │       ├── audio.rs                # Sound manager (game + overlay)
-│   │       └── storage.rs              # Local storage for preferences
+│   │       ├── lib.rs                 # WASM entry point (wasm-bindgen)
+│   │       ├── app.rs                 # Application state machine
+│   │       ├── lobby.rs               # Room join/create UI
+│   │       ├── game/                  # Game rendering per game type
+│   │       │   └── mod.rs             # Feature-gated game modules
+│   │       ├── net_client.rs          # WSS client connection
+│   │       ├── overlay.rs             # Alert overlay (ticker, toasts, dashboard, claim)
+│   │       ├── settings.rs            # Settings panel (audio + overlay prefs)
+│   │       ├── audio.rs               # Sound effects with per-priority volume
+│   │       ├── camera.rs              # Bevy camera setup
+│   │       ├── editor.rs              # Course editor for mini-golf
+│   │       ├── between_rounds.rs      # Between-rounds scoreboard
+│   │       └── game_over.rs           # Game-over summary screen
+│   │
+│   ├── breakpoint-relay/               # Stateless WS relay for NAT traversal
+│   │   └── src/
+│   │       ├── main.rs                # Axum server with /relay WS endpoint
+│   │       └── relay.rs               # Room state, message forwarding
 │   │
 │   ├── games/
-│   │   ├── breakpoint-golf/               # Mini-golf game module
+│   │   ├── breakpoint-golf/           # Simultaneous mini-golf (2-8 players)
 │   │   │   └── src/
-│   │   │       ├── lib.rs              # BreakpointGame trait implementation
-│   │   │       ├── physics.rs          # Ball physics, collision
-│   │   │       ├── course.rs           # Course data, obstacles, generation
-│   │   │       ├── renderer.rs         # Golf-specific rendering
-│   │   │       └── scoring.rs          # Stroke counting, par, bonuses
+│   │   │       ├── lib.rs             # BreakpointGame trait implementation
+│   │   │       ├── physics.rs         # Ball physics, collision, bumpers
+│   │   │       ├── course.rs          # Course data, obstacles
+│   │   │       └── scoring.rs         # Stroke counting, par, bonuses
 │   │   │
-│   │   ├── breakpoint-platformer/         # Platform racer module
+│   │   ├── breakpoint-platformer/     # Platform racer (2-6 players)
 │   │   │   └── src/
 │   │   │       ├── lib.rs
-│   │   │       ├── physics.rs          # Platformer physics, gravity, collision
-│   │   │       ├── course_gen.rs       # Procedural course assembly
-│   │   │       ├── renderer.rs
-│   │   │       └── powerups.rs
+│   │   │       ├── physics.rs         # Platformer physics, gravity, collision
+│   │   │       ├── course_gen.rs      # Seed-based procedural course assembly
+│   │   │       ├── scoring.rs         # Race + survival scoring
+│   │   │       └── powerups.rs        # Speed boost, double jump, shield
 │   │   │
-│   │   └── breakpoint-lasertag/           # Laser tag module
+│   │   └── breakpoint-lasertag/       # Laser tag arena (2-8 players)
 │   │       └── src/
 │   │           ├── lib.rs
-│   │           ├── arena.rs            # Arena layout, special surfaces
-│   │           ├── projectile.rs       # Laser physics, reflection
-│   │           ├── renderer.rs
-│   │           └── powerups.rs
+│   │           ├── arena.rs           # Arena layout, reflective walls
+│   │           ├── projectile.rs      # Laser physics, reflection, hit detection
+│   │           ├── scoring.rs         # FFA + team scoring
+│   │           └── powerups.rs        # Rapid fire, shield, speed boost
 │   │
 │   └── adapters/
-│       └── breakpoint-github/             # GitHub polling + webhook adapter
+│       └── breakpoint-github/         # GitHub Actions polling + agent detection
 │           └── src/
 │               ├── lib.rs
-│               ├── poller.rs           # GitHub Actions API polling
-│               ├── transformer.rs      # Webhook payload → Breakpoint event
-│               └── agent_detect.rs     # Bot/agent identification logic
+│               ├── config.rs          # Poller configuration
+│               ├── poller.rs          # GitHub Actions API polling + event emission
+│               └── agent_detect.rs    # Bot/agent identification (glob patterns)
 │
 ├── web/                                # Static assets
 │   ├── index.html                      # HTML shell for WASM client
-│   ├── style.css                       # Minimal base styles
-│   └── assets/
-│       ├── sounds/                     # Audio files for game + overlay
-│       └── sprites/                    # Game sprites and UI elements
+│   ├── style.css                       # Base styles
+│   └── assets/                         # Sprites, sounds
+│
+├── docker/
+│   ├── rust-ci.Dockerfile              # CI image (Rust + wasm-pack + cargo-deny)
+│   └── server.Dockerfile              # Production multi-stage image
 │
 ├── docs/
-│   ├── ARCHITECTURE.md
-│   ├── INTEGRATION-GUIDE.md            # How to build custom adapters
-│   ├── GAME-DEVELOPMENT.md             # How to add new games
-│   └── DEPLOYMENT.md                   # Corporate deployment guide
+│   ├── ARCHITECTURE.md                 # System design, data flow, protocol
+│   ├── INTEGRATION-GUIDE.md            # Event schema, API, adapter examples
+│   ├── GAME-DEVELOPMENT.md             # BreakpointGame trait guide
+│   └── DEPLOYMENT.md                   # Docker, relay, TLS, corporate networks
 │
-└── examples/
-    ├── github-actions-monitor/         # Complete GitHub Actions setup
-    │   ├── README.md
-    │   └── .github/workflows/breakpoint-notify.yml
-    ├── custom-agent-adapter/           # Example custom agent integration
-    │   ├── README.md
-    │   └── notify.py                   # Simple Python script example
-    └── docker-compose.yml              # One-command local deployment
+├── examples/
+│   ├── docker-compose.yml              # One-command deployment
+│   ├── .env.example                    # Environment variable template
+│   ├── adapters/
+│   │   ├── notify.py                   # Python adapter example
+│   │   ├── notify.js                   # Node.js adapter example
+│   │   └── notify.sh                   # Shell adapter example
+│   └── github-integration/
+│       └── .github/workflows/
+│           └── breakpoint-notify.yml   # Sample GitHub Actions workflow
+│
+└── .github/workflows/
+    ├── ci.yml                          # Push to main: fmt, clippy, test, build
+    ├── pr-validation.yml               # PR: CI + AI reviews + agent auto-fix
+    └── main-ci.yml                     # Main + tags: CI, release, Docker push
 ```
 
 ---
 
 ## 11. Game Trait Interface
 
-All games implement a common trait that the Breakpoint runtime uses for lifecycle management. This is the contract that makes adding new games possible without modifying the core platform.
+All games implement a common trait that the Breakpoint runtime uses for lifecycle management. This is the contract that makes adding new games possible without modifying the core platform. The trait is defined in `crates/breakpoint-core/src/game_trait.rs` and is implemented by all three shipping games.
 
 ```rust
 /// Core trait that all Breakpoint games must implement.
 /// The runtime manages networking, overlay, and player tracking;
 /// the game only handles game-specific logic and rendering.
-pub trait BreakpointGame {
-    /// Game metadata for the lobby selection screen.
+pub trait BreakpointGame: Send + Sync {
     fn metadata(&self) -> GameMetadata;
-
-    /// Called once when the game is selected and players are ready.
-    /// Receives the player list and room configuration.
     fn init(&mut self, players: &[Player], config: &GameConfig);
-
-    /// Called each frame. Delta time in seconds.
-    /// Returns a list of game events (scoring, elimination, round end).
     fn update(&mut self, dt: f32, inputs: &PlayerInputs) -> Vec<GameEvent>;
-
-    /// Render the current game state to the provided render context.
-    fn render(&self, ctx: &mut RenderContext);
-
-    /// Serialize the authoritative game state for network broadcast.
-    /// Called on the host at the tick rate.
     fn serialize_state(&self) -> Vec<u8>;
-
-    /// Apply authoritative state received from the host.
-    /// Called on clients when a state update arrives.
     fn apply_state(&mut self, state: &[u8]);
-
-    /// Serialize local player input for sending to the host.
     fn serialize_input(&self, player_id: PlayerId) -> Vec<u8>;
-
-    /// Apply a remote player's input to the authoritative simulation.
-    /// Called on the host when input arrives from a client.
     fn apply_input(&mut self, player_id: PlayerId, input: &[u8]);
-
-    /// Called when a new player joins mid-game (for spectator → active transition).
     fn player_joined(&mut self, player: &Player);
-
-    /// Called when a player disconnects.
     fn player_left(&mut self, player_id: PlayerId);
-
-    /// Whether the game supports the overlay pausing gameplay
-    /// (e.g., for critical alerts). Games can return false if
-    /// pausing would break game state (rare).
+    fn tick_rate(&self) -> f32 { 10.0 }
     fn supports_pause(&self) -> bool { true }
-
-    /// Called when the overlay requests a pause (critical alert).
     fn pause(&mut self);
-
-    /// Called when gameplay should resume after a pause.
     fn resume(&mut self);
-
-    /// Whether the current round/match is complete.
     fn is_round_complete(&self) -> bool;
-
-    /// Final scores for the completed round.
     fn round_results(&self) -> Vec<PlayerScore>;
 }
 
@@ -799,17 +789,16 @@ pub struct GameMetadata {
     pub min_players: u8,
     pub max_players: u8,
     pub estimated_round_duration: Duration,
-    pub icon: GameIcon,
 }
 
 pub struct GameConfig {
     pub round_count: u8,
     pub round_duration: Duration,
-    pub custom: HashMap<String, serde_json::Value>,  // Game-specific settings
+    pub custom: HashMap<String, serde_json::Value>,
 }
 ```
 
-This trait is designed so that a new game can be developed in isolation, tested locally, and plugged into the Breakpoint runtime with zero changes to the networking, overlay, lobby, or server code. The `custom` field in `GameConfig` allows each game to expose its own settings (e.g., course length for golf, collision mode for platformer, team size for laser tag) without polluting the core configuration.
+This trait is implemented by all three game crates (golf, platformer, laser tag) and verified by 63 combined game tests. Rendering is handled by Bevy systems in the client crate rather than a `render()` method on the trait, keeping game logic decoupled from the rendering framework. The `custom` field in `GameConfig` allows each game to expose its own settings without polluting the core configuration. See [docs/GAME-DEVELOPMENT.md](docs/GAME-DEVELOPMENT.md) for a step-by-step guide to adding new games.
 
 ---
 
@@ -829,7 +818,7 @@ pub enum MessageType {
     ClaimAlert      = 0x04,  // Claim an actionable alert
     ChatMessage     = 0x05,  // Text chat
 
-    // Host → Client
+    // Host → Client (also via JoinRoomResponse = 0x06)
     GameState       = 0x10,  // Authoritative game state snapshot
     PlayerList      = 0x11,  // Updated player list (join/leave)
     RoomConfig      = 0x12,  // Room settings (game selection, config)
@@ -837,10 +826,13 @@ pub enum MessageType {
     RoundEnd        = 0x14,  // Round results, return to between-round lobby
     GameEnd         = 0x15,  // Final results, return to main lobby
 
-    // Host → Client (Alert channel, may also use SSE)
+    // Alert channel (also available via SSE)
     AlertEvent      = 0x20,  // New alert event
     AlertClaimed    = 0x21,  // Alert claimed by a player
     AlertDismissed  = 0x22,  // Alert auto-dismissed or expired
+
+    // Overlay configuration
+    OverlayConfig   = 0x23,  // Room overlay settings broadcast
 }
 ```
 
@@ -861,50 +853,77 @@ This is negligible on any network. Even the most network-intensive game (laser t
 
 ## 13. Development Roadmap
 
-### Phase 1: Foundation (Weeks 1–4)
+### Phase 1: Foundation — COMPLETE
 
-- Cargo workspace setup with core, server, and client crates
-- Axum server with static file serving, WSS endpoint, and room management
-- WASM client shell with lobby UI (create room, join room, set display name)
-- Basic state synchronization: player positions broadcast at 10 Hz
-- Simultaneous mini-golf with simple 2D physics (one hardcoded course)
-- Deploy and validate within a corporate network environment (VPN, proxy)
+- [x] Cargo workspace setup with core, server, and client crates
+- [x] Axum server with static file serving, WSS endpoint, and room management
+- [x] WASM client shell with lobby UI (create room, join room, set display name)
+- [x] Basic state synchronization: player positions broadcast at 10 Hz
+- [x] Simultaneous mini-golf with 2D physics, multiple obstacle types, scoring
+- [x] MessagePack binary protocol with 1-byte type prefix
+- [x] Host-authoritative networking with room codes (ABCD-1234 format)
 
 **Milestone:** Two players can join a room and play mini-golf simultaneously over WSS.
 
-### Phase 2: Overlay System (Weeks 5–8)
+### Phase 2: Overlay System — COMPLETE
 
-- Event schema definition and REST ingestion endpoint (`POST /api/v1/events`)
-- SSE event stream implementation
-- Overlay rendering: ambient ticker, toast notifications, dashboard toggle
-- GitHub webhook adapter (PR, push, workflow_run, issues, deployment_status)
-- GitHub Actions polling monitor with aggregate statistics
-- Alert claim system with multi-player acknowledgment broadcast
+- [x] Event schema definition with 22 event types and 4 priority tiers
+- [x] REST event ingestion endpoint (`POST /api/v1/events`) with single + batch support
+- [x] SSE event stream (`GET /api/v1/events/stream`)
+- [x] Overlay rendering: ambient ticker, toast notifications, dashboard toggle
+- [x] GitHub webhook adapter (PR, push, workflow_run, issues, deployment_status, issue_comment)
+- [x] Alert claim system with multi-player acknowledgment broadcast
+- [x] Bearer token authentication + GitHub HMAC signature verification
+- [x] In-memory event store with broadcast channel for real-time delivery
 
 **Milestone:** Agent events from a real GitHub repository appear as overlay notifications during gameplay.
 
-### Phase 3: Game Expansion (Weeks 9–12)
+### Phase 3: Game Expansion — COMPLETE
 
-- Platform racer with procedural course generation and two game modes
-- Laser tag arena with power-ups, reflective surfaces, and team mode
-- Between-round lobby with scoreboard and dashboard auto-expand
-- Spectator mode and late-join support
-- Audio system: game sounds + overlay notification sounds
-- Course/arena editor for host customization (stretch)
+- [x] Platform racer with procedural course generation, race + survival modes
+- [x] Laser tag arena with power-ups, reflective walls, FFA + team mode
+- [x] Between-round lobby with scoreboard
+- [x] Game-over summary screen with final scores
+- [x] Spectator mode and late-join support
+- [x] Audio system: game sounds + overlay notification sounds with per-priority volume
+- [x] Course editor for mini-golf level creation
+- [x] Multi-round support with configurable round count and duration
 
 **Milestone:** Three fully playable games with seamless transitions and overlay integration.
 
-### Phase 4: Polish and Release (Weeks 13–16)
+### Phase 4: Polish and Release — COMPLETE
 
-- Custom adapter documentation and example implementations (Python, Node.js, shell script)
-- Configuration UI for alert priority mapping and overlay preferences
-- Performance optimization: WASM size reduction, tick rate auto-tuning, lazy asset loading
-- Relay server deployment option (Fly.io / Cloudflare Worker)
-- Docker Compose one-command deployment
-- Open-source release: README, contributing guide, license, CI badges, release binaries
-- Dogfood in production office hours
+- [x] Overlay configuration types (room-level + player preferences)
+- [x] Server TOML config file support with environment variable overrides
+- [x] Client settings UI with localStorage persistence
+- [x] GitHub Actions polling monitor with agent/bot detection (new `breakpoint-github` crate)
+- [x] Dashboard agent filtering (All / Agent Only / Human Only) with robot badges
+- [x] Stateless WebSocket relay server for NAT traversal (new `breakpoint-relay` crate)
+- [x] WASM bundle optimization (opt-level z, LTO, strip, feature flags)
+- [x] Docker production image (multi-stage build) with Docker Compose deployment
+- [x] CI matrix builds (Linux x86_64 + aarch64), Docker push to GHCR
+- [x] Documentation: Architecture, Integration Guide, Game Development, Deployment
+- [x] Example adapters: Python, Node.js, shell, GitHub Actions workflow template
+- [x] README rewrite, CHANGELOG, release pipeline
 
-**Milestone:** Public repository with documentation, examples, release artifacts, and at least one production deployment.
+**Milestone:** Public repository with documentation, examples, release artifacts, and Docker deployment.
+
+### Phase 5: Testing, Validation, and Production Readiness — REMAINING
+
+The platform is feature-complete. Remaining work focuses on testing, validation, and production hardening:
+
+- [ ] End-to-end integration testing (multi-browser game sessions)
+- [ ] WASM build verification and bundle size audit
+- [ ] Docker image build verification and smoke testing
+- [ ] Network edge cases: reconnection, host migration under load, relay failover
+- [ ] Cross-browser compatibility testing (Chrome, Firefox, Safari, Edge)
+- [ ] Corporate proxy/VPN validation
+- [ ] Load testing: 8 concurrent players with sustained event ingestion
+- [ ] Alert overlay stress testing: high-frequency event flood behavior
+- [ ] Security review: input validation, auth edge cases, CORS policy
+- [ ] Performance profiling: frame rate, memory, bandwidth under real conditions
+- [ ] Production dogfooding in real office hours sessions
+- [ ] Release tagging (v0.1.0) and GitHub Release creation
 
 ---
 
@@ -928,20 +947,19 @@ This is negligible on any network. Even the most network-intensive game (laser t
 
 ## 15. Open Source Strategy
 
-**License:** MIT or Apache 2.0 dual license, standard for the Rust ecosystem. Permissive licensing encourages adoption and contribution from both individual developers and enterprises without legal friction.
+**License:** Unlicense OR MIT dual license. Maximally permissive — use it however you want.
 
-**Repository:** Public GitHub repository with CI/CD that builds and tests on every push. Releases include pre-built server binaries (Linux x86_64, Linux ARM64, macOS, Windows) and the WASM client bundle as a downloadable artifact. A Docker image is published to GitHub Container Registry for one-command deployment.
+**Repository:** Public GitHub repository at `github.com/AndrewAltimit/breakpoint` with CI/CD that builds and tests on every push. Releases include pre-built server + relay binaries (Linux x86_64, Linux aarch64) and the WASM client bundle as downloadable artifacts. A Docker image is published to GitHub Container Registry for one-command deployment.
 
-**Documentation:** The reference GitHub integration serves as the primary example. Additional examples are provided for common platforms and use cases:
-- GitLab CI/CD webhook adapter
-- Jenkins pipeline notifications
-- Custom HTTP agent (Python script example)
-- Shell script one-liners for ad-hoc notifications
-- The event schema documentation is thorough enough that any developer can build a custom adapter in under an hour.
+**All code is authored by AI agents under human direction. No external contributions are accepted.** See `CONTRIBUTING.md` for details.
 
-**Community:** Contributions are welcome for new game modules, integration adapters, overlay themes, and course/arena designs. The game trait interface is designed to make adding new games straightforward without needing to modify the core networking or overlay systems. A `CONTRIBUTING.md` guide covers the development setup, testing approach, and PR process.
+**Documentation:** Four documentation files ship with the project:
+- `docs/ARCHITECTURE.md` — System design, data flow, protocol specification
+- `docs/INTEGRATION-GUIDE.md` — Event schema reference, API endpoints, adapter examples
+- `docs/GAME-DEVELOPMENT.md` — Step-by-step guide to adding new games via the `BreakpointGame` trait
+- `docs/DEPLOYMENT.md` — Docker, relay, TLS, corporate network deployment
 
-**Dogfooding:** The project will be actively used internally at Cigna to validate the concept in a real enterprise environment. Learnings from corporate deployment (firewall issues, proxy compatibility, team adoption patterns, overlay usefulness metrics) will be documented publicly to help other enterprises adopt the tool.
+Example adapters are provided in Python, Node.js, and shell, plus a ready-to-use GitHub Actions workflow template.
 
 **Naming:** "Breakpoint" carries a triple meaning: the debugger pause where execution halts for inspection (exactly what humans do while agents run), the moment you take a break (the social/gaming layer), and the critical threshold where attention is needed (the alert overlay). The name is developer-native, immediately understood, and memorable.
 
@@ -979,4 +997,4 @@ This is negligible on any network. Even the most network-intensive game (laser t
 
 ---
 
-*This document is a living specification. It will be updated as development progresses and as learnings from dogfooding inform design decisions.*
+*This document is a living specification. Phases 1–4 are feature-complete with 157 passing tests across 8 workspace crates. Remaining work is testing, validation, and production hardening (Phase 5).*
