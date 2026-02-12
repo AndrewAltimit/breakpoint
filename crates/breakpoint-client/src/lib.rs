@@ -3,6 +3,7 @@ mod camera;
 pub mod game;
 pub mod lobby;
 pub mod net_client;
+pub mod overlay;
 
 use bevy::prelude::*;
 use wasm_bindgen::prelude::*;
@@ -12,6 +13,7 @@ use camera::GameCameraPlugin;
 use game::GamePlugin;
 use lobby::LobbyPlugin;
 use net_client::WsClient;
+use overlay::OverlayPlugin;
 
 /// WASM entry point.
 #[wasm_bindgen(start)]
@@ -31,6 +33,6 @@ pub fn start() {
         }))
         .init_state::<AppState>()
         .insert_non_send_resource(WsClient::new())
-        .add_plugins((LobbyPlugin, GamePlugin, GameCameraPlugin))
+        .add_plugins((LobbyPlugin, GamePlugin, GameCameraPlugin, OverlayPlugin))
         .run();
 }

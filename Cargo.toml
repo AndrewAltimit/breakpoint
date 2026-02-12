@@ -31,6 +31,10 @@ rmp-serde = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 rand = "0.9"
 bevy = { version = "0.18", default-features = false }
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+tokio-stream = { version = "0.1", features = ["sync"] }
 
 [patch.crates-io]
 winit = { path = "vendor/winit-0.30.12" }

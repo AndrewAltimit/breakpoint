@@ -412,6 +412,7 @@ fn client_receive_system(
     mut active_game: ResMut<ActiveGame>,
     network_role: Res<NetworkRole>,
     mut next_state: ResMut<NextState<AppState>>,
+    mut overlay_queue: ResMut<crate::overlay::OverlayEventQueue>,
 ) {
     use breakpoint_core::net::messages::MessageType;
 
@@ -442,6 +443,35 @@ fn client_receive_system(
             },
             MessageType::RoundEnd | MessageType::GameEnd => {
                 next_state.set(AppState::Lobby);
+            },
+            // Forward alert messages to the overlay
+            MessageType::AlertEvent => {
+                if let Ok(breakpoint_core::net::messages::ServerMessage::AlertEvent(ae)) =
+                    decode_server_message(&data)
+                {
+                    overlay_queue.push(crate::overlay::OverlayNetEvent::AlertReceived(Box::new(
+                        ae.event,
+                    )));
+                }
+            },
+            MessageType::AlertClaimed => {
+                if let Ok(breakpoint_core::net::messages::ServerMessage::AlertClaimed(ac)) =
+                    decode_server_message(&data)
+                {
+                    overlay_queue.push(crate::overlay::OverlayNetEvent::AlertClaimed {
+                        event_id: ac.event_id,
+                        claimed_by: ac.claimed_by.to_string(),
+                    });
+                }
+            },
+            MessageType::AlertDismissed => {
+                if let Ok(breakpoint_core::net::messages::ServerMessage::AlertDismissed(ad)) =
+                    decode_server_message(&data)
+                {
+                    overlay_queue.push(crate::overlay::OverlayNetEvent::AlertDismissed {
+                        event_id: ad.event_id,
+                    });
+                }
             },
             _ => {},
         }

@@ -20,6 +20,10 @@ tower-http = { version = "0.6", features = ["fs", "cors"] }
 futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+hmac.workspace = true
+sha2.workspace = true
+hex.workspace = true
+tokio-stream.workspace = true
 
 [lints]
 workspace = true

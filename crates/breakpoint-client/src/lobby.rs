@@ -326,6 +326,7 @@ fn lobby_input_system(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lobby_network_system(
     ws_client: NonSend<WsClient>,
     mut lobby: ResMut<LobbyState>,
@@ -334,9 +335,12 @@ fn lobby_network_system(
     mut status_text: Query<&mut Text, StatusFilter>,
     mut start_btn_vis: Query<&mut Visibility, With<LobbyButton>>,
     mut next_state: ResMut<NextState<AppState>>,
+    mut overlay_queue: ResMut<crate::overlay::OverlayEventQueue>,
+    mut overlay_state: ResMut<crate::overlay::OverlayState>,
 ) {
     let messages = ws_client.drain_messages();
     for data in messages {
+        // Try decoding as server message first
         let msg = match decode_server_message(&data) {
             Ok(m) => m,
             Err(_) => continue,
@@ -345,6 +349,9 @@ fn lobby_network_system(
         match msg {
             breakpoint_core::net::messages::ServerMessage::JoinRoomResponse(resp) => {
                 handle_join_response(&resp, &mut lobby);
+                if resp.success {
+                    overlay_state.local_player_id = resp.player_id;
+                }
                 if let Ok(mut text) = room_code_text.single_mut()
                     && let Some(code) = &resp.room_code
                 {
@@ -380,6 +387,23 @@ fn lobby_network_system(
             },
             breakpoint_core::net::messages::ServerMessage::GameStart(_) => {
                 next_state.set(AppState::InGame);
+            },
+            // Forward alert messages to the overlay
+            breakpoint_core::net::messages::ServerMessage::AlertEvent(ae) => {
+                overlay_queue.push(crate::overlay::OverlayNetEvent::AlertReceived(Box::new(
+                    ae.event,
+                )));
+            },
+            breakpoint_core::net::messages::ServerMessage::AlertClaimed(ac) => {
+                overlay_queue.push(crate::overlay::OverlayNetEvent::AlertClaimed {
+                    event_id: ac.event_id,
+                    claimed_by: ac.claimed_by.to_string(),
+                });
+            },
+            breakpoint_core::net::messages::ServerMessage::AlertDismissed(ad) => {
+                overlay_queue.push(crate::overlay::OverlayNetEvent::AlertDismissed {
+                    event_id: ad.event_id,
+                });
             },
             _ => {},
         }

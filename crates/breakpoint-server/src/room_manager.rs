@@ -228,6 +228,26 @@ impl RoomManager {
         encode_server_message(&msg).unwrap_or_default()
     }
 
+    /// Broadcast raw binary data to all players in all rooms.
+    pub fn broadcast_to_all_rooms(&self, data: &[u8]) {
+        for entry in self.rooms.values() {
+            for conn in entry.connections.values() {
+                let _ = conn.sender.send(data.to_vec());
+            }
+        }
+    }
+
+    /// Look up a player's display name by room code and player id.
+    pub fn get_player_name(&self, room_code: &str, player_id: PlayerId) -> Option<String> {
+        self.rooms
+            .get(room_code)?
+            .room
+            .players
+            .iter()
+            .find(|p| p.id == player_id)
+            .map(|p| p.display_name.clone())
+    }
+
     /// Check if a room exists.
     #[cfg(test)]
     pub fn room_exists(&self, room_code: &str) -> bool {
