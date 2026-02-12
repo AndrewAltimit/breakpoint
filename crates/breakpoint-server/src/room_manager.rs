@@ -1,0 +1,378 @@
+use std::collections::HashMap;
+
+use breakpoint_core::game_trait::PlayerId;
+use breakpoint_core::net::messages::{JoinRoomResponseMsg, PlayerListMsg, ServerMessage};
+use breakpoint_core::net::protocol::encode_server_message;
+use breakpoint_core::player::{Player, PlayerColor};
+use breakpoint_core::room::{Room, RoomState};
+use rand::Rng;
+use tokio::sync::mpsc;
+
+/// Per-player sender for outbound WebSocket binary messages.
+pub type PlayerSender = mpsc::UnboundedSender<Vec<u8>>;
+
+/// Tracks a connected player's outbound channel.
+struct ConnectedPlayer {
+    sender: PlayerSender,
+}
+
+/// Manages all active rooms and their connected players.
+pub struct RoomManager {
+    rooms: HashMap<String, RoomEntry>,
+    next_player_id: PlayerId,
+}
+
+struct RoomEntry {
+    room: Room,
+    connections: HashMap<PlayerId, ConnectedPlayer>,
+}
+
+impl RoomManager {
+    pub fn new() -> Self {
+        Self {
+            rooms: HashMap::new(),
+            next_player_id: 1,
+        }
+    }
+
+    fn alloc_player_id(&mut self) -> PlayerId {
+        let id = self.next_player_id;
+        self.next_player_id += 1;
+        id
+    }
+
+    /// Create a new room. Returns (room_code, player_id) for the host.
+    pub fn create_room(
+        &mut self,
+        player_name: String,
+        player_color: PlayerColor,
+        sender: PlayerSender,
+    ) -> (String, PlayerId) {
+        let code = generate_room_code(&self.rooms);
+        let player_id = self.alloc_player_id();
+        let player = Player {
+            id: player_id,
+            display_name: player_name,
+            color: player_color,
+            is_host: true,
+            is_spectator: false,
+        };
+        let room = Room::new(code.clone(), player);
+        let mut connections = HashMap::new();
+        connections.insert(player_id, ConnectedPlayer { sender });
+        self.rooms
+            .insert(code.clone(), RoomEntry { room, connections });
+        (code, player_id)
+    }
+
+    /// Join an existing room. Returns Ok(player_id) or Err(reason).
+    pub fn join_room(
+        &mut self,
+        room_code: &str,
+        player_name: String,
+        player_color: PlayerColor,
+        sender: PlayerSender,
+    ) -> Result<PlayerId, String> {
+        // Validate room exists and is joinable before allocating ID
+        {
+            let entry = self
+                .rooms
+                .get(room_code)
+                .ok_or_else(|| "Room not found".to_string())?;
+
+            if entry.room.state != RoomState::Lobby {
+                return Err("Game already in progress".to_string());
+            }
+
+            if entry.room.players.len() >= entry.room.config.max_players as usize {
+                return Err("Room is full".to_string());
+            }
+        }
+
+        let player_id = self.alloc_player_id();
+        let entry = self.rooms.get_mut(room_code).unwrap();
+        let player = Player {
+            id: player_id,
+            display_name: player_name,
+            color: player_color,
+            is_host: false,
+            is_spectator: false,
+        };
+
+        entry.room.players.push(player);
+        entry
+            .connections
+            .insert(player_id, ConnectedPlayer { sender });
+
+        Ok(player_id)
+    }
+
+    /// Remove a player from their room. Returns the room code if the room was
+    /// destroyed (empty after leave).
+    pub fn leave_room(&mut self, room_code: &str, player_id: PlayerId) -> Option<String> {
+        let entry = self.rooms.get_mut(room_code)?;
+
+        entry.connections.remove(&player_id);
+        entry.room.players.retain(|p| p.id != player_id);
+
+        if entry.room.players.is_empty() {
+            self.rooms.remove(room_code);
+            return Some(room_code.to_string());
+        }
+
+        // If the host left, migrate to the next player
+        if entry.room.host_id == player_id
+            && let Some(new_host) = entry.room.players.first()
+        {
+            entry.room.host_id = new_host.id;
+            for p in &mut entry.room.players {
+                p.is_host = p.id == entry.room.host_id;
+            }
+        }
+
+        None
+    }
+
+    /// Get the list of players in a room.
+    #[cfg(test)]
+    pub fn get_players(&self, room_code: &str) -> Option<Vec<Player>> {
+        self.rooms.get(room_code).map(|e| e.room.players.clone())
+    }
+
+    /// Get the host ID for a room.
+    pub fn get_host_id(&self, room_code: &str) -> Option<PlayerId> {
+        self.rooms.get(room_code).map(|e| e.room.host_id)
+    }
+
+    /// Get room state.
+    pub fn get_room_state(&self, room_code: &str) -> Option<RoomState> {
+        self.rooms.get(room_code).map(|e| e.room.state)
+    }
+
+    /// Update room state.
+    pub fn set_room_state(&mut self, room_code: &str, state: RoomState) {
+        if let Some(entry) = self.rooms.get_mut(room_code) {
+            entry.room.state = state;
+        }
+    }
+
+    /// Send a raw binary message to a specific player.
+    pub fn send_to_player(&self, room_code: &str, player_id: PlayerId, data: Vec<u8>) {
+        if let Some(entry) = self.rooms.get(room_code)
+            && let Some(conn) = entry.connections.get(&player_id)
+        {
+            let _ = conn.sender.send(data);
+        }
+    }
+
+    /// Broadcast raw binary data to all players in a room.
+    pub fn broadcast_to_room(&self, room_code: &str, data: &[u8]) {
+        if let Some(entry) = self.rooms.get(room_code) {
+            for conn in entry.connections.values() {
+                let _ = conn.sender.send(data.to_vec());
+            }
+        }
+    }
+
+    /// Broadcast raw binary data to all players except one.
+    pub fn broadcast_to_room_except(&self, room_code: &str, exclude: PlayerId, data: &[u8]) {
+        if let Some(entry) = self.rooms.get(room_code) {
+            for (id, conn) in &entry.connections {
+                if *id != exclude {
+                    let _ = conn.sender.send(data.to_vec());
+                }
+            }
+        }
+    }
+
+    /// Build and broadcast a PlayerList update to everyone in the room.
+    pub fn broadcast_player_list(&self, room_code: &str) {
+        if let Some(entry) = self.rooms.get(room_code) {
+            let msg = ServerMessage::PlayerList(PlayerListMsg {
+                players: entry.room.players.clone(),
+                host_id: entry.room.host_id,
+            });
+            if let Ok(data) = encode_server_message(&msg) {
+                for conn in entry.connections.values() {
+                    let _ = conn.sender.send(data.clone());
+                }
+            }
+        }
+    }
+
+    /// Build a JoinRoomResponse success message.
+    pub fn make_join_response(
+        player_id: PlayerId,
+        room_code: &str,
+        room_state: RoomState,
+    ) -> Vec<u8> {
+        let msg = ServerMessage::JoinRoomResponse(JoinRoomResponseMsg {
+            success: true,
+            player_id: Some(player_id),
+            room_code: Some(room_code.to_string()),
+            room_state: Some(room_state),
+            error: None,
+        });
+        encode_server_message(&msg).unwrap_or_default()
+    }
+
+    /// Build a JoinRoomResponse error message.
+    pub fn make_join_error(error: &str) -> Vec<u8> {
+        let msg = ServerMessage::JoinRoomResponse(JoinRoomResponseMsg {
+            success: false,
+            player_id: None,
+            room_code: None,
+            room_state: None,
+            error: Some(error.to_string()),
+        });
+        encode_server_message(&msg).unwrap_or_default()
+    }
+
+    /// Check if a room exists.
+    #[cfg(test)]
+    pub fn room_exists(&self, room_code: &str) -> bool {
+        self.rooms.contains_key(room_code)
+    }
+}
+
+/// Generate a unique room code in ABCD-1234 format.
+fn generate_room_code(existing: &HashMap<String, RoomEntry>) -> String {
+    let mut rng = rand::rng();
+    loop {
+        let letters: String = (0..4)
+            .map(|_| {
+                let c = rng.random_range(b'A'..=b'Z');
+                c as char
+            })
+            .collect();
+        let digits: String = (0..4)
+            .map(|_| {
+                let d = rng.random_range(b'0'..=b'9');
+                d as char
+            })
+            .collect();
+        let code = format!("{letters}-{digits}");
+        if !existing.contains_key(&code) {
+            return code;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use breakpoint_core::player::PlayerColor;
+
+    fn make_sender() -> (PlayerSender, mpsc::UnboundedReceiver<Vec<u8>>) {
+        mpsc::unbounded_channel()
+    }
+
+    #[test]
+    fn create_room_returns_valid_code() {
+        let mut mgr = RoomManager::new();
+        let (tx, _rx) = make_sender();
+        let (code, player_id) = mgr.create_room("Alice".into(), PlayerColor::default(), tx);
+        assert!(breakpoint_core::room::is_valid_room_code(&code));
+        assert_eq!(player_id, 1);
+        assert!(mgr.room_exists(&code));
+    }
+
+    #[test]
+    fn join_room_succeeds() {
+        let mut mgr = RoomManager::new();
+        let (tx1, _rx1) = make_sender();
+        let (code, _) = mgr.create_room("Alice".into(), PlayerColor::default(), tx1);
+
+        let (tx2, _rx2) = make_sender();
+        let result = mgr.join_room(&code, "Bob".into(), PlayerColor::PALETTE[1], tx2);
+        assert!(result.is_ok());
+
+        let players = mgr.get_players(&code).unwrap();
+        assert_eq!(players.len(), 2);
+    }
+
+    #[test]
+    fn join_nonexistent_room_fails() {
+        let mut mgr = RoomManager::new();
+        let (tx, _rx) = make_sender();
+        let result = mgr.join_room("XXXX-0000", "Bob".into(), PlayerColor::default(), tx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn join_full_room_fails() {
+        let mut mgr = RoomManager::new();
+        let (tx1, _rx1) = make_sender();
+        let (code, _) = mgr.create_room("Alice".into(), PlayerColor::default(), tx1);
+
+        // Fill the room (default max_players is 8, host is 1, so 7 more)
+        for i in 0..7 {
+            let (tx, _rx) = make_sender();
+            let name = format!("Player{i}");
+            mgr.join_room(&code, name, PlayerColor::default(), tx)
+                .unwrap();
+        }
+
+        let (tx_extra, _rx_extra) = make_sender();
+        let result = mgr.join_room(&code, "Extra".into(), PlayerColor::default(), tx_extra);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("full"));
+    }
+
+    #[test]
+    fn leave_room_removes_player() {
+        let mut mgr = RoomManager::new();
+        let (tx1, _rx1) = make_sender();
+        let (code, host_id) = mgr.create_room("Alice".into(), PlayerColor::default(), tx1);
+
+        let (tx2, _rx2) = make_sender();
+        let bob_id = mgr
+            .join_room(&code, "Bob".into(), PlayerColor::default(), tx2)
+            .unwrap();
+
+        mgr.leave_room(&code, bob_id);
+        let players = mgr.get_players(&code).unwrap();
+        assert_eq!(players.len(), 1);
+        assert_eq!(players[0].id, host_id);
+    }
+
+    #[test]
+    fn leave_room_destroys_empty_room() {
+        let mut mgr = RoomManager::new();
+        let (tx, _rx) = make_sender();
+        let (code, host_id) = mgr.create_room("Alice".into(), PlayerColor::default(), tx);
+
+        let destroyed = mgr.leave_room(&code, host_id);
+        assert!(destroyed.is_some());
+        assert!(!mgr.room_exists(&code));
+    }
+
+    #[test]
+    fn host_migration_on_leave() {
+        let mut mgr = RoomManager::new();
+        let (tx1, _rx1) = make_sender();
+        let (code, host_id) = mgr.create_room("Alice".into(), PlayerColor::default(), tx1);
+
+        let (tx2, _rx2) = make_sender();
+        let bob_id = mgr
+            .join_room(&code, "Bob".into(), PlayerColor::default(), tx2)
+            .unwrap();
+
+        mgr.leave_room(&code, host_id);
+        assert_eq!(mgr.get_host_id(&code), Some(bob_id));
+        let players = mgr.get_players(&code).unwrap();
+        assert!(players[0].is_host);
+    }
+
+    #[test]
+    fn room_code_format() {
+        let existing = HashMap::new();
+        for _ in 0..100 {
+            let code = generate_room_code(&existing);
+            assert!(
+                breakpoint_core::room::is_valid_room_code(&code),
+                "Invalid room code: {code}"
+            );
+        }
+    }
+}

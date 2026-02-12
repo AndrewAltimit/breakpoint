@@ -13,7 +13,11 @@ axum = { version = "0.8", features = ["ws"] }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+rmp-serde.workspace = true
+rand.workspace = true
+uuid.workspace = true
 tower-http = { version = "0.6", features = ["fs", "cors"] }
+futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

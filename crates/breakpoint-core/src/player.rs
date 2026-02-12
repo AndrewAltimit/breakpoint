@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::game_trait::PlayerId;
 
 /// A player connected to a Breakpoint room.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Player {
     pub id: PlayerId,
     pub display_name: String,
@@ -18,6 +18,12 @@ pub struct PlayerColor {
     pub r: u8,
     pub g: u8,
     pub b: u8,
+}
+
+impl Default for PlayerColor {
+    fn default() -> Self {
+        Self::PALETTE[0]
+    }
 }
 
 impl PlayerColor {

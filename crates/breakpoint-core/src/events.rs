@@ -66,8 +66,9 @@ pub enum EventType {
 }
 
 /// A Breakpoint event from an external data source.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Event {
+    pub id: String,
     pub event_type: EventType,
     pub source: String,
     #[serde(default)]
