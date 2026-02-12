@@ -8,6 +8,8 @@ Breakpoint is a browser-based multiplayer gaming platform (Rust + WASM) designed
 
 All code is authored by AI agents under human direction. No external contributions are accepted.
 
+**Status:** Feature-complete (Phases 1–4). 157 tests pass across 8 workspace crates. Remaining work is testing, validation, and production hardening.
+
 ## Build Commands
 
 ```bash
@@ -31,6 +33,8 @@ cargo build --workspace --release
 cargo build -p breakpoint-core
 cargo build -p breakpoint-server
 cargo build -p breakpoint-client
+cargo build -p breakpoint-relay
+cargo build -p breakpoint-github
 
 # Run a single test by name
 cargo test -p breakpoint-core test_name
@@ -40,6 +44,9 @@ cargo deny check
 
 # WASM client build
 wasm-pack build crates/breakpoint-client --target web --out-dir ../../web/pkg
+
+# Server with GitHub polling feature
+cargo build -p breakpoint-server --features github-poller
 ```
 
 ### Containerized CI (matches what GitHub Actions runs)
@@ -50,23 +57,32 @@ docker compose --profile ci run --rm rust-ci cargo clippy --workspace --all-targ
 docker compose --profile ci run --rm rust-ci cargo test --workspace
 ```
 
+### Docker production build
+
+```bash
+docker build -f docker/server.Dockerfile -t breakpoint .
+```
+
 ## Architecture
 
-**Workspace layout** — Three crates in `crates/`:
+**Workspace layout** — Eight crates in `crates/`:
 
-- **breakpoint-core** — Shared types with no runtime dependencies. Everything that both server and client need: event schema (`events.rs`), the `BreakpointGame` trait (`game_trait.rs`), player/room types, network message types (`net/`), and overlay data models (`overlay/`). Game crates and adapter crates will also depend on this.
-- **breakpoint-server** — Axum binary. Will handle: WSS game state relay, REST event ingestion (`/api/v1/events`), SSE event streaming, webhook adapters (GitHub etc.), room management, static file serving for the WASM client.
-- **breakpoint-client** — WASM library (`crate-type = ["cdylib", "rlib"]`). Entry point via `wasm-bindgen`. Will handle: game rendering (Canvas2D/wgpu), local simulation with server reconciliation, overlay rendering, WSS connection, lobby UI.
-
-**Future crates** (per design doc, not yet created):
-- `crates/games/breakpoint-golf/`, `breakpoint-platformer/`, `breakpoint-lasertag/` — Each implements `BreakpointGame` trait
-- `crates/adapters/breakpoint-github/` — GitHub webhook transformer + Actions polling
+- **breakpoint-core** — Shared types with no runtime dependencies. Event schema (`events.rs`), `BreakpointGame` trait (`game_trait.rs`), player/room types, network message types (`net/`), overlay data models (`overlay/` including config, ticker, toast, dashboard).
+- **breakpoint-server** — Axum binary. WSS game state relay, REST event ingestion (`/api/v1/events`), SSE streaming, GitHub webhook adapter, room management, TOML config loading, static file serving. Optional `github-poller` feature flag spawns the GitHub Actions polling monitor.
+- **breakpoint-client** — WASM library (`crate-type = ["cdylib", "rlib"]`), Bevy 0.18 game engine. Lobby UI, game rendering (golf/platformer/lasertag), overlay system (ticker/toasts/dashboard/claim), settings panel with localStorage persistence, audio, course editor.
+- **breakpoint-relay** — Stateless WebSocket relay for NAT traversal. Protocol-agnostic message forwarding, room code generation, auto-cleanup.
+- **breakpoint-golf** — Simultaneous mini-golf (2-8 players, 10 Hz). Physics, obstacles, scoring.
+- **breakpoint-platformer** — Platform racer (2-6 players, 15 Hz). Procedural courses, race/survival modes, power-ups.
+- **breakpoint-lasertag** — Laser tag arena (2-8 players, 20 Hz). Reflective walls, FFA/team modes, power-ups.
+- **breakpoint-github** — GitHub Actions polling adapter with agent/bot detection. Configurable glob-style patterns.
 
 **Key design patterns:**
 - Host-authoritative client-server: host browser runs authoritative simulation, clients send inputs and receive state
 - Dual-channel communication: game state over WSS (MessagePack, tick-aligned), alerts over SSE/WSS (JSON, event-driven)
 - Games are pluggable via the `BreakpointGame` trait — networking, overlay, and lobby code don't change when adding games
 - Alert overlay operates independently of game lifecycle (works in lobby, between rounds, during gameplay)
+- Game crates behind feature flags for optional compilation (reduce WASM bundle)
+- Server config via TOML file (`breakpoint.toml`) with env var overrides
 
 **Static assets** live in `web/` (HTML shell, CSS, sprites, sounds). The server serves these and the WASM bundle.
 
@@ -78,6 +94,7 @@ docker compose --profile ci run --rm rust-ci cargo test --workspace
 - Formatting: 100 char max width, 4-space indent, Unix newlines, tall fn params
 - Shared dependencies declared in `[workspace.dependencies]` and referenced with `.workspace = true`
 - Dual license: Unlicense OR MIT
+- Release profile: `opt-level = "z"`, LTO, `codegen-units = 1`, strip
 
 ## CI/CD Pipeline
 
@@ -85,9 +102,31 @@ Three GitHub Actions workflows, all on a self-hosted runner using Docker contain
 
 - **ci.yml** — push to main: fmt, clippy, test, build, cargo-deny
 - **pr-validation.yml** — PRs: same CI + Gemini/Codex AI reviews + agent auto-fix (up to 5 iterations). Agent infrastructure uses `github-agents` and `automation-cli` binaries from template-repo (degrades gracefully if missing).
-- **main-ci.yml** — push to main + `v*` tags: CI + release build (server binary + WASM bundle) + GitHub Release creation
+- **main-ci.yml** — push to main + `v*` tags: CI + matrix release builds (Linux x86_64 + aarch64) + Docker image push to GHCR + GitHub Release creation
 
 ## Docker
 
 - `docker/rust-ci.Dockerfile` — Rust stable + wasm-pack + cargo-deny. Used by `docker compose --profile ci`.
+- `docker/server.Dockerfile` — Multi-stage production image. Builder compiles server binary + WASM client. Runtime is `debian:bookworm-slim` with just the binary, web assets, and WASM bundle. Exposes port 8080.
 - `docker-compose.yml` — `rust-ci` service for CI, plus 9 MCP services (code-quality, gemini, codex, etc.) under `--profile services` for interactive agent sessions. MCP images are pre-built from template-repo, not buildable from this repo.
+- `examples/docker-compose.yml` — Production deployment compose file.
+
+## Key File Paths
+
+| Purpose | Path |
+|---------|------|
+| Event schema | `crates/breakpoint-core/src/events.rs` |
+| Game trait | `crates/breakpoint-core/src/game_trait.rs` |
+| Network protocol | `crates/breakpoint-core/src/net/protocol.rs` |
+| Message types | `crates/breakpoint-core/src/net/messages.rs` |
+| Overlay config types | `crates/breakpoint-core/src/overlay/config.rs` |
+| Server entry point | `crates/breakpoint-server/src/main.rs` |
+| Server config loading | `crates/breakpoint-server/src/config.rs` |
+| REST API handlers | `crates/breakpoint-server/src/api.rs` |
+| WebSocket handler | `crates/breakpoint-server/src/ws.rs` |
+| GitHub webhook | `crates/breakpoint-server/src/webhooks/github.rs` |
+| Client entry point | `crates/breakpoint-client/src/lib.rs` |
+| Overlay rendering | `crates/breakpoint-client/src/overlay.rs` |
+| Settings UI | `crates/breakpoint-client/src/settings.rs` |
+| Agent detection | `crates/adapters/breakpoint-github/src/agent_detect.rs` |
+| Relay server | `crates/breakpoint-relay/src/relay.rs` |
