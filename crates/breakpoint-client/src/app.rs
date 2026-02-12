@@ -6,8 +6,7 @@ pub enum AppState {
     #[default]
     Lobby,
     InGame,
-    #[allow(dead_code)]
     BetweenRounds,
-    #[allow(dead_code)]
     GameOver,
+    Editor,
 }

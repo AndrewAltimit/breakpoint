@@ -1,6 +1,10 @@
 mod app;
+mod audio;
+mod between_rounds;
 mod camera;
+mod editor;
 pub mod game;
+mod game_over;
 pub mod lobby;
 pub mod net_client;
 pub mod overlay;
@@ -9,8 +13,12 @@ use bevy::prelude::*;
 use wasm_bindgen::prelude::*;
 
 use app::AppState;
+use audio::AudioPlugin;
+use between_rounds::BetweenRoundsPlugin;
 use camera::GameCameraPlugin;
+use editor::EditorPlugin;
 use game::GamePlugin;
+use game_over::GameOverPlugin;
 use lobby::LobbyPlugin;
 use net_client::WsClient;
 use overlay::OverlayPlugin;
@@ -33,6 +41,15 @@ pub fn start() {
         }))
         .init_state::<AppState>()
         .insert_non_send_resource(WsClient::new())
-        .add_plugins((LobbyPlugin, GamePlugin, GameCameraPlugin, OverlayPlugin))
+        .add_plugins((
+            LobbyPlugin,
+            GamePlugin,
+            GameCameraPlugin,
+            BetweenRoundsPlugin,
+            GameOverPlugin,
+            OverlayPlugin,
+            AudioPlugin,
+            EditorPlugin,
+        ))
         .run();
 }

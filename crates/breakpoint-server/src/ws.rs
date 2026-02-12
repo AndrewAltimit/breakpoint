@@ -177,15 +177,23 @@ async fn read_loop(
 
             // Game lifecycle messages from host get broadcast to all
             MessageType::GameStart | MessageType::RoundEnd | MessageType::GameEnd => {
-                // Update room state for GameStart
-                if msg_type == MessageType::GameStart {
-                    drop(rooms);
-                    let mut rooms = state.rooms.write().await;
-                    rooms.set_room_state(room_code, RoomState::InGame);
-                    rooms.broadcast_to_room_except(room_code, player_id, &data);
-                    continue;
+                // Update room state based on message type
+                drop(rooms);
+                let mut rooms = state.rooms.write().await;
+                match msg_type {
+                    MessageType::GameStart => {
+                        rooms.set_room_state(room_code, RoomState::InGame);
+                    },
+                    MessageType::RoundEnd => {
+                        rooms.set_room_state(room_code, RoomState::BetweenRounds);
+                    },
+                    MessageType::GameEnd => {
+                        rooms.set_room_state(room_code, RoomState::Lobby);
+                    },
+                    _ => {},
                 }
                 rooms.broadcast_to_room_except(room_code, player_id, &data);
+                continue;
             },
 
             // Chat messages broadcast to all

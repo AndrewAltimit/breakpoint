@@ -1469,6 +1469,8 @@ dependencies = [
  "bevy",
  "breakpoint-core",
  "breakpoint-golf",
+ "breakpoint-lasertag",
+ "breakpoint-platformer",
  "console_error_panic_hook",
  "fastrand",
  "js-sys",
@@ -1495,6 +1497,27 @@ name = "breakpoint-golf"
 version = "0.1.0"
 dependencies = [
  "breakpoint-core",
+ "rmp-serde",
+ "serde",
+]
+
+[[package]]
+name = "breakpoint-lasertag"
+version = "0.1.0"
+dependencies = [
+ "breakpoint-core",
+ "rand",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "breakpoint-platformer"
+version = "0.1.0"
+dependencies = [
+ "breakpoint-core",
+ "rand",
  "rmp-serde",
  "serde",
 ]

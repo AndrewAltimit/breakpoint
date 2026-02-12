@@ -5,6 +5,8 @@ members = [
     "crates/breakpoint-server",
     "crates/breakpoint-client",
     "crates/games/breakpoint-golf",
+    "crates/games/breakpoint-platformer",
+    "crates/games/breakpoint-lasertag",
 ]
 
 [workspace.package]

@@ -10,7 +10,7 @@ pub type PlayerId = u64;
 ///
 /// The runtime manages networking, overlay, and player tracking;
 /// the game only handles game-specific logic and rendering.
-pub trait BreakpointGame {
+pub trait BreakpointGame: Send + Sync {
     /// Game metadata for the lobby selection screen.
     fn metadata(&self) -> GameMetadata;
 
@@ -37,6 +37,11 @@ pub trait BreakpointGame {
 
     /// Called when a player disconnects.
     fn player_left(&mut self, player_id: PlayerId);
+
+    /// Simulation tick rate in Hz. Different games may run at different rates.
+    fn tick_rate(&self) -> f32 {
+        10.0
+    }
 
     /// Whether the game supports the overlay pausing gameplay.
     fn supports_pause(&self) -> bool {

@@ -203,7 +203,11 @@ fn setup_overlay_ui(mut commands: Commands) {
 // --- Systems ---
 
 /// Intake overlay network events, route to ticker (Ambient) or toasts (Notice+).
-fn overlay_event_intake(mut queue: ResMut<OverlayEventQueue>, mut overlay: ResMut<OverlayState>) {
+fn overlay_event_intake(
+    mut queue: ResMut<OverlayEventQueue>,
+    mut overlay: ResMut<OverlayState>,
+    mut audio_queue: ResMut<crate::audio::AudioEventQueue>,
+) {
     let events: Vec<OverlayNetEvent> = queue.events.drain(..).collect();
     for net_event in events {
         match net_event {
@@ -221,7 +225,16 @@ fn overlay_event_intake(mut queue: ResMut<OverlayEventQueue>, mut overlay: ResMu
                     Priority::Ambient => {
                         overlay.ticker.push(&event);
                     },
-                    Priority::Notice | Priority::Urgent | Priority::Critical => {
+                    Priority::Notice => {
+                        audio_queue.push(crate::audio::AudioEvent::NoticeChime);
+                        overlay.toasts.push(event);
+                    },
+                    Priority::Urgent => {
+                        audio_queue.push(crate::audio::AudioEvent::UrgentAttention);
+                        overlay.toasts.push(event);
+                    },
+                    Priority::Critical => {
+                        audio_queue.push(crate::audio::AudioEvent::CriticalAlert);
                         overlay.toasts.push(event);
                     },
                 }

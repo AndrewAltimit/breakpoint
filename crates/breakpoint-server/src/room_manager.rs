@@ -66,6 +66,7 @@ impl RoomManager {
     }
 
     /// Join an existing room. Returns Ok(player_id) or Err(reason).
+    /// Players joining mid-game enter as spectators.
     pub fn join_room(
         &mut self,
         room_code: &str,
@@ -74,19 +75,19 @@ impl RoomManager {
         sender: PlayerSender,
     ) -> Result<PlayerId, String> {
         // Validate room exists and is joinable before allocating ID
+        let is_spectator;
         {
             let entry = self
                 .rooms
                 .get(room_code)
                 .ok_or_else(|| "Room not found".to_string())?;
 
-            if entry.room.state != RoomState::Lobby {
-                return Err("Game already in progress".to_string());
-            }
-
             if entry.room.players.len() >= entry.room.config.max_players as usize {
                 return Err("Room is full".to_string());
             }
+
+            // Late-joiners (room not in Lobby) enter as spectators
+            is_spectator = entry.room.state != RoomState::Lobby;
         }
 
         let player_id = self.alloc_player_id();
@@ -96,7 +97,7 @@ impl RoomManager {
             display_name: player_name,
             color: player_color,
             is_host: false,
-            is_spectator: false,
+            is_spectator,
         };
 
         entry.room.players.push(player);

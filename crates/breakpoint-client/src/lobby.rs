@@ -36,8 +36,10 @@ pub struct LobbyState {
     pub is_host: bool,
     pub players: Vec<Player>,
     pub connected: bool,
+    pub is_spectator: bool,
     pub error_message: Option<String>,
     pub ws_url: String,
+    pub selected_game: String,
 }
 
 #[derive(Component)]
@@ -73,11 +75,21 @@ enum LobbyButton {
     Create,
     Join,
     StartGame,
+    OpenEditor,
 }
+
+#[derive(Component)]
+struct GameSelectButton(String);
+
+#[derive(Component)]
+struct GameSelectionText;
 
 fn setup_lobby(mut commands: Commands, mut lobby: ResMut<LobbyState>) {
     if lobby.player_name.is_empty() {
         lobby.player_name = format!("Player{}", fastrand::u16(..1000));
+    }
+    if lobby.selected_game.is_empty() {
+        lobby.selected_game = "mini-golf".to_string();
     }
 
     // Determine WebSocket URL
@@ -136,12 +148,45 @@ fn setup_lobby(mut commands: Commands, mut lobby: ResMut<LobbyState>) {
             ));
 
             parent.spawn((
-                Text::new("Mini-Golf Arena"),
+                Text::new("Multiplayer Game Arena"),
                 TextFont {
                     font_size: 24.0,
                     ..default()
                 },
                 TextColor(text_color),
+            ));
+
+            // Game selection buttons
+            parent.spawn((
+                Text::new("Select Game:"),
+                TextFont {
+                    font_size: 16.0,
+                    ..default()
+                },
+                TextColor(text_color),
+            ));
+
+            parent
+                .spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    column_gap: Val::Px(8.0),
+                    ..default()
+                })
+                .with_children(|row| {
+                    spawn_game_button(row, "Mini-Golf", "mini-golf", btn_color);
+                    spawn_game_button(row, "Platform Racer", "platform-racer", btn_color);
+                    spawn_game_button(row, "Laser Tag", "laser-tag", btn_color);
+                });
+
+            // Selected game indicator
+            parent.spawn((
+                GameSelectionText,
+                Text::new(format!("Game: {}", lobby.selected_game)),
+                TextFont {
+                    font_size: 16.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.3, 0.9, 0.3)),
             ));
 
             parent.spawn((
@@ -177,6 +222,12 @@ fn setup_lobby(mut commands: Commands, mut lobby: ResMut<LobbyState>) {
                 .with_children(|row| {
                     spawn_button(row, "Create Room", LobbyButton::Create, btn_color);
                     spawn_button(row, "Join Room", LobbyButton::Join, btn_color);
+                    spawn_button(
+                        row,
+                        "Editor",
+                        LobbyButton::OpenEditor,
+                        Color::srgb(0.5, 0.3, 0.6),
+                    );
                 });
 
             // Start Game button (hidden initially)
@@ -235,6 +286,27 @@ fn setup_lobby(mut commands: Commands, mut lobby: ResMut<LobbyState>) {
         });
 }
 
+fn spawn_game_button(parent: &mut ChildSpawnerCommands, label: &str, game_id: &str, color: Color) {
+    parent
+        .spawn((
+            GameSelectButton(game_id.to_string()),
+            Button,
+            Node {
+                padding: UiRect::axes(Val::Px(16.0), Val::Px(8.0)),
+                ..default()
+            },
+            BackgroundColor(color),
+        ))
+        .with_child((
+            Text::new(label),
+            TextFont {
+                font_size: 14.0,
+                ..default()
+            },
+            TextColor(Color::WHITE),
+        ));
+}
+
 fn spawn_button(parent: &mut ChildSpawnerCommands, label: &str, action: LobbyButton, color: Color) {
     parent
         .spawn((
@@ -256,11 +328,25 @@ fn spawn_button(parent: &mut ChildSpawnerCommands, label: &str, action: LobbyBut
         ));
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lobby_input_system(
     interaction_query: Query<(&Interaction, &LobbyButton), Changed<Interaction>>,
+    game_select_query: Query<(&Interaction, &GameSelectButton), Changed<Interaction>>,
     mut lobby: ResMut<LobbyState>,
     mut ws_client: NonSendMut<WsClient>,
+    mut game_text_query: Query<&mut Text, With<GameSelectionText>>,
+    mut next_state: ResMut<NextState<AppState>>,
 ) {
+    // Handle game selection buttons
+    for (interaction, btn) in &game_select_query {
+        if *interaction == Interaction::Pressed {
+            lobby.selected_game = btn.0.clone();
+            if let Ok(mut text) = game_text_query.single_mut() {
+                **text = format!("Game: {}", lobby.selected_game);
+            }
+        }
+    }
+
     for (interaction, button) in &interaction_query {
         if *interaction != Interaction::Pressed {
             continue;
@@ -313,7 +399,7 @@ fn lobby_input_system(
                 if lobby.is_host {
                     let msg =
                         breakpoint_core::net::messages::ServerMessage::GameStart(GameStartMsg {
-                            game_name: "mini-golf".to_string(),
+                            game_name: lobby.selected_game.clone(),
                             players: lobby.players.clone(),
                             host_id: lobby.local_player_id.unwrap_or(0),
                         });
@@ -321,6 +407,9 @@ fn lobby_input_system(
                         let _ = ws_client.send(&data);
                     }
                 }
+            },
+            LobbyButton::OpenEditor => {
+                next_state.set(AppState::Editor);
             },
         }
     }
@@ -351,6 +440,15 @@ fn lobby_network_system(
                 handle_join_response(&resp, &mut lobby);
                 if resp.success {
                     overlay_state.local_player_id = resp.player_id;
+
+                    // Late-join: if room is already in-game, mark as spectator
+                    // and transition directly to InGame
+                    if let Some(room_state) = resp.room_state
+                        && room_state != breakpoint_core::room::RoomState::Lobby
+                    {
+                        lobby.is_spectator = true;
+                        next_state.set(AppState::InGame);
+                    }
                 }
                 if let Ok(mut text) = room_code_text.single_mut()
                     && let Some(code) = &resp.room_code
@@ -385,7 +483,8 @@ fn lobby_network_system(
                     }
                 }
             },
-            breakpoint_core::net::messages::ServerMessage::GameStart(_) => {
+            breakpoint_core::net::messages::ServerMessage::GameStart(gs) => {
+                lobby.selected_game = gs.game_name;
                 next_state.set(AppState::InGame);
             },
             // Forward alert messages to the overlay

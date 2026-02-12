@@ -13,6 +13,8 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 breakpoint-core = { path = "../breakpoint-core" }
 breakpoint-golf = { path = "../games/breakpoint-golf" }
+breakpoint-platformer = { path = "../games/breakpoint-platformer" }
+breakpoint-lasertag = { path = "../games/breakpoint-lasertag" }
 serde.workspace = true
 serde_json.workspace = true
 rmp-serde.workspace = true
@@ -45,6 +47,13 @@ web-sys = { version = "0.3", features = [
     "Location",
     "ErrorEvent",
     "CloseEvent",
+    "AudioContext",
+    "AudioDestinationNode",
+    "GainNode",
+    "OscillatorNode",
+    "OscillatorType",
+    "AudioParam",
+    "Storage",
 ] }
 console_error_panic_hook = "0.1"
 fastrand = "2"
