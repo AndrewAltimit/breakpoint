@@ -8,6 +8,7 @@ pub mod lobby;
 pub mod net_client;
 pub mod overlay;
 mod settings;
+mod storage;
 
 use bevy::prelude::*;
 use wasm_bindgen::prelude::*;

@@ -8,6 +8,7 @@ pub enum LaserPowerUpKind {
     RapidFire,
     Shield,
     SpeedBoost,
+    /// Stub: spawns and can be collected, but has no gameplay effect yet.
     WideBeam,
 }
 

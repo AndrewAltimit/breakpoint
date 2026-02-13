@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use breakpoint_core::breakpoint_game_boilerplate;
 use breakpoint_core::game_trait::{
     BreakpointGame, GameConfig, GameEvent, GameMetadata, PlayerId, PlayerInputs, PlayerScore,
 };
@@ -437,19 +438,7 @@ impl BreakpointGame for LaserTagArena {
         events
     }
 
-    fn serialize_state(&self) -> Vec<u8> {
-        rmp_serde::to_vec(&self.state).unwrap_or_default()
-    }
-
-    fn apply_state(&mut self, state: &[u8]) {
-        if let Ok(s) = rmp_serde::from_slice::<LaserTagState>(state) {
-            self.state = s;
-        }
-    }
-
-    fn serialize_input(&self, _player_id: PlayerId) -> Vec<u8> {
-        Vec::new()
-    }
+    breakpoint_game_boilerplate!(state_type: LaserTagState);
 
     fn apply_input(&mut self, player_id: PlayerId, input: &[u8]) {
         if let Ok(li) = rmp_serde::from_slice::<LaserTagInput>(input) {
@@ -478,18 +467,6 @@ impl BreakpointGame for LaserTagArena {
         self.state.active_powerups.remove(&player_id);
         self.state.tags_scored.remove(&player_id);
         self.state.teams.remove(&player_id);
-    }
-
-    fn pause(&mut self) {
-        self.paused = true;
-    }
-
-    fn resume(&mut self) {
-        self.paused = false;
-    }
-
-    fn is_round_complete(&self) -> bool {
-        self.state.round_complete
     }
 
     fn round_results(&self) -> Vec<PlayerScore> {

@@ -231,64 +231,46 @@ fn settings_ui_system(
 /// Persist audio settings to localStorage.
 #[allow(unused_variables)]
 fn save_audio_prefs(settings: &AudioSettings) {
-    #[cfg(target_family = "wasm")]
-    {
-        if let Some(window) = web_sys::window()
-            && let Ok(Some(storage)) = window.local_storage()
-        {
-            let _ = storage.set_item("audio_muted", &settings.muted.to_string());
-            let _ = storage.set_item("audio_master_volume", &settings.master_volume.to_string());
-        }
-    }
+    crate::storage::with_local_storage(|storage| {
+        let _ = storage.set_item("audio_muted", &settings.muted.to_string());
+        let _ = storage.set_item("audio_master_volume", &settings.master_volume.to_string());
+    });
 }
 
 /// Persist overlay prefs to localStorage.
 #[allow(unused_variables)]
 fn save_overlay_prefs(prefs: &OverlayPlayerPrefs) {
-    #[cfg(target_family = "wasm")]
-    {
-        if let Some(window) = web_sys::window()
-            && let Ok(Some(storage)) = window.local_storage()
-        {
-            let _ = storage.set_item(
-                "overlay_toast_position",
-                &format!("{:?}", prefs.toast_position),
-            );
-            let _ = storage.set_item(
-                "overlay_notification_density",
-                &format!("{:?}", prefs.notification_density),
-            );
-        }
-    }
+    crate::storage::with_local_storage(|storage| {
+        let _ = storage.set_item(
+            "overlay_toast_position",
+            &format!("{:?}", prefs.toast_position),
+        );
+        let _ = storage.set_item(
+            "overlay_notification_density",
+            &format!("{:?}", prefs.notification_density),
+        );
+    });
 }
 
 /// Load player prefs from localStorage on entering lobby.
-fn load_player_prefs(
-    #[cfg_attr(not(target_family = "wasm"), allow(unused_mut))] mut prefs: ResMut<PlayerPrefs>,
-) {
-    #[cfg(target_family = "wasm")]
-    {
-        if let Some(window) = web_sys::window()
-            && let Ok(Some(storage)) = window.local_storage()
-        {
-            if let Ok(Some(val)) = storage.get_item("overlay_toast_position") {
-                prefs.0.toast_position = match val.as_str() {
-                    "TopRight" => ToastPosition::TopRight,
-                    "TopLeft" => ToastPosition::TopLeft,
-                    "BottomRight" => ToastPosition::BottomRight,
-                    "BottomLeft" => ToastPosition::BottomLeft,
-                    _ => ToastPosition::default(),
-                };
-            }
-            if let Ok(Some(val)) = storage.get_item("overlay_notification_density") {
-                prefs.0.notification_density = match val.as_str() {
-                    "All" => NotificationDensity::All,
-                    "Compact" => NotificationDensity::Compact,
-                    "CriticalOnly" => NotificationDensity::CriticalOnly,
-                    _ => NotificationDensity::default(),
-                };
-            }
+fn load_player_prefs(mut prefs: ResMut<PlayerPrefs>) {
+    crate::storage::with_local_storage(|storage| {
+        if let Ok(Some(val)) = storage.get_item("overlay_toast_position") {
+            prefs.0.toast_position = match val.as_str() {
+                "TopRight" => ToastPosition::TopRight,
+                "TopLeft" => ToastPosition::TopLeft,
+                "BottomRight" => ToastPosition::BottomRight,
+                "BottomLeft" => ToastPosition::BottomLeft,
+                _ => ToastPosition::default(),
+            };
         }
-    }
-    let _ = &prefs;
+        if let Ok(Some(val)) = storage.get_item("overlay_notification_density") {
+            prefs.0.notification_density = match val.as_str() {
+                "All" => NotificationDensity::All,
+                "Compact" => NotificationDensity::Compact,
+                "CriticalOnly" => NotificationDensity::CriticalOnly,
+                _ => NotificationDensity::default(),
+            };
+        }
+    });
 }

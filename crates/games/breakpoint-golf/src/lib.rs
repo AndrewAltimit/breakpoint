@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use breakpoint_core::breakpoint_game_boilerplate;
 use breakpoint_core::game_trait::{
     BreakpointGame, GameConfig, GameEvent, GameMetadata, PlayerId, PlayerInputs, PlayerScore,
 };
@@ -184,21 +185,7 @@ impl BreakpointGame for MiniGolf {
         events
     }
 
-    fn serialize_state(&self) -> Vec<u8> {
-        rmp_serde::to_vec(&self.state).unwrap_or_default()
-    }
-
-    fn apply_state(&mut self, state: &[u8]) {
-        if let Ok(s) = rmp_serde::from_slice::<GolfState>(state) {
-            self.state = s;
-        }
-    }
-
-    fn serialize_input(&self, _player_id: PlayerId) -> Vec<u8> {
-        // Client-side: the actual input is set before calling this.
-        // For now, return empty — real input is handled via apply_input.
-        Vec::new()
-    }
+    breakpoint_game_boilerplate!(state_type: GolfState);
 
     fn apply_input(&mut self, player_id: PlayerId, input: &[u8]) {
         let golf_input: GolfInput = match rmp_serde::from_slice(input) {
@@ -236,22 +223,6 @@ impl BreakpointGame for MiniGolf {
 
     fn round_count_hint(&self) -> u8 {
         self.courses.len() as u8
-    }
-
-    fn supports_pause(&self) -> bool {
-        true
-    }
-
-    fn pause(&mut self) {
-        self.paused = true;
-    }
-
-    fn resume(&mut self) {
-        self.paused = false;
-    }
-
-    fn is_round_complete(&self) -> bool {
-        self.state.round_complete
     }
 
     fn round_results(&self) -> Vec<PlayerScore> {

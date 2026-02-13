@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use breakpoint_core::events::Event;
 
+use crate::error::AppError;
 use crate::state::AppState;
 
 /// Request body for posting a single event.
@@ -26,14 +27,14 @@ pub struct PostEventsResponse {
 pub async fn post_events(
     State(state): State<AppState>,
     Json(body): Json<PostEventsBody>,
-) -> Result<(StatusCode, Json<PostEventsResponse>), (StatusCode, String)> {
+) -> Result<(StatusCode, Json<PostEventsResponse>), AppError> {
     let events = match body {
         PostEventsBody::Single(e) => vec![*e],
         PostEventsBody::Batch(v) => v,
     };
 
     if events.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "No events provided".to_string()));
+        return Err(AppError::BadRequest("No events provided".to_string()));
     }
 
     let mut event_ids = Vec::with_capacity(events.len());
@@ -70,7 +71,7 @@ pub async fn claim_event(
     State(state): State<AppState>,
     axum::extract::Path(event_id): axum::extract::Path<String>,
     Json(body): Json<ClaimEventBody>,
-) -> Result<Json<ClaimEventResponse>, (StatusCode, String)> {
+) -> Result<Json<ClaimEventResponse>, AppError> {
     let mut store = state.event_store.write().await;
     let now = breakpoint_core::time::timestamp_now();
     let claimed = store.claim(&event_id, body.claimed_by, now);
@@ -80,7 +81,7 @@ pub async fn claim_event(
             event_id,
         }))
     } else {
-        Err((StatusCode::NOT_FOUND, format!("Event {event_id} not found")))
+        Err(AppError::NotFound(format!("Event {event_id} not found")))
     }
 }
 
@@ -102,6 +103,18 @@ pub struct EventSummary {
     pub claimed_by: Option<String>,
 }
 
+impl From<&crate::event_store::StoredEvent> for EventSummary {
+    fn from(se: &crate::event_store::StoredEvent) -> Self {
+        Self {
+            id: se.event.id.clone(),
+            event_type: serde_json::to_string(&se.event.event_type).unwrap_or_default(),
+            title: se.event.title.clone(),
+            source: se.event.source.clone(),
+            claimed_by: se.claimed_by.clone(),
+        }
+    }
+}
+
 /// GET /api/v1/status — returns pending actions, recent events, stats.
 pub async fn get_status(State(state): State<AppState>) -> Json<StatusResponse> {
     let store = state.event_store.read().await;
@@ -110,25 +123,13 @@ pub async fn get_status(State(state): State<AppState>) -> Json<StatusResponse> {
     let recent_events: Vec<EventSummary> = store
         .recent(20)
         .into_iter()
-        .map(|se| EventSummary {
-            id: se.event.id.clone(),
-            event_type: serde_json::to_string(&se.event.event_type).unwrap_or_default(),
-            title: se.event.title.clone(),
-            source: se.event.source.clone(),
-            claimed_by: se.claimed_by.clone(),
-        })
+        .map(EventSummary::from)
         .collect();
 
     let pending_actions: Vec<EventSummary> = store
         .pending_actions()
         .into_iter()
-        .map(|se| EventSummary {
-            id: se.event.id.clone(),
-            event_type: serde_json::to_string(&se.event.event_type).unwrap_or_default(),
-            title: se.event.title.clone(),
-            source: se.event.source.clone(),
-            claimed_by: se.claimed_by.clone(),
-        })
+        .map(EventSummary::from)
         .collect();
 
     Json(StatusResponse {
@@ -197,9 +198,7 @@ mod tests {
         let state = AppState::new(ServerConfig::default());
         let body = Json(PostEventsBody::Batch(vec![]));
         let result = post_events(State(state), body).await;
-        assert!(result.is_err());
-        let (status, _) = result.unwrap_err();
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(matches!(result.unwrap_err(), AppError::BadRequest(_)));
     }
 
     #[tokio::test]
@@ -232,9 +231,7 @@ mod tests {
         });
         let path = axum::extract::Path("nonexistent".to_string());
         let result = claim_event(State(state), path, body).await;
-        assert!(result.is_err());
-        let (status, _) = result.unwrap_err();
-        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(matches!(result.unwrap_err(), AppError::NotFound(_)));
     }
 
     #[tokio::test]

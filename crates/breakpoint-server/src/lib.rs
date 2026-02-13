@@ -1,6 +1,7 @@
 pub mod api;
 pub mod auth;
 pub mod config;
+pub mod error;
 pub mod event_store;
 pub mod room_manager;
 pub mod sse;

@@ -218,12 +218,7 @@ async fn read_loop(
                     drop(rooms);
 
                     // Record the claim in the event store
-                    let now = {
-                        let dur = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default();
-                        format!("{}Z", dur.as_secs())
-                    };
+                    let now = breakpoint_core::time::timestamp_now();
                     {
                         let mut store = state.event_store.write().await;
                         store.claim(&claim.event_id, player_name.clone(), now);

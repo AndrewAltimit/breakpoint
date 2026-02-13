@@ -195,23 +195,15 @@ enum SoundCategory {
 }
 
 /// Load audio settings from localStorage on entering lobby.
-fn load_audio_settings(
-    #[cfg_attr(not(target_family = "wasm"), allow(unused_mut))] mut settings: ResMut<AudioSettings>,
-) {
-    #[cfg(target_family = "wasm")]
-    {
-        if let Some(window) = web_sys::window()
-            && let Ok(Some(storage)) = window.local_storage()
-        {
-            if let Ok(Some(val)) = storage.get_item("audio_muted") {
-                settings.muted = val == "true";
-            }
-            if let Ok(Some(val)) = storage.get_item("audio_master_volume") {
-                if let Ok(v) = val.parse::<f32>() {
-                    settings.master_volume = v.clamp(0.0, 1.0);
-                }
-            }
+fn load_audio_settings(mut settings: ResMut<AudioSettings>) {
+    crate::storage::with_local_storage(|storage| {
+        if let Ok(Some(val)) = storage.get_item("audio_muted") {
+            settings.muted = val == "true";
         }
-    }
-    let _ = &settings; // suppress unused warning on non-wasm
+        if let Ok(Some(val)) = storage.get_item("audio_master_volume")
+            && let Ok(v) = val.parse::<f32>()
+        {
+            settings.master_volume = v.clamp(0.0, 1.0);
+        }
+    });
 }

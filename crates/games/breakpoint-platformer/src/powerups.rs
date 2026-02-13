@@ -8,6 +8,7 @@ pub enum PowerUpKind {
     SpeedBoost,
     DoubleJump,
     Shield,
+    /// Stub: spawns and can be collected, but has no gameplay effect yet.
     Magnet,
 }
 

@@ -106,33 +106,13 @@ impl Default for ToastQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::{EventType, Priority};
-    use std::collections::HashMap;
-
-    fn make_event(id: &str) -> Event {
-        Event {
-            id: id.to_string(),
-            event_type: EventType::PrOpened,
-            source: "test".to_string(),
-            priority: Priority::Notice,
-            title: format!("Event {id}"),
-            body: None,
-            timestamp: "2026-01-01T00:00:00Z".to_string(),
-            url: None,
-            actor: None,
-            tags: vec![],
-            action_required: false,
-            group_key: None,
-            expires_at: None,
-            metadata: HashMap::new(),
-        }
-    }
+    use crate::test_helpers::make_test_event;
 
     #[test]
     fn dismiss_toast() {
         let mut q = ToastQueue::new();
-        q.push(make_event("evt-1"));
-        q.push(make_event("evt-2"));
+        q.push(make_test_event("evt-1"));
+        q.push(make_test_event("evt-2"));
 
         assert!(q.dismiss("evt-1"));
         assert!(!q.dismiss("nonexistent"));
@@ -142,7 +122,7 @@ mod tests {
     #[test]
     fn mark_claimed_toast() {
         let mut q = ToastQueue::new();
-        q.push(make_event("evt-1"));
+        q.push(make_test_event("evt-1"));
         q.mark_claimed("evt-1", "alice".to_string());
         assert_eq!(q.visible()[0].claimed_by.as_deref(), Some("alice"));
     }
@@ -151,7 +131,7 @@ mod tests {
     fn prune_promotes_pending() {
         let mut q = ToastQueue::new();
         for i in 0..5 {
-            q.push(make_event(&format!("evt-{i}")));
+            q.push(make_test_event(&format!("evt-{i}")));
         }
         assert_eq!(q.visible().len(), MAX_VISIBLE_TOASTS);
         assert_eq!(q.pending_count(), 2);
@@ -167,7 +147,7 @@ mod tests {
     #[test]
     fn prune_removes_expired() {
         let mut q = ToastQueue::new();
-        q.push(make_event("evt-1"));
+        q.push(make_test_event("evt-1"));
         q.visible.get_mut(0).unwrap().time_remaining = 0.0;
         q.prune_expired();
         assert!(q.visible().is_empty());
