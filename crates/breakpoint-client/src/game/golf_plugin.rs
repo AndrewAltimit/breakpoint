@@ -4,10 +4,6 @@ use bevy::ecs::system::NonSend;
 use bevy::prelude::*;
 
 use breakpoint_core::game_trait::PlayerId;
-use breakpoint_core::net::messages::PlayerInputMsg;
-use breakpoint_core::net::protocol::encode_client_message;
-use breakpoint_core::player::PlayerColor;
-
 use breakpoint_golf::course::all_courses;
 use breakpoint_golf::physics::{BALL_RADIUS, HOLE_RADIUS};
 use breakpoint_golf::{GolfInput, GolfState, MiniGolf};
@@ -15,7 +11,10 @@ use breakpoint_golf::{GolfInput, GolfState, MiniGolf};
 use crate::app::AppState;
 use crate::net_client::WsClient;
 
-use super::{ActiveGame, GameEntity, GameRegistry, NetworkRole};
+use super::{
+    ActiveGame, GameEntity, GameRegistry, HudPosition, NetworkRole, player_color_to_bevy,
+    read_game_state, send_player_input, spawn_hud_text,
+};
 
 pub struct GolfPlugin;
 
@@ -139,7 +138,7 @@ fn setup_golf(
     commands.insert_resource(SunkTracker::default());
 
     // Get course info from the active game's serialized state
-    let state: Option<GolfState> = rmp_serde::from_slice(&active_game.game.serialize_state()).ok();
+    let state: Option<GolfState> = read_game_state(&active_game);
     let course_index = state.map(|s| s.course_index as usize).unwrap_or(0);
 
     let courses = all_courses();
@@ -399,28 +398,20 @@ fn setup_golf(
     // --- UI ---
 
     // Hole info header (top-left)
-    commands.spawn((
-        GameEntity,
+    spawn_hud_text(
+        &mut commands,
         HoleInfoText,
-        Text::new(format!(
+        format!(
             "Hole {} of {} — {} — Par {}",
             course_index + 1,
             courses.len(),
             course_data.name,
             course_data.par
-        )),
-        TextFont {
-            font_size: 18.0,
-            ..default()
-        },
-        TextColor(Color::srgb(0.9, 0.9, 0.9)),
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px(10.0),
-            left: Val::Px(10.0),
-            ..default()
-        },
-    ));
+        ),
+        18.0,
+        Color::srgb(0.9, 0.9, 0.9),
+        HudPosition::TopLeft,
+    );
 
     // Power bar with gradient fill and label
     commands
@@ -469,23 +460,15 @@ fn setup_golf(
                 });
         });
 
-    // Stroke counter (top-right, under hole info)
-    commands.spawn((
-        GameEntity,
+    // Stroke counter (top-right)
+    spawn_hud_text(
+        &mut commands,
         StrokeCounterText,
-        Text::new("Strokes: 0"),
-        TextFont {
-            font_size: 18.0,
-            ..default()
-        },
-        TextColor(Color::WHITE),
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px(10.0),
-            right: Val::Px(10.0),
-            ..default()
-        },
-    ));
+        "Strokes: 0",
+        18.0,
+        Color::WHITE,
+        HudPosition::TopRight,
+    );
 
     // Mini-scoreboard (right side)
     commands.spawn((
@@ -530,7 +513,7 @@ fn golf_input_system(
     };
 
     // Deserialize current golf state to get ball position
-    let state: Option<GolfState> = rmp_serde::from_slice(&active_game.game.serialize_state()).ok();
+    let state: Option<GolfState> = read_game_state(&active_game);
     let ball_pos = state.as_ref().and_then(|s| {
         s.balls
             .get(&network_role.local_player_id)
@@ -585,22 +568,7 @@ fn golf_apply_input_system(
 
     audio_queue.push(crate::audio::AudioEvent::GolfStroke);
 
-    if network_role.is_host {
-        if let Ok(data) = rmp_serde::to_vec(&input) {
-            active_game
-                .game
-                .apply_input(network_role.local_player_id, &data);
-        }
-    } else if let Ok(data) = rmp_serde::to_vec(&input) {
-        let msg = breakpoint_core::net::messages::ClientMessage::PlayerInput(PlayerInputMsg {
-            player_id: network_role.local_player_id,
-            tick: active_game.tick,
-            input_data: data,
-        });
-        if let Ok(encoded) = encode_client_message(&msg) {
-            let _ = ws_client.send(&encoded);
-        }
-    }
+    send_player_input(&input, &mut active_game, &network_role, &ws_client);
 
     local_input.stroke_requested = false;
     local_input.power = 0.0;
@@ -610,7 +578,7 @@ fn golf_render_sync(
     active_game: Res<ActiveGame>,
     mut ball_query: Query<(&BallEntity, &mut Transform, &mut Visibility)>,
 ) {
-    let state: Option<GolfState> = rmp_serde::from_slice(&active_game.game.serialize_state()).ok();
+    let state: Option<GolfState> = read_game_state(&active_game);
     let Some(state) = state else {
         return;
     };
@@ -634,7 +602,7 @@ fn aim_line_system(
     local_input: Res<GolfLocalInput>,
     mut dot_query: Query<(&AimDot, &mut Transform, &mut Visibility)>,
 ) {
-    let state: Option<GolfState> = rmp_serde::from_slice(&active_game.game.serialize_state()).ok();
+    let state: Option<GolfState> = read_game_state(&active_game);
     let ball = state
         .as_ref()
         .and_then(|s| s.balls.get(&network_role.local_player_id));
@@ -681,8 +649,7 @@ fn stroke_counter_system(
     mut text_query: Query<&mut Text, With<StrokeCounterText>>,
 ) {
     if let Ok(mut text) = text_query.single_mut() {
-        let state: Option<GolfState> =
-            rmp_serde::from_slice(&active_game.game.serialize_state()).ok();
+        let state: Option<GolfState> = read_game_state(&active_game);
         let strokes = state
             .and_then(|s| s.strokes.get(&network_role.local_player_id).copied())
             .unwrap_or(0);
@@ -717,8 +684,7 @@ fn scoreboard_system(
     mut text_query: Query<&mut Text, With<ScoreboardText>>,
 ) {
     if let Ok(mut text) = text_query.single_mut() {
-        let state: Option<GolfState> =
-            rmp_serde::from_slice(&active_game.game.serialize_state()).ok();
+        let state: Option<GolfState> = read_game_state(&active_game);
         if let Some(state) = state {
             let mut lines = Vec::new();
             for player in &lobby.players {
@@ -759,7 +725,7 @@ fn sink_flash_system(
     }
 
     // Detect new sinks
-    let state: Option<GolfState> = rmp_serde::from_slice(&active_game.game.serialize_state()).ok();
+    let state: Option<GolfState> = read_game_state(&active_game);
     let Some(state) = state else {
         return;
     };
@@ -794,12 +760,4 @@ fn cleanup_golf(mut commands: Commands) {
     commands.remove_resource::<SunkTracker>();
     // Note: GolfCourseInfo is preserved for BetweenRounds UI.
     // It's cleaned up in full_cleanup when returning to Lobby.
-}
-
-fn player_color_to_bevy(color: &PlayerColor) -> Color {
-    Color::srgb(
-        color.r as f32 / 255.0,
-        color.g as f32 / 255.0,
-        color.b as f32 / 255.0,
-    )
 }

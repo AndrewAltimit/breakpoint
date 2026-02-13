@@ -91,7 +91,7 @@ async fn handle_relay_socket(socket: WebSocket, state: SharedRelayState) {
 
     if join.room_code.is_empty() {
         // Create a new room — this connection is the host
-        let code = generate_room_code();
+        let code = breakpoint_core::room::generate_room_code();
         let mut relay = state.write().await;
         if let Err(e) = relay.create_room(code.clone(), tx) {
             tracing::warn!(error = %e, "Failed to create relay room");
@@ -203,16 +203,4 @@ async fn client_read_loop(
         let relay = state.read().await;
         relay.relay_to_host(room_code, &data);
     }
-}
-
-fn generate_room_code() -> String {
-    use rand::Rng;
-    let mut rng = rand::rng();
-    let letters: String = (0..4)
-        .map(|_| (b'A' + rng.random_range(0..26)) as char)
-        .collect();
-    let digits: String = (0..4)
-        .map(|_| (b'0' + rng.random_range(0..10)) as char)
-        .collect();
-    format!("{letters}-{digits}")
 }

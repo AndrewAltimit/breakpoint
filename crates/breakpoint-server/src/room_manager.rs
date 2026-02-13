@@ -5,7 +5,6 @@ use breakpoint_core::net::messages::{JoinRoomResponseMsg, PlayerListMsg, ServerM
 use breakpoint_core::net::protocol::encode_server_message;
 use breakpoint_core::player::{Player, PlayerColor};
 use breakpoint_core::room::{Room, RoomState};
-use rand::Rng;
 use tokio::sync::mpsc;
 
 /// Per-player sender for outbound WebSocket binary messages.
@@ -54,7 +53,7 @@ impl RoomManager {
         player_color: PlayerColor,
         sender: PlayerSender,
     ) -> (String, PlayerId) {
-        let code = generate_room_code(&self.rooms);
+        let code = generate_unique_room_code(&self.rooms);
         let player_id = self.alloc_player_id();
         let player = Player {
             id: player_id,
@@ -262,23 +261,10 @@ impl RoomManager {
     }
 }
 
-/// Generate a unique room code in ABCD-1234 format.
-fn generate_room_code(existing: &HashMap<String, RoomEntry>) -> String {
-    let mut rng = rand::rng();
+/// Generate a unique room code, retrying on collision with existing rooms.
+fn generate_unique_room_code(existing: &HashMap<String, RoomEntry>) -> String {
     loop {
-        let letters: String = (0..4)
-            .map(|_| {
-                let c = rng.random_range(b'A'..=b'Z');
-                c as char
-            })
-            .collect();
-        let digits: String = (0..4)
-            .map(|_| {
-                let d = rng.random_range(b'0'..=b'9');
-                d as char
-            })
-            .collect();
-        let code = format!("{letters}-{digits}");
+        let code = breakpoint_core::room::generate_room_code();
         if !existing.contains_key(&code) {
             return code;
         }
@@ -393,9 +379,8 @@ mod tests {
 
     #[test]
     fn room_code_format() {
-        let existing = HashMap::new();
         for _ in 0..100 {
-            let code = generate_room_code(&existing);
+            let code = breakpoint_core::room::generate_room_code();
             assert!(
                 breakpoint_core::room::is_valid_room_code(&code),
                 "Invalid room code: {code}"

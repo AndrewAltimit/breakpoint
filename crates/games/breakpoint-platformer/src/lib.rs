@@ -405,33 +405,13 @@ impl BreakpointGame for PlatformRacer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use breakpoint_core::player::PlayerColor;
-
-    fn make_players(n: usize) -> Vec<Player> {
-        (0..n)
-            .map(|i| Player {
-                id: i as PlayerId + 1,
-                display_name: format!("Player{}", i + 1),
-                color: PlayerColor::default(),
-                is_host: i == 0,
-                is_spectator: false,
-            })
-            .collect()
-    }
-
-    fn default_config() -> GameConfig {
-        GameConfig {
-            round_count: 1,
-            round_duration: Duration::from_secs(120),
-            custom: HashMap::new(),
-        }
-    }
+    use breakpoint_core::test_helpers::{default_config, make_players};
 
     #[test]
     fn init_creates_player_states() {
         let mut game = PlatformRacer::new();
         let players = make_players(3);
-        game.init(&players, &default_config());
+        game.init(&players, &default_config(120));
         assert_eq!(game.state.players.len(), 3);
     }
 
@@ -439,11 +419,11 @@ mod tests {
     fn state_roundtrip() {
         let mut game = PlatformRacer::new();
         let players = make_players(2);
-        game.init(&players, &default_config());
+        game.init(&players, &default_config(120));
 
         let data = game.serialize_state();
         let mut game2 = PlatformRacer::new();
-        game2.init(&players, &default_config());
+        game2.init(&players, &default_config(120));
         game2.apply_state(&data);
 
         assert_eq!(game.state.players.len(), game2.state.players.len());
@@ -453,7 +433,7 @@ mod tests {
     fn input_roundtrip() {
         let mut game = PlatformRacer::new();
         let players = make_players(1);
-        game.init(&players, &default_config());
+        game.init(&players, &default_config(120));
 
         let input = PlatformerInput {
             move_dir: 1.0,

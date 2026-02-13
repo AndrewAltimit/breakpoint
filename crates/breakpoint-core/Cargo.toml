@@ -7,11 +7,16 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[features]
+default = []
+test-helpers = []
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
 rmp-serde.workspace = true
 uuid.workspace = true
+rand.workspace = true
 
 [lints]
 workspace = true

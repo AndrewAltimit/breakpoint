@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use breakpoint_core::powerup;
+
 /// Laser Tag power-up types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LaserPowerUpKind {
@@ -9,37 +11,19 @@ pub enum LaserPowerUpKind {
     WideBeam,
 }
 
-/// Active power-up on a player.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ActiveLaserPowerUp {
-    pub kind: LaserPowerUpKind,
-    pub remaining: f32,
-}
-
-impl ActiveLaserPowerUp {
-    pub fn new(kind: LaserPowerUpKind) -> Self {
-        let duration = match kind {
+impl powerup::PowerUpKind for LaserPowerUpKind {
+    fn duration(&self) -> f32 {
+        match self {
             LaserPowerUpKind::RapidFire => 5.0,
             LaserPowerUpKind::Shield => f32::INFINITY,
             LaserPowerUpKind::SpeedBoost => 4.0,
             LaserPowerUpKind::WideBeam => 3.0,
-        };
-        Self {
-            kind,
-            remaining: duration,
         }
-    }
-
-    pub fn tick(&mut self, dt: f32) {
-        if self.remaining.is_finite() {
-            self.remaining -= dt;
-        }
-    }
-
-    pub fn is_expired(&self) -> bool {
-        self.remaining <= 0.0
     }
 }
+
+/// Active power-up on a player.
+pub type ActiveLaserPowerUp = powerup::ActivePowerUp<LaserPowerUpKind>;
 
 /// Power-up spawn on the arena floor.
 #[derive(Debug, Clone, Serialize, Deserialize)]

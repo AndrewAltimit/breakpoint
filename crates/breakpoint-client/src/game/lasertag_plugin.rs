@@ -2,10 +2,6 @@ use bevy::ecs::system::NonSend;
 use bevy::prelude::*;
 
 use breakpoint_core::game_trait::PlayerId;
-use breakpoint_core::net::messages::PlayerInputMsg;
-use breakpoint_core::net::protocol::encode_client_message;
-use breakpoint_core::player::PlayerColor;
-
 use breakpoint_lasertag::arena::WallType;
 use breakpoint_lasertag::projectile::PLAYER_RADIUS;
 use breakpoint_lasertag::{LaserTagArena, LaserTagInput, LaserTagState};
@@ -13,7 +9,10 @@ use breakpoint_lasertag::{LaserTagArena, LaserTagInput, LaserTagState};
 use crate::app::AppState;
 use crate::net_client::WsClient;
 
-use super::{ActiveGame, GameEntity, GameRegistry, NetworkRole};
+use super::{
+    ActiveGame, GameEntity, GameRegistry, HudPosition, NetworkRole, player_color_to_bevy,
+    read_game_state, send_player_input, spawn_hud_text,
+};
 
 pub struct LaserTagPlugin;
 
@@ -159,8 +158,7 @@ fn setup_lasertag(
     let local_pid = network_role.local_player_id;
 
     // Get current state for initial positions
-    let state: Option<LaserTagState> =
-        rmp_serde::from_slice(&active_game.game.serialize_state()).ok();
+    let state: Option<LaserTagState> = read_game_state(&active_game);
 
     for player in &lobby.players {
         if player.is_spectator {
@@ -207,39 +205,22 @@ fn setup_lasertag(
     }
 
     // HUD
-    commands.spawn((
-        GameEntity,
+    spawn_hud_text(
+        &mut commands,
         LaserTagScoreText,
-        Text::new("Score: 0"),
-        TextFont {
-            font_size: 20.0,
-            ..default()
-        },
-        TextColor(Color::WHITE),
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px(10.0),
-            right: Val::Px(10.0),
-            ..default()
-        },
-    ));
-
-    commands.spawn((
-        GameEntity,
+        "Score: 0",
+        20.0,
+        Color::WHITE,
+        HudPosition::TopRight,
+    );
+    spawn_hud_text(
+        &mut commands,
         LaserTagTimerText,
-        Text::new("Time: 0s"),
-        TextFont {
-            font_size: 18.0,
-            ..default()
-        },
-        TextColor(Color::WHITE),
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px(10.0),
-            left: Val::Px(10.0),
-            ..default()
-        },
-    ));
+        "Time: 0s",
+        18.0,
+        Color::WHITE,
+        HudPosition::TopLeft,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -292,8 +273,7 @@ fn lasertag_input_system(
         let ground_point = ray.origin + ray.direction * t;
 
         // Get player position from state
-        let state: Option<LaserTagState> =
-            rmp_serde::from_slice(&active_game.game.serialize_state()).ok();
+        let state: Option<LaserTagState> = read_game_state(&active_game);
         if let Some(ps) = state.and_then(|s| s.players.get(&network_role.local_player_id).cloned())
         {
             let dx = ground_point.x - ps.x;
@@ -316,22 +296,7 @@ fn lasertag_input_system(
         use_powerup: keyboard.just_pressed(KeyCode::KeyE),
     };
 
-    if let Ok(data) = rmp_serde::to_vec(&input) {
-        if network_role.is_host {
-            active_game
-                .game
-                .apply_input(network_role.local_player_id, &data);
-        } else {
-            let msg = breakpoint_core::net::messages::ClientMessage::PlayerInput(PlayerInputMsg {
-                player_id: network_role.local_player_id,
-                tick: active_game.tick,
-                input_data: data,
-            });
-            if let Ok(encoded) = encode_client_message(&msg) {
-                let _ = ws_client.send(&encoded);
-            }
-        }
-    }
+    send_player_input(&input, &mut active_game, &network_role, &ws_client);
 }
 
 fn lasertag_render_sync(
@@ -342,8 +307,7 @@ fn lasertag_render_sync(
     >,
     mut aim_query: Query<(&AimIndicator, &mut Transform), Without<LaserTagPlayerEntity>>,
 ) {
-    let state: Option<LaserTagState> =
-        rmp_serde::from_slice(&active_game.game.serialize_state()).ok();
+    let state: Option<LaserTagState> = read_game_state(&active_game);
     let Some(state) = state else {
         return;
     };
@@ -374,8 +338,7 @@ fn lasertag_hud_system(
     mut score_text: Query<&mut Text, With<LaserTagScoreText>>,
     mut timer_text: Query<&mut Text, (With<LaserTagTimerText>, Without<LaserTagScoreText>)>,
 ) {
-    let state: Option<LaserTagState> =
-        rmp_serde::from_slice(&active_game.game.serialize_state()).ok();
+    let state: Option<LaserTagState> = read_game_state(&active_game);
     let Some(state) = state else {
         return;
     };
@@ -397,12 +360,4 @@ fn lasertag_hud_system(
 
 fn cleanup_lasertag(mut commands: Commands) {
     commands.remove_resource::<LaserTagLocalInput>();
-}
-
-fn player_color_to_bevy(color: &PlayerColor) -> Color {
-    Color::srgb(
-        color.r as f32 / 255.0,
-        color.g as f32 / 255.0,
-        color.b as f32 / 255.0,
-    )
 }

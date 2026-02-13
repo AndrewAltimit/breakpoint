@@ -1487,6 +1487,7 @@ dependencies = [
 name = "breakpoint-core"
 version = "0.1.0"
 dependencies = [
+ "rand",
  "rmp-serde",
  "serde",
  "serde_json",

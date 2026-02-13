@@ -275,33 +275,13 @@ impl BreakpointGame for MiniGolf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use breakpoint_core::player::PlayerColor;
-
-    fn make_players(n: usize) -> Vec<Player> {
-        (0..n)
-            .map(|i| Player {
-                id: i as PlayerId + 1,
-                display_name: format!("Player{}", i + 1),
-                color: PlayerColor::default(),
-                is_host: i == 0,
-                is_spectator: false,
-            })
-            .collect()
-    }
-
-    fn default_config() -> GameConfig {
-        GameConfig {
-            round_count: 1,
-            round_duration: Duration::from_secs(90),
-            custom: HashMap::new(),
-        }
-    }
+    use breakpoint_core::test_helpers::{default_config, make_players};
 
     #[test]
     fn init_creates_balls_for_all_players() {
         let mut game = MiniGolf::new();
         let players = make_players(3);
-        game.init(&players, &default_config());
+        game.init(&players, &default_config(90));
 
         assert_eq!(game.state.balls.len(), 3);
         assert_eq!(game.state.strokes.len(), 3);
@@ -316,7 +296,7 @@ mod tests {
         let mut game = MiniGolf::new();
         let mut players = make_players(2);
         players[1].is_spectator = true;
-        game.init(&players, &default_config());
+        game.init(&players, &default_config(90));
 
         assert_eq!(game.state.balls.len(), 1);
     }
@@ -325,7 +305,7 @@ mod tests {
     fn apply_input_increments_strokes() {
         let mut game = MiniGolf::new();
         let players = make_players(1);
-        game.init(&players, &default_config());
+        game.init(&players, &default_config(90));
 
         let input = GolfInput {
             aim_angle: 0.0,
@@ -346,7 +326,7 @@ mod tests {
     fn stroke_rejected_while_moving() {
         let mut game = MiniGolf::new();
         let players = make_players(1);
-        game.init(&players, &default_config());
+        game.init(&players, &default_config(90));
 
         // First stroke
         let input = GolfInput {
@@ -367,7 +347,7 @@ mod tests {
     fn round_complete_when_all_sunk() {
         let mut game = MiniGolf::new();
         let players = make_players(2);
-        game.init(&players, &default_config());
+        game.init(&players, &default_config(90));
 
         // Manually sink both balls
         let hole_pos = game.course().hole_position;
@@ -393,7 +373,7 @@ mod tests {
     fn round_complete_on_timer() {
         let mut game = MiniGolf::new();
         let players = make_players(1);
-        game.init(&players, &default_config());
+        game.init(&players, &default_config(90));
 
         let inputs = PlayerInputs {
             inputs: HashMap::new(),
@@ -411,11 +391,11 @@ mod tests {
     fn serialize_deserialize_state_roundtrip() {
         let mut game = MiniGolf::new();
         let players = make_players(2);
-        game.init(&players, &default_config());
+        game.init(&players, &default_config(90));
 
         let data = game.serialize_state();
         let mut game2 = MiniGolf::new();
-        game2.init(&players, &default_config());
+        game2.init(&players, &default_config(90));
         game2.apply_state(&data);
 
         assert_eq!(game.state.balls.len(), game2.state.balls.len());
@@ -430,7 +410,7 @@ mod tests {
     fn round_results_scoring() {
         let mut game = MiniGolf::new();
         let players = make_players(2);
-        game.init(&players, &default_config());
+        game.init(&players, &default_config(90));
 
         // Player 1 sinks in 2 strokes (under par 3, first)
         game.state.sunk_order.push(1);
@@ -455,7 +435,7 @@ mod tests {
     fn pause_stops_updates() {
         let mut game = MiniGolf::new();
         let players = make_players(1);
-        game.init(&players, &default_config());
+        game.init(&players, &default_config(90));
 
         game.pause();
         let timer_before = game.state.round_timer;
@@ -474,7 +454,7 @@ mod tests {
     fn player_left_removes_state() {
         let mut game = MiniGolf::new();
         let players = make_players(2);
-        game.init(&players, &default_config());
+        game.init(&players, &default_config(90));
 
         game.player_left(2);
         assert!(!game.state.balls.contains_key(&2));

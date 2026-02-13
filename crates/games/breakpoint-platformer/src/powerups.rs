@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use breakpoint_core::powerup;
+
 /// Platformer power-up types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PowerUpKind {
@@ -9,37 +11,19 @@ pub enum PowerUpKind {
     Magnet,
 }
 
-/// Active power-up effect on a player.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ActivePowerUp {
-    pub kind: PowerUpKind,
-    pub remaining: f32,
-}
-
-impl ActivePowerUp {
-    pub fn new(kind: PowerUpKind) -> Self {
-        let duration = match kind {
+impl powerup::PowerUpKind for PowerUpKind {
+    fn duration(&self) -> f32 {
+        match self {
             PowerUpKind::SpeedBoost => 3.0,
             PowerUpKind::DoubleJump => f32::INFINITY,
             PowerUpKind::Shield => f32::INFINITY,
             PowerUpKind::Magnet => 3.0,
-        };
-        Self {
-            kind,
-            remaining: duration,
         }
-    }
-
-    pub fn tick(&mut self, dt: f32) {
-        if self.remaining.is_finite() {
-            self.remaining -= dt;
-        }
-    }
-
-    pub fn is_expired(&self) -> bool {
-        self.remaining <= 0.0
     }
 }
+
+/// Active power-up effect on a player.
+pub type ActivePowerUp = powerup::ActivePowerUp<PowerUpKind>;
 
 /// Spawned power-up on the course.
 #[derive(Debug, Clone, Serialize, Deserialize)]

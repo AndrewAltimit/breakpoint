@@ -65,6 +65,19 @@ impl Room {
     }
 }
 
+/// Generate a room code in ABCD-1234 format.
+pub fn generate_room_code() -> String {
+    use rand::Rng;
+    let mut rng = rand::rng();
+    let letters: String = (0..4)
+        .map(|_| (b'A' + rng.random_range(0..26u8)) as char)
+        .collect();
+    let digits: String = (0..4)
+        .map(|_| (b'0' + rng.random_range(0..10u8)) as char)
+        .collect();
+    format!("{letters}-{digits}")
+}
+
 /// Validates that a room code matches the ABCD-1234 format.
 pub fn is_valid_room_code(code: &str) -> bool {
     if code.len() != 9 {

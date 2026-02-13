@@ -111,7 +111,7 @@ impl GitHubPoller {
                     active_count
                 ),
                 body: None,
-                timestamp: now_iso(),
+                timestamp: breakpoint_core::time::timestamp_now(),
                 url: None,
                 actor: None,
                 tags: vec!["aggregate".to_string()],
@@ -172,7 +172,7 @@ impl GitHubPoller {
                     priority: Priority::Ambient,
                     title: format!("{run_name} started on {repo}"),
                     body: None,
-                    timestamp: now_iso(),
+                    timestamp: breakpoint_core::time::timestamp_now(),
                     url: Some(run.html_url.clone()),
                     actor: Some(run.actor.login.clone()),
                     tags: vec!["ci".to_string()],
@@ -250,7 +250,7 @@ impl GitHubPoller {
                         priority,
                         title: format!("{run_name} {conclusion} on {repo}"),
                         body: None,
-                        timestamp: now_iso(),
+                        timestamp: breakpoint_core::time::timestamp_now(),
                         url: Some(run.html_url.clone()),
                         actor: Some(run.actor.login.clone()),
                         tags: vec!["ci".to_string()],
@@ -266,13 +266,6 @@ impl GitHubPoller {
 
         Ok(())
     }
-}
-
-fn now_iso() -> String {
-    let dur = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    format!("{}Z", dur.as_secs())
 }
 
 fn uuid_simple() -> String {

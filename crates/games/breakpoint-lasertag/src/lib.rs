@@ -509,33 +509,13 @@ impl BreakpointGame for LaserTagArena {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use breakpoint_core::player::PlayerColor;
-
-    fn make_players(n: usize) -> Vec<Player> {
-        (0..n)
-            .map(|i| Player {
-                id: i as PlayerId + 1,
-                display_name: format!("Player{}", i + 1),
-                color: PlayerColor::default(),
-                is_host: i == 0,
-                is_spectator: false,
-            })
-            .collect()
-    }
-
-    fn default_config() -> GameConfig {
-        GameConfig {
-            round_count: 1,
-            round_duration: Duration::from_secs(180),
-            custom: HashMap::new(),
-        }
-    }
+    use breakpoint_core::test_helpers::{default_config, make_players};
 
     #[test]
     fn init_creates_player_states() {
         let mut game = LaserTagArena::new();
         let players = make_players(4);
-        game.init(&players, &default_config());
+        game.init(&players, &default_config(180));
         assert_eq!(game.state.players.len(), 4);
         assert_eq!(game.state.tags_scored.len(), 4);
     }
@@ -544,11 +524,11 @@ mod tests {
     fn state_roundtrip() {
         let mut game = LaserTagArena::new();
         let players = make_players(2);
-        game.init(&players, &default_config());
+        game.init(&players, &default_config(180));
 
         let data = game.serialize_state();
         let mut game2 = LaserTagArena::new();
-        game2.init(&players, &default_config());
+        game2.init(&players, &default_config(180));
         game2.apply_state(&data);
 
         assert_eq!(game.state.players.len(), game2.state.players.len());
@@ -558,7 +538,7 @@ mod tests {
     fn input_roundtrip() {
         let mut game = LaserTagArena::new();
         let players = make_players(1);
-        game.init(&players, &default_config());
+        game.init(&players, &default_config(180));
 
         let input = LaserTagInput {
             move_x: 1.0,
@@ -584,12 +564,12 @@ mod tests {
         let players = make_players(4);
 
         // FFA mode
-        game.init(&players, &default_config());
+        game.init(&players, &default_config(180));
         assert_eq!(game.state.team_mode, TeamMode::FreeForAll);
         assert!(game.state.teams.is_empty());
 
         // Team mode
-        let mut config = default_config();
+        let mut config = default_config(180);
         config.custom.insert(
             "team_mode".to_string(),
             serde_json::Value::String("teams_2".to_string()),

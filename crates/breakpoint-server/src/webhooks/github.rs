@@ -275,7 +275,7 @@ fn make_event(
         priority,
         title,
         body: None,
-        timestamp: timestamp_now(),
+        timestamp: breakpoint_core::time::timestamp_now(),
         url,
         actor: Some(actor.to_string()),
         tags,
@@ -284,13 +284,6 @@ fn make_event(
         expires_at: None,
         metadata: std::collections::HashMap::new(),
     }
-}
-
-fn timestamp_now() -> String {
-    let dur = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    format!("{}Z", dur.as_secs())
 }
 
 #[cfg(test)]

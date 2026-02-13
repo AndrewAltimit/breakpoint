@@ -2,10 +2,6 @@ use bevy::ecs::system::NonSend;
 use bevy::prelude::*;
 
 use breakpoint_core::game_trait::PlayerId;
-use breakpoint_core::net::messages::PlayerInputMsg;
-use breakpoint_core::net::protocol::encode_client_message;
-use breakpoint_core::player::PlayerColor;
-
 use breakpoint_platformer::course_gen::Tile;
 use breakpoint_platformer::physics::{PLAYER_HEIGHT, PLAYER_WIDTH, PlatformerInput, TILE_SIZE};
 use breakpoint_platformer::{PlatformRacer, PlatformerState};
@@ -13,7 +9,10 @@ use breakpoint_platformer::{PlatformRacer, PlatformerState};
 use crate::app::AppState;
 use crate::net_client::WsClient;
 
-use super::{ActiveGame, GameEntity, GameRegistry, NetworkRole};
+use super::{
+    ActiveGame, GameEntity, GameRegistry, HudPosition, NetworkRole, player_color_to_bevy,
+    read_game_state, send_player_input, spawn_hud_text,
+};
 
 pub struct PlatformerPlugin;
 
@@ -87,8 +86,7 @@ fn setup_platformer(
     commands.insert_resource(PlatformerLocalInput::default());
 
     // Get course from game state
-    let state: Option<PlatformerState> =
-        rmp_serde::from_slice(&active_game.game.serialize_state()).ok();
+    let state: Option<PlatformerState> = read_game_state(&active_game);
 
     // We need to create a temporary game to access the course
     let temp_game = PlatformRacer::new();
@@ -188,39 +186,22 @@ fn setup_platformer(
     }
 
     // HUD
-    commands.spawn((
-        GameEntity,
+    spawn_hud_text(
+        &mut commands,
         PlatformerTimerText,
-        Text::new("Time: 0.0s"),
-        TextFont {
-            font_size: 18.0,
-            ..default()
-        },
-        TextColor(Color::WHITE),
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px(10.0),
-            left: Val::Px(10.0),
-            ..default()
-        },
-    ));
-
-    commands.spawn((
-        GameEntity,
+        "Time: 0.0s",
+        18.0,
+        Color::WHITE,
+        HudPosition::TopLeft,
+    );
+    spawn_hud_text(
+        &mut commands,
         PlatformerPositionText,
-        Text::new(""),
-        TextFont {
-            font_size: 18.0,
-            ..default()
-        },
-        TextColor(Color::WHITE),
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px(10.0),
-            right: Val::Px(10.0),
-            ..default()
-        },
-    ));
+        "",
+        18.0,
+        Color::WHITE,
+        HudPosition::TopRight,
+    );
 }
 
 fn platformer_input_system(
@@ -260,30 +241,14 @@ fn platformer_input_system(
         use_powerup: keyboard.just_pressed(KeyCode::KeyE),
     };
 
-    if let Ok(data) = rmp_serde::to_vec(&input) {
-        if network_role.is_host {
-            active_game
-                .game
-                .apply_input(network_role.local_player_id, &data);
-        } else {
-            let msg = breakpoint_core::net::messages::ClientMessage::PlayerInput(PlayerInputMsg {
-                player_id: network_role.local_player_id,
-                tick: active_game.tick,
-                input_data: data,
-            });
-            if let Ok(encoded) = encode_client_message(&msg) {
-                let _ = ws_client.send(&encoded);
-            }
-        }
-    }
+    send_player_input(&input, &mut active_game, &network_role, &ws_client);
 }
 
 fn platformer_render_sync(
     active_game: Res<ActiveGame>,
     mut player_query: Query<(&PlatformerPlayerEntity, &mut Transform, &mut Visibility)>,
 ) {
-    let state: Option<PlatformerState> =
-        rmp_serde::from_slice(&active_game.game.serialize_state()).ok();
+    let state: Option<PlatformerState> = read_game_state(&active_game);
     let Some(state) = state else {
         return;
     };
@@ -308,8 +273,7 @@ fn platformer_hud_system(
     mut timer_text: Query<&mut Text, With<PlatformerTimerText>>,
     mut pos_text: Query<&mut Text, (With<PlatformerPositionText>, Without<PlatformerTimerText>)>,
 ) {
-    let state: Option<PlatformerState> =
-        rmp_serde::from_slice(&active_game.game.serialize_state()).ok();
+    let state: Option<PlatformerState> = read_game_state(&active_game);
     let Some(state) = state else {
         return;
     };
@@ -337,12 +301,4 @@ fn platformer_hud_system(
 
 fn cleanup_platformer(mut commands: Commands) {
     commands.remove_resource::<PlatformerLocalInput>();
-}
-
-fn player_color_to_bevy(color: &PlayerColor) -> Color {
-    Color::srgb(
-        color.r as f32 / 255.0,
-        color.g as f32 / 255.0,
-        color.b as f32 / 255.0,
-    )
 }

@@ -72,7 +72,7 @@ pub async fn claim_event(
     Json(body): Json<ClaimEventBody>,
 ) -> Result<Json<ClaimEventResponse>, (StatusCode, String)> {
     let mut store = state.event_store.write().await;
-    let now = chrono_now();
+    let now = breakpoint_core::time::timestamp_now();
     let claimed = store.claim(&event_id, body.claimed_by, now);
     if claimed {
         Ok(Json(ClaimEventResponse {
@@ -136,14 +136,6 @@ pub async fn get_status(State(state): State<AppState>) -> Json<StatusResponse> {
         recent_events,
         pending_actions,
     })
-}
-
-fn chrono_now() -> String {
-    // Simple ISO 8601 timestamp using std
-    let dur = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    format!("{}Z", dur.as_secs())
 }
 
 #[cfg(test)]

@@ -13,14 +13,110 @@ use bevy::prelude::*;
 use breakpoint_core::game_trait::{
     BreakpointGame, GameConfig, PlayerId, PlayerInputs, PlayerScore,
 };
-use breakpoint_core::net::messages::{GameEndMsg, GameStateMsg, PlayerScoreEntry, RoundEndMsg};
-use breakpoint_core::net::protocol::{
-    decode_client_message, decode_message_type, decode_server_message, encode_server_message,
+use breakpoint_core::net::messages::{
+    GameEndMsg, GameStateMsg, PlayerInputMsg, PlayerScoreEntry, RoundEndMsg,
 };
+use breakpoint_core::net::protocol::{
+    decode_client_message, decode_message_type, decode_server_message, encode_client_message,
+    encode_server_message,
+};
+
+use breakpoint_core::player::PlayerColor;
 
 use crate::app::AppState;
 use crate::lobby::LobbyState;
 use crate::net_client::WsClient;
+
+/// Convert a PlayerColor (u8 RGB) to a Bevy Color.
+pub fn player_color_to_bevy(color: &PlayerColor) -> Color {
+    Color::srgb(
+        color.r as f32 / 255.0,
+        color.g as f32 / 255.0,
+        color.b as f32 / 255.0,
+    )
+}
+
+/// Serialize and route player input: host applies directly, non-host sends via WebSocket.
+pub fn send_player_input(
+    input: &impl serde::Serialize,
+    active_game: &mut ActiveGame,
+    network_role: &NetworkRole,
+    ws_client: &WsClient,
+) {
+    if let Ok(data) = rmp_serde::to_vec(input) {
+        if network_role.is_host {
+            active_game
+                .game
+                .apply_input(network_role.local_player_id, &data);
+        } else {
+            let msg = breakpoint_core::net::messages::ClientMessage::PlayerInput(PlayerInputMsg {
+                player_id: network_role.local_player_id,
+                tick: active_game.tick,
+                input_data: data,
+            });
+            if let Ok(encoded) = encode_client_message(&msg) {
+                let _ = ws_client.send(&encoded);
+            }
+        }
+    }
+}
+
+/// Deserialize the current game state from the active game.
+pub fn read_game_state<S: serde::de::DeserializeOwned>(active_game: &ActiveGame) -> Option<S> {
+    rmp_serde::from_slice(&active_game.game.serialize_state()).ok()
+}
+
+/// HUD text anchor position.
+pub enum HudPosition {
+    TopLeft,
+    TopRight,
+    TopCenter,
+}
+
+/// Spawn an absolutely-positioned HUD text element with a marker component.
+pub fn spawn_hud_text(
+    commands: &mut Commands,
+    marker: impl Bundle,
+    text: impl Into<String>,
+    font_size: f32,
+    color: Color,
+    position: HudPosition,
+) -> Entity {
+    let node = match position {
+        HudPosition::TopLeft => Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(10.0),
+            left: Val::Px(10.0),
+            ..default()
+        },
+        HudPosition::TopRight => Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(10.0),
+            right: Val::Px(10.0),
+            ..default()
+        },
+        HudPosition::TopCenter => Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(10.0),
+            left: Val::Percent(50.0),
+            ..default()
+        },
+    };
+
+    commands
+        .spawn((
+            GameEntity,
+            marker,
+            Text::new(text),
+            TextFont {
+                font_size,
+                ..default()
+            },
+            TextColor(color),
+            node,
+        ))
+        .id()
+}
 
 #[cfg(feature = "golf")]
 use golf_plugin::GolfPlugin;
