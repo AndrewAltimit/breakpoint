@@ -41,6 +41,11 @@ docker-compose.override.yml
 # Node (for agent tooling)
 node_modules/
 
+# Browser test artifacts
+tests/browser/results/
+tests/browser/report/
+tests/browser/test-results/
+
 # Scratch
 scratch/
 .local/

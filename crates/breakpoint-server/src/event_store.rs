@@ -31,6 +31,12 @@ pub struct EventStore {
     broadcast_tx: broadcast::Sender<Event>,
 }
 
+impl Default for EventStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EventStore {
     pub fn new() -> Self {
         let (broadcast_tx, _) = broadcast::channel(BROADCAST_CAPACITY);

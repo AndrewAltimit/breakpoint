@@ -35,6 +35,7 @@ fn setup_camera(mut commands: Commands) {
     commands.spawn((
         GameCamera,
         Camera3d::default(),
+        Msaa::Off,
         Transform::from_xyz(10.0, 30.0, -5.0).looking_at(Vec3::new(10.0, 0.0, 15.0), Vec3::Y),
     ));
 

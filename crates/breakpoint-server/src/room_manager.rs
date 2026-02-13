@@ -27,6 +27,12 @@ struct RoomEntry {
     connections: HashMap<PlayerId, ConnectedPlayer>,
 }
 
+impl Default for RoomManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RoomManager {
     pub fn new() -> Self {
         Self {

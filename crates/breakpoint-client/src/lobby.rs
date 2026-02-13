@@ -46,6 +46,9 @@ pub struct LobbyState {
 struct LobbyUi;
 
 #[derive(Component)]
+struct LobbyCamera;
+
+#[derive(Component)]
 struct PlayerListText;
 
 #[derive(Component)]
@@ -85,6 +88,10 @@ struct GameSelectButton(String);
 struct GameSelectionText;
 
 fn setup_lobby(mut commands: Commands, mut lobby: ResMut<LobbyState>) {
+    // Spawn a 2D camera for UI rendering.
+    // Msaa::Off is required for WebGL2 compatibility.
+    commands.spawn((LobbyCamera, Camera2d, Msaa::Off));
+
     if lobby.player_name.is_empty() {
         lobby.player_name = format!("Player{}", fastrand::u16(..1000));
     }
@@ -529,8 +536,15 @@ fn handle_player_list(pl: &PlayerListMsg, lobby: &mut LobbyState) {
     }
 }
 
-fn cleanup_lobby(mut commands: Commands, query: Query<Entity, With<LobbyUi>>) {
-    for entity in &query {
+fn cleanup_lobby(
+    mut commands: Commands,
+    ui_query: Query<Entity, With<LobbyUi>>,
+    camera_query: Query<Entity, With<LobbyCamera>>,
+) {
+    for entity in &ui_query {
+        commands.entity(entity).despawn();
+    }
+    for entity in &camera_query {
         commands.entity(entity).despawn();
     }
 }

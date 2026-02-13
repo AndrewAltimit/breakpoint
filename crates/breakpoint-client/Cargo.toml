@@ -29,8 +29,11 @@ bevy = { workspace = true, features = [
     "bevy_core_pipeline",
     "bevy_pbr",
     "bevy_render",
+    "bevy_sprite",
+    "bevy_sprite_render",
     "bevy_state",
     "bevy_ui",
+    "bevy_ui_render",
     "bevy_text",
     "bevy_winit",
     "bevy_color",
@@ -62,6 +65,7 @@ web-sys = { version = "0.3", features = [
 ] }
 console_error_panic_hook = "0.1"
 fastrand = "2"
+getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [lints]
 workspace = true

@@ -1,10 +1,9 @@
-use js_sys::{Array, Object};
+use js_sys::Array;
 use tracing::warn;
-use wasm_bindgen::prelude::{wasm_bindgen, Closure};
+use wasm_bindgen::prelude::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{
-    Document, HtmlCanvasElement, MediaQueryList, ResizeObserver, ResizeObserverBoxOptions,
-    ResizeObserverEntry, ResizeObserverOptions, ResizeObserverSize, Window,
+    Document, HtmlCanvasElement, MediaQueryList, ResizeObserver, ResizeObserverEntry, Window,
 };
 
 use crate::dpi::{LogicalSize, PhysicalSize};
@@ -137,14 +136,7 @@ impl ResizeScaleInternal {
         let observer = ResizeObserver::new(closure.as_ref().unchecked_ref())
             .expect("Failed to create `ResizeObserver`");
 
-        // Safari doesn't support `devicePixelContentBoxSize`
-        if has_device_pixel_support() {
-            let options = ResizeObserverOptions::new();
-            options.set_box(ResizeObserverBoxOptions::DevicePixelContentBox);
-            observer.observe_with_options(canvas, &options);
-        } else {
-            observer.observe(canvas);
-        }
+        observer.observe(canvas);
 
         observer
     }
@@ -226,47 +218,10 @@ impl ResizeScaleInternal {
 
     fn process_entry(&self, entries: Array) -> PhysicalSize<u32> {
         let entry: ResizeObserverEntry = entries.get(0).unchecked_into();
+        let rect = entry.content_rect();
 
-        // Safari doesn't support `devicePixelContentBoxSize`
-        if !has_device_pixel_support() {
-            let rect = entry.content_rect();
-
-            return LogicalSize::new(rect.width(), rect.height())
-                .to_physical(backend::scale_factor(&self.window));
-        }
-
-        let entry: ResizeObserverSize =
-            entry.device_pixel_content_box_size().get(0).unchecked_into();
-
-        let writing_mode = self.style.get("writing-mode");
-
-        // means the canvas is not inserted into the DOM
-        if writing_mode.is_empty() {
-            debug_assert_eq!(entry.inline_size(), 0.);
-            debug_assert_eq!(entry.block_size(), 0.);
-
-            return PhysicalSize::new(0, 0);
-        }
-
-        let horizontal = match writing_mode.as_str() {
-            _ if writing_mode.starts_with("horizontal") => true,
-            _ if writing_mode.starts_with("vertical") | writing_mode.starts_with("sideways") => {
-                false
-            },
-            // deprecated values
-            "lr" | "lr-tb" | "rl" => true,
-            "tb" | "tb-lr" | "tb-rl" => false,
-            _ => {
-                warn!("unrecognized `writing-mode`, assuming horizontal");
-                true
-            },
-        };
-
-        if horizontal {
-            PhysicalSize::new(entry.inline_size() as u32, entry.block_size() as u32)
-        } else {
-            PhysicalSize::new(entry.block_size() as u32, entry.inline_size() as u32)
-        }
+        LogicalSize::new(rect.width(), rect.height())
+            .to_physical(backend::scale_factor(&self.window))
     }
 }
 
@@ -276,27 +231,11 @@ impl Drop for ResizeScaleInternal {
     }
 }
 
-// TODO: Remove when Safari supports `devicePixelContentBoxSize`.
-// See <https://bugs.webkit.org/show_bug.cgi?id=219005>.
+// Force the fallback path (contentRect * devicePixelRatio) instead of
+// devicePixelContentBoxSize. The devicePixelContentBoxSize API returns
+// incorrect values (CSS pixels instead of physical pixels) in some browser
+// configurations, causing a coordinate mismatch between the canvas surface
+// size and mouse event positions.
 pub fn has_device_pixel_support() -> bool {
-    thread_local! {
-        static DEVICE_PIXEL_SUPPORT: bool = {
-            #[wasm_bindgen]
-            extern "C" {
-                type ResizeObserverEntryExt;
-
-                #[wasm_bindgen(js_class = ResizeObserverEntry, static_method_of = ResizeObserverEntryExt, getter)]
-                fn prototype() -> Object;
-            }
-
-            let prototype = ResizeObserverEntryExt::prototype();
-            let descriptor = Object::get_own_property_descriptor(
-                &prototype,
-                &JsValue::from_str("devicePixelContentBoxSize"),
-            );
-            !descriptor.is_undefined()
-        };
-    }
-
-    DEVICE_PIXEL_SUPPORT.with(|support| *support)
+    false
 }
