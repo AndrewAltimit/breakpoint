@@ -11,7 +11,9 @@ use breakpoint_core::events::{Event, EventType, Priority};
 use breakpoint_core::net::messages::{
     ClientMessage, JoinRoomMsg, JoinRoomResponseMsg, ServerMessage,
 };
-use breakpoint_core::net::protocol::{decode_server_message, encode_client_message};
+use breakpoint_core::net::protocol::{
+    decode_server_message, encode_client_message, encode_server_message,
+};
 use breakpoint_core::player::PlayerColor;
 
 use breakpoint_server::config::{AuthFileConfig, ServerConfig};
@@ -223,6 +225,20 @@ pub fn sign_webhook(secret: &str, body: &[u8]) -> String {
     mac.update(body);
     let result = mac.finalize().into_bytes();
     format!("sha256={}", hex::encode(result))
+}
+
+pub type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+/// Send a ServerMessage from a WS stream (used by host to send GameStart etc.)
+pub async fn ws_send_server_msg(stream: &mut WsStream, msg: &ServerMessage) {
+    let encoded = encode_server_message(msg).unwrap();
+    stream.send(Message::Binary(encoded.into())).await.unwrap();
+}
+
+/// Send a ClientMessage from a WS stream.
+pub async fn ws_send_client_msg(stream: &mut WsStream, msg: &ClientMessage) {
+    let encoded = encode_client_message(msg).unwrap();
+    stream.send(Message::Binary(encoded.into())).await.unwrap();
 }
 
 /// Construct a test event with the given id.

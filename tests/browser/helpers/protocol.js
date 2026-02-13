@@ -113,6 +113,46 @@ export function parseGameStart(payload) {
 }
 
 /**
+ * Build a PlayerInput client message.
+ * PlayerInputMsg fields: [player_id, tick, input_data]
+ */
+export function playerInputMsg(playerId, tick, inputData) {
+  return encode(MSG.PLAYER_INPUT, [playerId, tick, inputData]);
+}
+
+/**
+ * Encode a GolfInput as msgpack (for embedding in PlayerInput.input_data).
+ * GolfInput fields: [aim_angle, power, stroke]
+ */
+export function encodeGolfInput(aimAngle, power, stroke) {
+  return Buffer.from(pack([aimAngle, power, stroke]));
+}
+
+/**
+ * Parse a GameState payload.
+ * GameStateMsg fields: [tick, state_data]
+ */
+export function parseGameState(payload) {
+  return { tick: payload[0], stateData: payload[1] };
+}
+
+/**
+ * Parse a GolfState from raw msgpack state_data bytes.
+ * GolfState fields: [balls, strokes, sunk_order, round_timer, round_complete, course_index]
+ */
+export function parseGolfState(stateData) {
+  const raw = unpack(Buffer.from(stateData));
+  return {
+    balls: raw[0],
+    strokes: raw[1],
+    sunkOrder: raw[2],
+    roundTimer: raw[3],
+    roundComplete: raw[4],
+    courseIndex: raw[5],
+  };
+}
+
+/**
  * Human-readable message type name.
  */
 export function msgTypeName(type) {

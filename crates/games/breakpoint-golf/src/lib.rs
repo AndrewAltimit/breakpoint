@@ -432,4 +432,187 @@ mod tests {
         assert!(!game.state.strokes.contains_key(&2));
         assert_eq!(game.player_ids.len(), 1);
     }
+
+    // ================================================================
+    // Full game session / simulation tests
+    // ================================================================
+
+    /// Use course index 1 ("Gentle Straight") — no obstacles, straight shot.
+    fn gentle_straight_config() -> GameConfig {
+        let mut config = default_config(90);
+        config.custom.insert(
+            "hole_index".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(1)),
+        );
+        config
+    }
+
+    #[test]
+    fn full_game_session_stroke_to_sink() {
+        let mut game = MiniGolf::new();
+        let players = make_players(1);
+        game.init(&players, &gentle_straight_config());
+
+        let empty_inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+
+        // Aim directly at hole: atan2(hole.z - spawn.z, hole.x - spawn.x)
+        // Gentle Straight: spawn (6,0,3), hole (6,0,21) → dx=0, dz=18 → angle = pi/2
+        let hole = game.course().hole_position;
+        let spawn = game.course().spawn_point;
+        let aim = (hole.z - spawn.z).atan2(hole.x - spawn.x);
+
+        // Stroke toward hole
+        let input = GolfInput {
+            aim_angle: aim,
+            power: 0.6,
+            stroke: true,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        assert!(
+            !game.state.balls[&1].is_stopped(),
+            "Ball should be moving after stroke"
+        );
+
+        // Simulate up to 500 ticks, re-stroking when ball stops
+        let mut sunk = false;
+        for _ in 0..500 {
+            let events = game.update(0.1, &empty_inputs);
+            if events.iter().any(|e| matches!(e, GameEvent::RoundComplete)) {
+                sunk = true;
+                break;
+            }
+
+            // If ball stopped but hasn't sunk, stroke again toward hole
+            if game.state.balls[&1].is_stopped() && !game.state.balls[&1].is_sunk {
+                let ball_pos = game.state.balls[&1].position;
+                let aim = (hole.z - ball_pos.z).atan2(hole.x - ball_pos.x);
+                let input = GolfInput {
+                    aim_angle: aim,
+                    power: 0.4,
+                    stroke: true,
+                };
+                let data = rmp_serde::to_vec(&input).unwrap();
+                game.apply_input(1, &data);
+            }
+        }
+
+        assert!(sunk, "Ball should eventually sink on Gentle Straight");
+        assert!(game.is_round_complete());
+
+        let results = game.round_results();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].player_id, 1);
+    }
+
+    #[test]
+    fn serialize_apply_state_preserves_ball_motion() {
+        let mut game = MiniGolf::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(90));
+
+        // Stroke the ball
+        let input = GolfInput {
+            aim_angle: 0.5,
+            power: 0.6,
+            stroke: true,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        // Tick 5 times so ball is in motion
+        let empty = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        for _ in 0..5 {
+            game.update(0.1, &empty);
+        }
+
+        let pos1 = game.state.balls[&1].position;
+        let vel1 = game.state.balls[&1].velocity;
+        let strokes1 = game.state.strokes[&1];
+        assert!(
+            !game.state.balls[&1].is_stopped(),
+            "Ball should still be moving after 5 ticks"
+        );
+
+        // Serialize and apply to a fresh game
+        let state_bytes = game.serialize_state();
+        let mut game2 = MiniGolf::new();
+        game2.init(&players, &default_config(90));
+        game2.apply_state(&state_bytes);
+
+        let pos2 = game2.state.balls[&1].position;
+        let vel2 = game2.state.balls[&1].velocity;
+        let strokes2 = game2.state.strokes[&1];
+
+        assert_eq!(pos1, pos2, "Position should match after state apply");
+        assert_eq!(vel1, vel2, "Velocity should match after state apply");
+        assert_eq!(strokes1, strokes2, "Strokes should match after state apply");
+    }
+
+    #[test]
+    fn multi_player_independent_strokes() {
+        let mut game = MiniGolf::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(90));
+
+        let spawn = game.course().spawn_point;
+        let empty = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+
+        // Player 1 strokes, Player 2 does not
+        let input = GolfInput {
+            aim_angle: 0.0,
+            power: 0.5,
+            stroke: true,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        // Tick a few times
+        for _ in 0..3 {
+            game.update(0.1, &empty);
+        }
+
+        // Player 1's ball should have moved from spawn
+        let p1_pos = game.state.balls[&1].position;
+        assert!(
+            (p1_pos.x - spawn.x).abs() > 0.1 || (p1_pos.z - spawn.z).abs() > 0.1,
+            "Player 1's ball should have moved"
+        );
+
+        // Player 2's ball should still be at spawn
+        let p2_pos = game.state.balls[&2].position;
+        assert_eq!(p2_pos, spawn, "Player 2's ball should still be at spawn");
+        assert_eq!(game.state.strokes[&2], 0);
+
+        // Wait for Player 1's ball to stop
+        for _ in 0..500 {
+            game.update(0.1, &empty);
+            if game.state.balls[&1].is_stopped() {
+                break;
+            }
+        }
+        assert!(game.state.balls[&1].is_stopped());
+
+        // Now Player 2 strokes
+        let input2 = GolfInput {
+            aim_angle: 1.0,
+            power: 0.4,
+            stroke: true,
+        };
+        let data2 = rmp_serde::to_vec(&input2).unwrap();
+        game.apply_input(2, &data2);
+
+        assert_eq!(game.state.strokes[&2], 1);
+        assert!(
+            !game.state.balls[&2].is_stopped(),
+            "Player 2's ball should now be moving"
+        );
+    }
 }

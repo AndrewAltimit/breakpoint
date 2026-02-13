@@ -39,6 +39,8 @@ sha2.workspace = true
 hex.workspace = true
 futures.workspace = true
 serde_json.workspace = true
+breakpoint-golf = { path = "../games/breakpoint-golf" }
+rmp-serde.workspace = true
 
 [lints]
 workspace = true
