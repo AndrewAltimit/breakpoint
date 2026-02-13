@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use breakpoint_core::game_trait::PlayerId;
 use breakpoint_core::net::messages::{JoinRoomResponseMsg, PlayerListMsg, ServerMessage};
@@ -24,6 +25,7 @@ pub struct RoomManager {
 struct RoomEntry {
     room: Room,
     connections: HashMap<PlayerId, ConnectedPlayer>,
+    last_activity: Instant,
 }
 
 impl Default for RoomManager {
@@ -65,8 +67,14 @@ impl RoomManager {
         let room = Room::new(code.clone(), player);
         let mut connections = HashMap::new();
         connections.insert(player_id, ConnectedPlayer { sender });
-        self.rooms
-            .insert(code.clone(), RoomEntry { room, connections });
+        self.rooms.insert(
+            code.clone(),
+            RoomEntry {
+                room,
+                connections,
+                last_activity: Instant::now(),
+            },
+        );
         (code, player_id)
     }
 
@@ -97,6 +105,7 @@ impl RoomManager {
 
         let player_id = self.alloc_player_id();
         let entry = self.rooms.get_mut(room_code).unwrap();
+        entry.last_activity = Instant::now();
         let player = Player {
             id: player_id,
             display_name: player_name,
@@ -155,10 +164,31 @@ impl RoomManager {
         self.rooms.get(room_code).map(|e| e.room.state)
     }
 
-    /// Update room state.
-    pub fn set_room_state(&mut self, room_code: &str, state: RoomState) {
+    /// Update room state. Returns true if the transition was valid.
+    /// Invalid transitions are logged and rejected.
+    pub fn set_room_state(&mut self, room_code: &str, new_state: RoomState) -> bool {
         if let Some(entry) = self.rooms.get_mut(room_code) {
-            entry.room.state = state;
+            let valid = matches!(
+                (entry.room.state, new_state),
+                (RoomState::Lobby, RoomState::InGame)
+                    | (RoomState::InGame, RoomState::BetweenRounds)
+                    | (RoomState::InGame, RoomState::Lobby)
+                    | (RoomState::BetweenRounds, RoomState::InGame)
+                    | (RoomState::BetweenRounds, RoomState::Lobby)
+            );
+            if valid {
+                entry.room.state = new_state;
+            } else {
+                tracing::warn!(
+                    room = room_code,
+                    from = ?entry.room.state,
+                    to = ?new_state,
+                    "Invalid room state transition"
+                );
+            }
+            valid
+        } else {
+            false
         }
     }
 
@@ -252,6 +282,23 @@ impl RoomManager {
             .iter()
             .find(|p| p.id == player_id)
             .map(|p| p.display_name.clone())
+    }
+
+    /// Touch room activity timestamp (call on any incoming message).
+    pub fn touch_activity(&mut self, room_code: &str) {
+        if let Some(entry) = self.rooms.get_mut(room_code) {
+            entry.last_activity = Instant::now();
+        }
+    }
+
+    /// Remove rooms that have been idle for longer than `max_idle`.
+    /// Returns the number of rooms removed.
+    pub fn cleanup_idle_rooms(&mut self, max_idle: Duration) -> usize {
+        let now = Instant::now();
+        let before = self.rooms.len();
+        self.rooms
+            .retain(|_, entry| now.duration_since(entry.last_activity) < max_idle);
+        before - self.rooms.len()
     }
 
     /// Check if a room exists.
@@ -375,6 +422,55 @@ mod tests {
         assert_eq!(mgr.get_host_id(&code), Some(bob_id));
         let players = mgr.get_players(&code).unwrap();
         assert!(players[0].is_host);
+    }
+
+    #[test]
+    fn idle_room_cleanup_removes_stale_rooms() {
+        let mut mgr = RoomManager::new();
+        let (tx1, _rx1) = make_sender();
+        let (code1, _) = mgr.create_room("Alice".into(), PlayerColor::default(), tx1);
+
+        let (tx2, _rx2) = make_sender();
+        let (code2, _) = mgr.create_room("Bob".into(), PlayerColor::default(), tx2);
+
+        // Artificially age the first room
+        mgr.rooms.get_mut(&code1).unwrap().last_activity =
+            Instant::now() - Duration::from_secs(7200);
+
+        let removed = mgr.cleanup_idle_rooms(Duration::from_secs(3600));
+        assert_eq!(removed, 1);
+        assert!(!mgr.room_exists(&code1));
+        assert!(mgr.room_exists(&code2));
+    }
+
+    #[test]
+    fn valid_state_transitions() {
+        let mut mgr = RoomManager::new();
+        let (tx, _rx) = make_sender();
+        let (code, _) = mgr.create_room("Alice".into(), PlayerColor::default(), tx);
+
+        assert!(mgr.set_room_state(&code, RoomState::InGame));
+        assert_eq!(mgr.get_room_state(&code), Some(RoomState::InGame));
+
+        assert!(mgr.set_room_state(&code, RoomState::BetweenRounds));
+        assert_eq!(mgr.get_room_state(&code), Some(RoomState::BetweenRounds));
+
+        assert!(mgr.set_room_state(&code, RoomState::InGame));
+        assert!(mgr.set_room_state(&code, RoomState::Lobby));
+    }
+
+    #[test]
+    fn invalid_state_transition_rejected() {
+        let mut mgr = RoomManager::new();
+        let (tx, _rx) = make_sender();
+        let (code, _) = mgr.create_room("Alice".into(), PlayerColor::default(), tx);
+
+        // Lobby → Lobby is invalid
+        assert!(!mgr.set_room_state(&code, RoomState::Lobby));
+        // Lobby → BetweenRounds is invalid
+        assert!(!mgr.set_room_state(&code, RoomState::BetweenRounds));
+        // State should remain unchanged
+        assert_eq!(mgr.get_room_state(&code), Some(RoomState::Lobby));
     }
 
     #[test]

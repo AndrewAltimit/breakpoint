@@ -33,13 +33,22 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     let (room_code, player_id) = match client_msg {
         breakpoint_core::net::messages::ClientMessage::JoinRoom(join) => {
+            // Validate player name
+            let name = join.player_name.trim().to_string();
+            if name.is_empty() || name.len() > 32 || name.chars().any(|c| c.is_control()) {
+                let response =
+                    crate::room_manager::RoomManager::make_join_error("Invalid player name");
+                let _ = ws_sender.send(Message::Binary(response.into())).await;
+                return;
+            }
+
             let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
 
             let mut rooms = state.rooms.write().await;
 
             if join.room_code.is_empty() {
                 // Create new room
-                let (code, pid) = rooms.create_room(join.player_name, join.player_color, tx);
+                let (code, pid) = rooms.create_room(name, join.player_color, tx);
                 let response = crate::room_manager::RoomManager::make_join_response(
                     pid,
                     &code,
@@ -65,7 +74,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 (code, pid)
             } else {
                 // Join existing room
-                match rooms.join_room(&join.room_code, join.player_name, join.player_color, tx) {
+                match rooms.join_room(&join.room_code, name, join.player_color, tx) {
                     Ok(pid) => {
                         let room_state = rooms
                             .get_room_state(&join.room_code)
@@ -149,6 +158,11 @@ async fn read_loop(
             _ => continue,
         };
 
+        // Drop oversized messages
+        if data.len() > breakpoint_core::net::protocol::MAX_MESSAGE_SIZE {
+            continue;
+        }
+
         if data.is_empty() {
             continue;
         }
@@ -158,6 +172,73 @@ async fn read_loop(
             Err(_) => continue,
         };
 
+        // Lifecycle messages need a write lock — handle before acquiring any lock
+        // to avoid the read→drop→write race condition.
+        let is_lifecycle = matches!(
+            msg_type,
+            MessageType::GameStart | MessageType::RoundEnd | MessageType::GameEnd
+        );
+
+        if is_lifecycle {
+            let mut rooms = state.rooms.write().await;
+            // Only the host may send lifecycle messages
+            if rooms.get_host_id(room_code) != Some(player_id) {
+                continue;
+            }
+            match msg_type {
+                MessageType::GameStart => {
+                    rooms.set_room_state(room_code, RoomState::InGame);
+                },
+                MessageType::RoundEnd => {
+                    rooms.set_room_state(room_code, RoomState::BetweenRounds);
+                },
+                MessageType::GameEnd => {
+                    rooms.set_room_state(room_code, RoomState::Lobby);
+                },
+                _ => {},
+            }
+            rooms.broadcast_to_room_except(room_code, player_id, &data);
+            continue;
+        }
+
+        // ClaimAlert also needs special lock handling (read→drop→write→read)
+        if msg_type == MessageType::ClaimAlert {
+            if let Ok(breakpoint_core::net::messages::ClientMessage::ClaimAlert(claim)) =
+                decode_client_message(&data)
+            {
+                // Reject spoofed claims
+                if claim.player_id != player_id {
+                    continue;
+                }
+
+                let player_name = {
+                    let rooms = state.rooms.read().await;
+                    rooms
+                        .get_player_name(room_code, claim.player_id)
+                        .unwrap_or_else(|| format!("Player {}", claim.player_id))
+                };
+
+                // Record the claim in the event store
+                let now = breakpoint_core::time::timestamp_now();
+                {
+                    let mut store = state.event_store.write().await;
+                    store.claim(&claim.event_id, player_name.clone(), now);
+                }
+
+                // Build and broadcast AlertClaimed to the room
+                let msg = ServerMessage::AlertClaimed(AlertClaimedMsg {
+                    event_id: claim.event_id,
+                    claimed_by: claim.player_id,
+                });
+                if let Ok(encoded) = encode_server_message(&msg) {
+                    let rooms = state.rooms.read().await;
+                    rooms.broadcast_to_room(room_code, &encoded);
+                }
+            }
+            continue;
+        }
+
+        // All other messages use a read lock
         let rooms = state.rooms.read().await;
 
         match msg_type {
@@ -170,72 +251,23 @@ async fn read_loop(
                 }
             },
 
-            // Game state from host gets broadcast to all non-host players
+            // Game state from host gets broadcast to all non-host players (host-only)
             MessageType::GameState => {
-                rooms.broadcast_to_room_except(room_code, player_id, &data);
-            },
-
-            // Game lifecycle messages from host get broadcast to all
-            MessageType::GameStart | MessageType::RoundEnd | MessageType::GameEnd => {
-                // Update room state based on message type
-                drop(rooms);
-                let mut rooms = state.rooms.write().await;
-                match msg_type {
-                    MessageType::GameStart => {
-                        rooms.set_room_state(room_code, RoomState::InGame);
-                    },
-                    MessageType::RoundEnd => {
-                        rooms.set_room_state(room_code, RoomState::BetweenRounds);
-                    },
-                    MessageType::GameEnd => {
-                        rooms.set_room_state(room_code, RoomState::Lobby);
-                    },
-                    _ => {},
+                if rooms.get_host_id(room_code) == Some(player_id) {
+                    rooms.broadcast_to_room_except(room_code, player_id, &data);
                 }
-                rooms.broadcast_to_room_except(room_code, player_id, &data);
-                continue;
             },
 
-            // Chat messages broadcast to all
+            // Chat messages broadcast to all (cap at 1024 bytes)
             MessageType::ChatMessage => {
-                rooms.broadcast_to_room(room_code, &data);
+                if data.len() <= 1024 {
+                    rooms.broadcast_to_room(room_code, &data);
+                }
             },
 
             // Alert events, claimed, dismissed — broadcast to all
             MessageType::AlertEvent | MessageType::AlertClaimed | MessageType::AlertDismissed => {
                 rooms.broadcast_to_room(room_code, &data);
-            },
-
-            // ClaimAlert from a client — record in EventStore and broadcast AlertClaimed
-            MessageType::ClaimAlert => {
-                if let Ok(breakpoint_core::net::messages::ClientMessage::ClaimAlert(claim)) =
-                    decode_client_message(&data)
-                {
-                    let player_name = rooms
-                        .get_player_name(room_code, claim.player_id)
-                        .unwrap_or_else(|| format!("Player {}", claim.player_id));
-
-                    drop(rooms);
-
-                    // Record the claim in the event store
-                    let now = breakpoint_core::time::timestamp_now();
-                    {
-                        let mut store = state.event_store.write().await;
-                        store.claim(&claim.event_id, player_name.clone(), now);
-                    }
-
-                    // Build and broadcast AlertClaimed to the room
-                    let msg = ServerMessage::AlertClaimed(AlertClaimedMsg {
-                        event_id: claim.event_id,
-                        claimed_by: claim.player_id,
-                    });
-                    if let Ok(encoded) = encode_server_message(&msg) {
-                        let rooms = state.rooms.read().await;
-                        rooms.broadcast_to_room(room_code, &encoded);
-                    }
-
-                    continue;
-                }
             },
 
             // Player list updates from host broadcast to all

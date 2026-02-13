@@ -6,8 +6,8 @@ use breakpoint_core::net::messages::{
 };
 use breakpoint_core::net::protocol::{decode_client_message, encode_client_message};
 use common::{
-    TestServer, ws_connect, ws_join_room, ws_join_room_expect_error, ws_read_raw,
-    ws_read_server_msg, ws_try_read_raw,
+    TestServer, ws_connect, ws_join_room, ws_join_room_expect_error, ws_join_room_with_name,
+    ws_read_raw, ws_read_server_msg, ws_try_read_raw,
 };
 use futures::SinkExt;
 use tokio_tungstenite::tungstenite::Message;
@@ -270,4 +270,35 @@ async fn host_migration_on_disconnect() {
         },
         other => panic!("Expected PlayerList, got: {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn join_with_empty_name_rejected() {
+    let server = TestServer::new().await;
+    let mut stream = ws_connect(&server.ws_url()).await;
+
+    let resp = ws_join_room_with_name(&mut stream, "").await;
+    assert!(!resp.success);
+    assert!(
+        resp.error
+            .as_deref()
+            .unwrap()
+            .contains("Invalid player name")
+    );
+}
+
+#[tokio::test]
+async fn join_with_long_name_rejected() {
+    let server = TestServer::new().await;
+    let mut stream = ws_connect(&server.ws_url()).await;
+
+    let long_name = "A".repeat(33);
+    let resp = ws_join_room_with_name(&mut stream, &long_name).await;
+    assert!(!resp.success);
+    assert!(
+        resp.error
+            .as_deref()
+            .unwrap()
+            .contains("Invalid player name")
+    );
 }

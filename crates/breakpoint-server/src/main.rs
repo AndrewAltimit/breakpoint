@@ -1,7 +1,7 @@
 use tracing_subscriber::EnvFilter;
 
 use breakpoint_server::config::ServerConfig;
-use breakpoint_server::{build_app, spawn_event_broadcaster};
+use breakpoint_server::{build_app, spawn_event_broadcaster, spawn_idle_room_cleanup};
 
 #[tokio::main]
 async fn main() {
@@ -10,12 +10,16 @@ async fn main() {
         .init();
 
     let config = ServerConfig::load();
+    config.validate();
     let listen_addr = config.listen_addr.clone();
 
     let (app, state) = build_app(config);
 
     // Spawn background task: broadcast new events to all rooms via WSS
     spawn_event_broadcaster(state.clone());
+
+    // Spawn idle room cleanup (removes rooms with no activity for >1 hour)
+    spawn_idle_room_cleanup(state.clone());
 
     // Conditionally spawn GitHub Actions poller
     #[cfg(feature = "github-poller")]
@@ -26,9 +30,13 @@ async fn main() {
         spawn_github_poller(&state);
     }
 
-    let listener = tokio::net::TcpListener::bind(&listen_addr)
-        .await
-        .unwrap_or_else(|e| panic!("Failed to bind to {listen_addr}: {e}"));
+    let listener = match tokio::net::TcpListener::bind(&listen_addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!("Failed to bind to {listen_addr}: {e}");
+            std::process::exit(1);
+        },
+    };
 
     tracing::info!("Breakpoint server listening on {listen_addr}");
 

@@ -46,6 +46,7 @@ pub fn build_app(config: ServerConfig) -> (Router<()>, AppState) {
 
     let app = Router::new()
         .route("/ws", axum::routing::get(ws::ws_handler))
+        .route("/health", axum::routing::get(|| async { "ok" }))
         .nest("/api/v1", api_routes)
         .nest("/api/v1/webhooks", webhook_routes)
         .fallback_service(ServeDir::new(&web_root))
@@ -64,6 +65,8 @@ pub fn spawn_event_broadcaster(state: AppState) {
             store.subscribe()
         };
 
+        let mut total_lagged: u64 = 0;
+
         loop {
             match rx.recv().await {
                 Ok(event) => {
@@ -74,12 +77,29 @@ pub fn spawn_event_broadcaster(state: AppState) {
                     }
                 },
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!("Event broadcaster lagged by {n} messages");
+                    total_lagged += n;
+                    tracing::warn!(skipped = n, total_lagged, "Event broadcaster lagged");
                 },
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                     tracing::info!("Event broadcast channel closed, stopping broadcaster");
                     break;
                 },
+            }
+        }
+    });
+}
+
+/// Background task that periodically removes rooms idle for more than 1 hour.
+pub fn spawn_idle_room_cleanup(state: AppState) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        let max_idle = std::time::Duration::from_secs(3600);
+        loop {
+            interval.tick().await;
+            let mut rooms = state.rooms.write().await;
+            let removed = rooms.cleanup_idle_rooms(max_idle);
+            if removed > 0 {
+                tracing::info!(removed, "Cleaned up idle rooms");
             }
         }
     });

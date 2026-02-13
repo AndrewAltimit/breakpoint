@@ -145,6 +145,27 @@ pub async fn ws_join_room_expect_error(
     }
 }
 
+/// Send a JoinRoom (create new room) with an arbitrary name.
+/// Returns the JoinRoomResponse (may be success or error).
+pub async fn ws_join_room_with_name(
+    stream: &mut WebSocketStream<MaybeTlsStream<TcpStream>>,
+    name: &str,
+) -> JoinRoomResponseMsg {
+    let msg = ClientMessage::JoinRoom(JoinRoomMsg {
+        room_code: String::new(),
+        player_name: name.to_string(),
+        player_color: PlayerColor::default(),
+    });
+    let encoded = encode_client_message(&msg).unwrap();
+    stream.send(Message::Binary(encoded.into())).await.unwrap();
+
+    let resp = ws_read_server_msg(stream).await;
+    match resp {
+        ServerMessage::JoinRoomResponse(join) => join,
+        other => panic!("Expected JoinRoomResponse, got: {other:?}"),
+    }
+}
+
 /// Read raw binary data from a WebSocket stream (5s timeout).
 pub async fn ws_read_raw(stream: &mut WebSocketStream<MaybeTlsStream<TcpStream>>) -> Vec<u8> {
     let deadline = Duration::from_secs(5);

@@ -28,6 +28,7 @@ pub struct PlatformerPlayerState {
     pub has_double_jump: bool,
     pub jumps_remaining: u8,
     pub last_checkpoint_x: f32,
+    pub last_checkpoint_y: f32,
     pub finished: bool,
     pub eliminated: bool,
     pub finish_time: Option<f32>,
@@ -44,6 +45,7 @@ impl PlatformerPlayerState {
             has_double_jump: false,
             jumps_remaining: 1,
             last_checkpoint_x: spawn_x,
+            last_checkpoint_y: spawn_y,
             finished: false,
             eliminated: false,
             finish_time: None,
@@ -52,7 +54,7 @@ impl PlatformerPlayerState {
 
     pub fn respawn_at_checkpoint(&mut self) {
         self.x = self.last_checkpoint_x;
-        self.y = 5.0; // above ground
+        self.y = self.last_checkpoint_y + 1.0;
         self.vx = 0.0;
         self.vy = 0.0;
     }
@@ -232,6 +234,7 @@ fn check_tile_effects(player: &mut PlatformerPlayerState, course: &Course) {
         Tile::Checkpoint => {
             if player.x > player.last_checkpoint_x {
                 player.last_checkpoint_x = tx as f32 * TILE_SIZE + TILE_SIZE / 2.0;
+                player.last_checkpoint_y = ty as f32 * TILE_SIZE + TILE_SIZE / 2.0;
             }
         },
         Tile::Finish => {
@@ -259,9 +262,8 @@ mod tests {
         let input = PlatformerInput::default();
         let y_before = player.y;
 
-        for _ in 0..SUBSTEPS {
-            tick_player(&mut player, &input, &course, 1.0 / SUBSTEPS as f32);
-        }
+        // Run a single small substep so the player falls but doesn't reach -5.0
+        tick_player(&mut player, &input, &course, 0.1);
 
         assert!(player.y < y_before, "Gravity should pull player down");
     }
@@ -305,8 +307,10 @@ mod tests {
     fn checkpoint_respawn() {
         let mut player = PlatformerPlayerState::new(5.0, 5.0);
         player.last_checkpoint_x = 10.0;
+        player.last_checkpoint_y = 8.0;
         player.respawn_at_checkpoint();
         assert_eq!(player.x, 10.0);
+        assert_eq!(player.y, 9.0); // last_checkpoint_y + 1.0
         assert_eq!(player.vx, 0.0);
         assert_eq!(player.vy, 0.0);
     }

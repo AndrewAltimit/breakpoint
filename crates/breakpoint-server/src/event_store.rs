@@ -7,7 +7,7 @@ use tokio::sync::broadcast;
 const MAX_STORED_EVENTS: usize = 500;
 
 /// Broadcast channel capacity for event fan-out.
-const BROADCAST_CAPACITY: usize = 256;
+const BROADCAST_CAPACITY: usize = 1024;
 
 /// An event stored in the EventStore with optional claim metadata.
 #[derive(Debug, Clone)]

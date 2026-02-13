@@ -240,14 +240,15 @@ impl BreakpointGame for LaserTagArena {
             }
         }
 
-        // Spawn power-ups in arena
+        // Spawn power-ups in arena (scale spread with arena size)
         let cx = self.arena.width / 2.0;
         let cz = self.arena.depth / 2.0;
+        let spread = (self.arena.width.min(self.arena.depth) * 0.2).min(15.0);
         let power_up_spots = [
-            (cx - 10.0, cz, LaserPowerUpKind::RapidFire),
-            (cx + 10.0, cz, LaserPowerUpKind::SpeedBoost),
-            (cx, cz - 10.0, LaserPowerUpKind::Shield),
-            (cx, cz + 10.0, LaserPowerUpKind::WideBeam),
+            (cx - spread, cz, LaserPowerUpKind::RapidFire),
+            (cx + spread, cz, LaserPowerUpKind::SpeedBoost),
+            (cx, cz - spread, LaserPowerUpKind::Shield),
+            (cx, cz + spread, LaserPowerUpKind::WideBeam),
         ];
         for (x, z, kind) in power_up_spots {
             self.state.powerups.push(SpawnedLaserPowerUp {
@@ -533,6 +534,37 @@ mod tests {
     fn tick_rate_is_20() {
         let game = LaserTagArena::new();
         assert_eq!(game.tick_rate(), 20.0);
+    }
+
+    #[test]
+    fn powerups_within_arena_bounds() {
+        for arena_name in ["small", "default", "large"] {
+            let mut game = LaserTagArena::new();
+            let players = make_players(2);
+            let mut config = default_config(180);
+            if arena_name != "default" {
+                config.custom.insert(
+                    "arena_size".to_string(),
+                    serde_json::Value::String(arena_name.to_string()),
+                );
+            }
+            game.init(&players, &config);
+
+            for pu in &game.state.powerups {
+                assert!(
+                    pu.x > 0.0 && pu.x < game.arena.width,
+                    "Power-up x={} out of bounds for {arena_name} arena (width={})",
+                    pu.x,
+                    game.arena.width
+                );
+                assert!(
+                    pu.z > 0.0 && pu.z < game.arena.depth,
+                    "Power-up z={} out of bounds for {arena_name} arena (depth={})",
+                    pu.z,
+                    game.arena.depth
+                );
+            }
+        }
     }
 
     #[test]

@@ -37,6 +37,8 @@ pub async fn github_webhook(
         if !verify_github_signature(signature, secret, &body) {
             return Err((StatusCode::UNAUTHORIZED, "Invalid signature".to_string()));
         }
+    } else {
+        tracing::warn!("GitHub webhook accepted without HMAC verification (no secret configured)");
     }
 
     let gh_event = headers

@@ -37,6 +37,13 @@ pub async fn post_events(
         return Err(AppError::BadRequest("No events provided".to_string()));
     }
 
+    if events.len() > 100 {
+        return Err(AppError::BadRequest(format!(
+            "Batch too large: {} (max 100)",
+            events.len()
+        )));
+    }
+
     let mut event_ids = Vec::with_capacity(events.len());
     let mut store = state.event_store.write().await;
     for event in events {
@@ -191,6 +198,17 @@ mod tests {
         assert!(result.is_ok());
         let (_, json) = result.unwrap();
         assert_eq!(json.accepted, 2);
+    }
+
+    #[tokio::test]
+    async fn post_oversized_batch_rejected() {
+        let state = AppState::new(ServerConfig::default());
+        let events: Vec<Event> = (0..101).map(|i| make_event(&format!("evt-{i}"))).collect();
+        let body = Json(PostEventsBody::Batch(events));
+        let result = post_events(State(state), body).await;
+        assert!(
+            matches!(result.unwrap_err(), AppError::BadRequest(msg) if msg.contains("Batch too large"))
+        );
     }
 
     #[tokio::test]

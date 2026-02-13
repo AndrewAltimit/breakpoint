@@ -155,6 +155,17 @@ async fn claim_nonexistent_event_404() {
 }
 
 #[tokio::test]
+async fn health_endpoint() {
+    let server = TestServer::new().await;
+    let resp = reqwest::get(format!("{}/health", server.base_url()))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = resp.text().await.unwrap();
+    assert_eq!(body, "ok");
+}
+
+#[tokio::test]
 async fn no_auth_mode_allows_requests() {
     let server = TestServer::new().await;
     let client = reqwest::Client::new();
