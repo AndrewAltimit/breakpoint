@@ -21,16 +21,17 @@ impl Plugin for PlatformerPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, register_platformer)
             .add_systems(
-                OnEnter(AppState::InGame),
-                setup_platformer.run_if(is_platformer_active),
-            )
-            .add_systems(
                 Update,
                 (
-                    platformer_input_system,
-                    platformer_render_sync,
-                    platformer_hud_system,
+                    setup_platformer.run_if(platformer_needs_setup),
+                    ApplyDeferred,
+                    (
+                        platformer_input_system,
+                        platformer_render_sync,
+                        platformer_hud_system,
+                    ),
                 )
+                    .chain()
                     .run_if(in_state(AppState::InGame).and(is_platformer_active)),
             )
             .add_systems(
@@ -46,6 +47,10 @@ fn register_platformer(mut registry: ResMut<GameRegistry>) {
 
 fn is_platformer_active(game: Option<Res<ActiveGame>>) -> bool {
     game.is_some_and(|g| g.game_id == "platform-racer")
+}
+
+fn platformer_needs_setup(input: Option<Res<PlatformerLocalInput>>) -> bool {
+    input.is_none()
 }
 
 /// Local input state for platformer.

@@ -17,6 +17,9 @@ pub struct WsClient {
     ws: Option<web_sys::WebSocket>,
     buffer: Rc<RefCell<MessageBuffer>>,
     connected: Rc<RefCell<bool>>,
+    /// Messages queued while WebSocket is still connecting (WASM only).
+    #[cfg(target_family = "wasm")]
+    outbound_queue: Rc<RefCell<Vec<Vec<u8>>>>,
 }
 
 impl Default for WsClient {
@@ -32,6 +35,8 @@ impl WsClient {
             ws: None,
             buffer: Rc::new(RefCell::new(MessageBuffer::default())),
             connected: Rc::new(RefCell::new(false)),
+            #[cfg(target_family = "wasm")]
+            outbound_queue: Rc::new(RefCell::new(Vec::new())),
         }
     }
 
@@ -54,9 +59,16 @@ impl WsClient {
         onmessage.forget();
 
         let connected = Rc::clone(&self.connected);
+        let queue = Rc::clone(&self.outbound_queue);
+        let ws_clone = ws.clone();
         let onopen = Closure::<dyn FnMut()>::new(move || {
             *connected.borrow_mut() = true;
             web_sys::console::log_1(&"WebSocket connected".into());
+            // Flush any messages queued while connecting
+            let queued: Vec<Vec<u8>> = queue.borrow_mut().drain(..).collect();
+            for data in queued {
+                let _ = ws_clone.send_with_u8_array(&data);
+            }
         });
         ws.set_onopen(Some(onopen.as_ref().unchecked_ref()));
         onopen.forget();
@@ -91,11 +103,19 @@ impl WsClient {
     }
 
     /// Send raw binary data over the WebSocket.
+    /// If the WebSocket exists but is still connecting, the message is queued
+    /// and will be sent automatically when the connection opens.
     #[cfg(target_family = "wasm")]
     pub fn send(&self, data: &[u8]) -> Result<(), String> {
         if let Some(ws) = &self.ws {
-            ws.send_with_u8_array(data)
-                .map_err(|e| format!("Send error: {e:?}"))
+            if *self.connected.borrow() {
+                ws.send_with_u8_array(data)
+                    .map_err(|e| format!("Send error: {e:?}"))
+            } else {
+                // WebSocket exists but is still connecting — queue the message
+                self.outbound_queue.borrow_mut().push(data.to_vec());
+                Ok(())
+            }
         } else {
             Err("Not connected".to_string())
         }
@@ -114,5 +134,17 @@ impl WsClient {
     /// Check if the WebSocket is connected.
     pub fn is_connected(&self) -> bool {
         *self.connected.borrow()
+    }
+
+    /// Check if the WebSocket exists (connecting or connected).
+    pub fn has_connection(&self) -> bool {
+        #[cfg(target_family = "wasm")]
+        {
+            self.ws.is_some()
+        }
+        #[cfg(not(target_family = "wasm"))]
+        {
+            *self.connected.borrow()
+        }
     }
 }

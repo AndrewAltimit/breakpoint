@@ -1,5 +1,6 @@
 use bevy::ecs::system::NonSend;
 use bevy::ecs::system::NonSendMut;
+use bevy::input::ButtonInput;
 use bevy::prelude::*;
 
 use breakpoint_core::game_trait::PlayerId;
@@ -20,7 +21,13 @@ impl Plugin for LobbyPlugin {
             .add_systems(OnEnter(AppState::Lobby), setup_lobby)
             .add_systems(
                 Update,
-                (lobby_input_system, lobby_network_system).run_if(in_state(AppState::Lobby)),
+                (
+                    lobby_input_system,
+                    lobby_keyboard_system,
+                    lobby_network_system,
+                    lobby_status_display_system,
+                )
+                    .run_if(in_state(AppState::Lobby)),
             )
             .add_systems(OnExit(AppState::Lobby), cleanup_lobby);
     }
@@ -40,6 +47,10 @@ pub struct LobbyState {
     pub error_message: Option<String>,
     pub ws_url: String,
     pub selected_game: String,
+    /// Room code being typed by the user for joining.
+    pub join_code_input: String,
+    /// Status message to display (set by various systems, rendered by status_display).
+    pub status_message: Option<String>,
 }
 
 #[derive(Component)]
@@ -57,20 +68,26 @@ struct StatusText;
 #[derive(Component)]
 struct RoomCodeText;
 
+#[derive(Component)]
+struct JoinCodeText;
+
 type RoomCodeFilter = (
     With<RoomCodeText>,
     Without<PlayerListText>,
     Without<StatusText>,
+    Without<JoinCodeText>,
 );
 type PlayerListFilter = (
     With<PlayerListText>,
     Without<RoomCodeText>,
     Without<StatusText>,
+    Without<JoinCodeText>,
 );
 type StatusFilter = (
     With<StatusText>,
     Without<RoomCodeText>,
     Without<PlayerListText>,
+    Without<JoinCodeText>,
 );
 
 #[derive(Component)]
@@ -78,8 +95,15 @@ enum LobbyButton {
     Create,
     Join,
     StartGame,
-    OpenEditor,
 }
+
+/// Marker for the StartGame button specifically (for targeted visibility changes).
+#[derive(Component)]
+struct StartGameButton;
+
+/// Marker for the join row (code input + join button) to hide when connected.
+#[derive(Component)]
+struct JoinRow;
 
 #[derive(Component)]
 struct GameSelectButton(String);
@@ -122,6 +146,27 @@ fn setup_lobby(mut commands: Commands, mut lobby: ResMut<LobbyState>) {
         #[cfg(not(target_family = "wasm"))]
         {
             lobby.ws_url = "ws://localhost:8080/ws".to_string();
+        }
+    }
+
+    // Read room code from URL ?room= parameter (for join links)
+    #[cfg(target_family = "wasm")]
+    {
+        if lobby.room_code.is_empty() && lobby.join_code_input.is_empty() {
+            if let Some(window) = web_sys::window() {
+                if let Ok(search) = window.location().search() {
+                    if let Some(room_param) = search
+                        .trim_start_matches('?')
+                        .split('&')
+                        .find(|p| p.starts_with("room="))
+                    {
+                        let code = room_param.trim_start_matches("room=");
+                        if !code.is_empty() {
+                            lobby.join_code_input = code.to_uppercase();
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -219,28 +264,50 @@ fn setup_lobby(mut commands: Commands, mut lobby: ResMut<LobbyState>) {
                 )),
             ));
 
-            // Buttons
+            // Create Room button
+            spawn_button(parent, "Create Room", LobbyButton::Create, btn_color);
+
+            // Join code input display + Join button (hidden when connected)
             parent
-                .spawn(Node {
-                    flex_direction: FlexDirection::Row,
-                    column_gap: Val::Px(16.0),
-                    ..default()
-                })
+                .spawn((
+                    JoinRow,
+                    Node {
+                        flex_direction: FlexDirection::Row,
+                        column_gap: Val::Px(8.0),
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                ))
                 .with_children(|row| {
-                    spawn_button(row, "Create Room", LobbyButton::Create, btn_color);
+                    // Join code display (shows typed characters)
+                    let initial_code = if lobby.join_code_input.is_empty() {
+                        "Type room code...".to_string()
+                    } else {
+                        lobby.join_code_input.clone()
+                    };
+                    row.spawn((
+                        JoinCodeText,
+                        Text::new(initial_code),
+                        TextFont {
+                            font_size: 18.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.7, 0.7, 0.5)),
+                        Node {
+                            padding: UiRect::axes(Val::Px(12.0), Val::Px(8.0)),
+                            min_width: Val::Px(200.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.15, 0.15, 0.25)),
+                    ));
                     spawn_button(row, "Join Room", LobbyButton::Join, btn_color);
-                    spawn_button(
-                        row,
-                        "Editor",
-                        LobbyButton::OpenEditor,
-                        Color::srgb(0.5, 0.3, 0.6),
-                    );
                 });
 
-            // Start Game button (hidden initially)
+            // Start Game button (hidden initially, shown when host is in room)
             parent
                 .spawn((
                     LobbyButton::StartGame,
+                    StartGameButton,
                     Button,
                     Node {
                         padding: UiRect::axes(Val::Px(24.0), Val::Px(12.0)),
@@ -280,15 +347,15 @@ fn setup_lobby(mut commands: Commands, mut lobby: ResMut<LobbyState>) {
                 TextColor(text_color),
             ));
 
-            // Status
+            // Status (yellow for info, errors override to red)
             parent.spawn((
                 StatusText,
                 Text::new(""),
                 TextFont {
-                    font_size: 14.0,
+                    font_size: 16.0,
                     ..default()
                 },
-                TextColor(Color::srgb(1.0, 0.4, 0.4)),
+                TextColor(Color::srgb(0.9, 0.85, 0.3)),
             ));
         });
 }
@@ -335,7 +402,88 @@ fn spawn_button(parent: &mut ChildSpawnerCommands, label: &str, action: LobbyBut
         ));
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Handle keyboard input for typing room codes.
+fn lobby_keyboard_system(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut lobby: ResMut<LobbyState>,
+    mut join_code_text: Query<&mut Text, With<JoinCodeText>>,
+) {
+    // Don't accept keyboard input if already in a room
+    if lobby.connected {
+        return;
+    }
+
+    let mut changed = false;
+
+    for key in keyboard.get_just_pressed() {
+        let ch = match key {
+            KeyCode::KeyA => Some('A'),
+            KeyCode::KeyB => Some('B'),
+            KeyCode::KeyC => Some('C'),
+            KeyCode::KeyD => Some('D'),
+            KeyCode::KeyE => Some('E'),
+            KeyCode::KeyF => Some('F'),
+            KeyCode::KeyG => Some('G'),
+            KeyCode::KeyH => Some('H'),
+            KeyCode::KeyI => Some('I'),
+            KeyCode::KeyJ => Some('J'),
+            KeyCode::KeyK => Some('K'),
+            KeyCode::KeyL => Some('L'),
+            KeyCode::KeyM => Some('M'),
+            KeyCode::KeyN => Some('N'),
+            KeyCode::KeyO => Some('O'),
+            KeyCode::KeyP => Some('P'),
+            KeyCode::KeyQ => Some('Q'),
+            KeyCode::KeyR => Some('R'),
+            KeyCode::KeyS => Some('S'),
+            KeyCode::KeyT => Some('T'),
+            KeyCode::KeyU => Some('U'),
+            KeyCode::KeyV => Some('V'),
+            KeyCode::KeyW => Some('W'),
+            KeyCode::KeyX => Some('X'),
+            KeyCode::KeyY => Some('Y'),
+            KeyCode::KeyZ => Some('Z'),
+            KeyCode::Digit0 | KeyCode::Numpad0 => Some('0'),
+            KeyCode::Digit1 | KeyCode::Numpad1 => Some('1'),
+            KeyCode::Digit2 | KeyCode::Numpad2 => Some('2'),
+            KeyCode::Digit3 | KeyCode::Numpad3 => Some('3'),
+            KeyCode::Digit4 | KeyCode::Numpad4 => Some('4'),
+            KeyCode::Digit5 | KeyCode::Numpad5 => Some('5'),
+            KeyCode::Digit6 | KeyCode::Numpad6 => Some('6'),
+            KeyCode::Digit7 | KeyCode::Numpad7 => Some('7'),
+            KeyCode::Digit8 | KeyCode::Numpad8 => Some('8'),
+            KeyCode::Digit9 | KeyCode::Numpad9 => Some('9'),
+            KeyCode::Minus => Some('-'),
+            _ => None,
+        };
+
+        if let Some(c) = ch {
+            lobby.join_code_input.push(c);
+            changed = true;
+        } else if *key == KeyCode::Backspace {
+            lobby.join_code_input.pop();
+            changed = true;
+        }
+    }
+
+    // Auto-insert dash after 4 chars if missing (ABCD -> ABCD-)
+    if changed && lobby.join_code_input.len() == 5 && !lobby.join_code_input.contains('-') {
+        lobby.join_code_input.insert(4, '-');
+    }
+
+    // Cap at 9 chars (ABCD-1234)
+    lobby.join_code_input.truncate(9);
+
+    if changed && let Ok(mut text) = join_code_text.single_mut() {
+        if lobby.join_code_input.is_empty() {
+            **text = "Type room code...".to_string();
+        } else {
+            **text = lobby.join_code_input.clone();
+        }
+    }
+}
+
+/// Handle button clicks. No Text queries here to avoid query conflicts.
 fn lobby_input_system(
     interaction_query: Query<(&Interaction, &LobbyButton), Changed<Interaction>>,
     game_select_query: Query<(&Interaction, &GameSelectButton), Changed<Interaction>>,
@@ -361,10 +509,15 @@ fn lobby_input_system(
 
         match button {
             LobbyButton::Create => {
-                if !ws_client.is_connected() {
+                if lobby.connected {
+                    lobby.status_message =
+                        Some("Already in a room. Refresh page to create a new one.".to_string());
+                    continue;
+                }
+                if !ws_client.has_connection() {
                     let url = lobby.ws_url.clone();
                     if let Err(e) = ws_client.connect(&url) {
-                        lobby.error_message = Some(format!("Connection failed: {e}"));
+                        lobby.status_message = Some(format!("Connection failed: {e}"));
                         continue;
                     }
                 }
@@ -378,29 +531,38 @@ fn lobby_input_system(
                 if let Ok(data) = encode_client_message(&msg) {
                     let _ = ws_client.send(&data);
                 }
+                lobby.status_message = Some("Creating room...".to_string());
             },
             LobbyButton::Join => {
-                if lobby.room_code.is_empty() {
-                    lobby.error_message = Some("Enter a room code first".to_string());
+                if lobby.connected {
+                    lobby.status_message =
+                        Some("Already in a room. Refresh page to join a new one.".to_string());
                     continue;
                 }
-                if !ws_client.is_connected() {
+                let code = lobby.join_code_input.trim().to_uppercase();
+                if code.is_empty() {
+                    lobby.status_message =
+                        Some("Type a room code first (e.g. ABCD-1234)".to_string());
+                    continue;
+                }
+                if !ws_client.has_connection() {
                     let url = lobby.ws_url.clone();
                     if let Err(e) = ws_client.connect(&url) {
-                        lobby.error_message = Some(format!("Connection failed: {e}"));
+                        lobby.status_message = Some(format!("Connection failed: {e}"));
                         continue;
                     }
                 }
                 lobby.is_host = false;
                 let color = PlayerColor::PALETTE[lobby.color_index % PlayerColor::PALETTE.len()];
                 let msg = ClientMessage::JoinRoom(JoinRoomMsg {
-                    room_code: lobby.room_code.clone(),
+                    room_code: code.clone(),
                     player_name: lobby.player_name.clone(),
                     player_color: color,
                 });
                 if let Ok(data) = encode_client_message(&msg) {
                     let _ = ws_client.send(&data);
                 }
+                lobby.status_message = Some(format!("Joining room {code}..."));
             },
             LobbyButton::StartGame => {
                 if lobby.is_host {
@@ -413,11 +575,30 @@ fn lobby_input_system(
                     if let Ok(data) = breakpoint_core::net::protocol::encode_server_message(&msg) {
                         let _ = ws_client.send(&data);
                     }
+                    // The server relays GameStart to other players but NOT back to
+                    // the sender (broadcast_to_room_except). Transition locally.
+                    next_state.set(AppState::InGame);
                 }
             },
-            LobbyButton::OpenEditor => {
-                next_state.set(AppState::Editor);
-            },
+        }
+    }
+}
+
+/// Display status/error messages from LobbyState. Runs separately to avoid query conflicts.
+fn lobby_status_display_system(
+    lobby: Res<LobbyState>,
+    mut status_query: Query<(&mut Text, &mut TextColor), StatusFilter>,
+) {
+    if !lobby.is_changed() {
+        return;
+    }
+    if let Ok((mut text, mut color)) = status_query.single_mut() {
+        if let Some(ref err) = lobby.error_message {
+            **text = err.clone();
+            *color = TextColor(Color::srgb(1.0, 0.4, 0.4)); // Red for errors
+        } else if let Some(ref msg) = lobby.status_message {
+            **text = msg.clone();
+            *color = TextColor(Color::srgb(0.9, 0.85, 0.3)); // Yellow for info
         }
     }
 }
@@ -428,15 +609,14 @@ fn lobby_network_system(
     mut lobby: ResMut<LobbyState>,
     mut room_code_text: Query<&mut Text, RoomCodeFilter>,
     mut player_list_text: Query<&mut Text, PlayerListFilter>,
-    mut status_text: Query<&mut Text, StatusFilter>,
-    mut start_btn_vis: Query<&mut Visibility, With<LobbyButton>>,
+    mut start_btn_vis: Query<&mut Visibility, With<StartGameButton>>,
+    mut join_row_node: Query<&mut Node, With<JoinRow>>,
     mut next_state: ResMut<NextState<AppState>>,
     mut overlay_queue: ResMut<crate::overlay::OverlayEventQueue>,
     mut overlay_state: ResMut<crate::overlay::OverlayState>,
 ) {
     let messages = ws_client.drain_messages();
     for data in messages {
-        // Try decoding as server message first
         let msg = match decode_server_message(&data) {
             Ok(m) => m,
             Err(_) => continue,
@@ -447,9 +627,16 @@ fn lobby_network_system(
                 handle_join_response(&resp, &mut lobby);
                 if resp.success {
                     overlay_state.local_player_id = resp.player_id;
+                    if lobby.is_host {
+                        lobby.status_message = Some(
+                            "Room created! Click Start Game, or share the code with friends."
+                                .to_string(),
+                        );
+                    } else {
+                        lobby.status_message =
+                            Some("Joined! Waiting for host to start...".to_string());
+                    }
 
-                    // Late-join: if room is already in-game, mark as spectator
-                    // and transition directly to InGame
                     if let Some(room_state) = resp.room_state
                         && room_state != breakpoint_core::room::RoomState::Lobby
                     {
@@ -462,10 +649,8 @@ fn lobby_network_system(
                 {
                     **text = format!("Room: {code}");
                 }
-                if !resp.success
-                    && let Ok(mut text) = status_text.single_mut()
-                {
-                    **text = resp.error.unwrap_or_default();
+                if !resp.success {
+                    lobby.status_message = resp.error.clone();
                 }
             },
             breakpoint_core::net::messages::ServerMessage::PlayerList(pl) => {
@@ -484,9 +669,16 @@ fn lobby_network_system(
                         .collect();
                     **text = format!("Players: {}", names.join(", "));
                 }
-                if lobby.is_host && lobby.players.len() >= 2 {
-                    for mut vis in &mut start_btn_vis {
-                        *vis = Visibility::Visible;
+                if lobby.connected {
+                    // Collapse the join row entirely (Display::None removes from layout)
+                    for mut node in &mut join_row_node {
+                        node.display = Display::None;
+                    }
+                    // Show Start Game for the host
+                    if lobby.is_host {
+                        for mut vis in &mut start_btn_vis {
+                            *vis = Visibility::Visible;
+                        }
                     }
                 }
             },
@@ -494,7 +686,6 @@ fn lobby_network_system(
                 lobby.selected_game = gs.game_name;
                 next_state.set(AppState::InGame);
             },
-            // Forward alert messages to the overlay
             breakpoint_core::net::messages::ServerMessage::AlertEvent(ae) => {
                 overlay_queue.push(crate::overlay::OverlayNetEvent::AlertReceived(Box::new(
                     ae.event,

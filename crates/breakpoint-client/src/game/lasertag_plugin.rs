@@ -21,16 +21,17 @@ impl Plugin for LaserTagPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, register_lasertag)
             .add_systems(
-                OnEnter(AppState::InGame),
-                setup_lasertag.run_if(is_lasertag_active),
-            )
-            .add_systems(
                 Update,
                 (
-                    lasertag_input_system,
-                    lasertag_render_sync,
-                    lasertag_hud_system,
+                    setup_lasertag.run_if(lasertag_needs_setup),
+                    ApplyDeferred,
+                    (
+                        lasertag_input_system,
+                        lasertag_render_sync,
+                        lasertag_hud_system,
+                    ),
                 )
+                    .chain()
                     .run_if(in_state(AppState::InGame).and(is_lasertag_active)),
             )
             .add_systems(
@@ -46,6 +47,10 @@ fn register_lasertag(mut registry: ResMut<GameRegistry>) {
 
 fn is_lasertag_active(game: Option<Res<ActiveGame>>) -> bool {
     game.is_some_and(|g| g.game_id == "laser-tag")
+}
+
+fn lasertag_needs_setup(input: Option<Res<LaserTagLocalInput>>) -> bool {
+    input.is_none()
 }
 
 /// Local input state for laser tag.

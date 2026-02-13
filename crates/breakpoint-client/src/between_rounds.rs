@@ -50,6 +50,7 @@ fn setup_between_rounds(
     round_tracker: Res<RoundTracker>,
     lobby: Res<LobbyState>,
     mut overlay_state: ResMut<OverlayState>,
+    course_info: Option<Res<crate::game::golf_plugin::GolfCourseInfo>>,
 ) {
     // Auto-expand dashboard overlay during between-rounds
     overlay_state.dashboard_visible = true;
@@ -126,6 +127,29 @@ fn setup_between_rounds(
                 ));
             }
 
+            // Next hole info (golf-specific)
+            if let Some(ref info) = course_info {
+                let next_hole = round_tracker.current_round as usize; // 0-indexed next
+                let courses = breakpoint_golf::course::all_courses();
+                if next_hole < courses.len() {
+                    let next_course = &courses[next_hole];
+                    parent.spawn((
+                        Text::new(format!(
+                            "Hole {} of {} — Next: {} — Par {}",
+                            next_hole + 1,
+                            info.total_holes,
+                            next_course.name,
+                            next_course.par
+                        )),
+                        TextFont {
+                            font_size: 20.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.3, 0.9, 0.3)),
+                    ));
+                }
+            }
+
             // Countdown
             parent.spawn((
                 CountdownText,
@@ -178,10 +202,17 @@ fn between_rounds_host_transition(
 
     // Re-initialize game for next round with all players active
     if let Some(ref mut active_game) = active_game {
+        let mut custom = HashMap::new();
+        // current_round is already incremented above, and is 1-indexed.
+        // hole_index is 0-indexed, so round 2 → hole_index 1, etc.
+        custom.insert(
+            "hole_index".to_string(),
+            serde_json::json!(round_tracker.current_round - 1),
+        );
         let config = breakpoint_core::game_trait::GameConfig {
             round_count: round_tracker.total_rounds,
             round_duration: std::time::Duration::from_secs(90),
-            custom: HashMap::new(),
+            custom,
         };
         active_game.game.init(&players_for_round, &config);
         active_game.tick = 0;

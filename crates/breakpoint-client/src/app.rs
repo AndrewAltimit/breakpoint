@@ -8,5 +8,4 @@ pub enum AppState {
     InGame,
     BetweenRounds,
     GameOver,
-    Editor,
 }

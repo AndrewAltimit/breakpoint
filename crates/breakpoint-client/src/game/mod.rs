@@ -52,7 +52,8 @@ impl Plugin for GamePlugin {
                 )
                     .run_if(in_state(AppState::InGame)),
             )
-            .add_systems(OnExit(AppState::InGame), cleanup_game);
+            .add_systems(OnExit(AppState::InGame), cleanup_game_entities)
+            .add_systems(OnEnter(AppState::Lobby), full_cleanup);
     }
 }
 
@@ -124,14 +125,27 @@ impl RoundTracker {
     }
 }
 
-fn setup_game(mut commands: Commands, lobby: Res<LobbyState>, registry: Res<GameRegistry>) {
+fn setup_game(
+    mut commands: Commands,
+    lobby: Res<LobbyState>,
+    registry: Res<GameRegistry>,
+    existing_game: Option<Res<ActiveGame>>,
+) {
+    // If ActiveGame already exists (re-entry from BetweenRounds), skip creation.
+    // The host already re-initialized the game in between_rounds_host_transition.
+    if existing_game.is_some() {
+        return;
+    }
+
     let game_id = lobby.selected_game.clone();
     let mut game = registry
         .create(&game_id)
         .unwrap_or_else(|| registry.create("mini-golf").unwrap());
 
+    let round_count = game.round_count_hint();
+
     let config = GameConfig {
-        round_count: 1,
+        round_count,
         round_duration: std::time::Duration::from_secs(90),
         custom: HashMap::new(),
     };
@@ -151,7 +165,7 @@ fn setup_game(mut commands: Commands, lobby: Res<LobbyState>, registry: Res<Game
         local_player_id,
         is_spectator: lobby.is_spectator,
     });
-    commands.insert_resource(RoundTracker::new(config.round_count));
+    commands.insert_resource(RoundTracker::new(round_count));
 }
 
 fn game_tick_system(
@@ -342,11 +356,19 @@ fn client_receive_system(
     }
 }
 
-fn cleanup_game(mut commands: Commands, query: Query<Entity, With<GameEntity>>) {
+/// Despawn 3D game entities only (meshes, UI spawned by game plugins).
+/// Resources (ActiveGame, NetworkRole, RoundTracker) are preserved for BetweenRounds.
+fn cleanup_game_entities(mut commands: Commands, query: Query<Entity, With<GameEntity>>) {
     for entity in &query {
         commands.entity(entity).despawn();
     }
+}
+
+/// Full cleanup when returning to Lobby — remove all game resources.
+fn full_cleanup(mut commands: Commands) {
     commands.remove_resource::<ActiveGame>();
     commands.remove_resource::<NetworkRole>();
     commands.remove_resource::<RoundTracker>();
+    #[cfg(feature = "golf")]
+    commands.remove_resource::<golf_plugin::GolfCourseInfo>();
 }

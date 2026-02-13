@@ -66,8 +66,8 @@ test.describe('Button Click Diagnostics', () => {
 
     // Click where "Create Room" button should be (center area, slightly above middle)
     // Based on the screenshot: buttons are at roughly 60% down, centered
-    const createRoomX = box.width * 0.38; // Create Room is left of center
-    const createRoomY = box.height * 0.59; // Buttons are ~59% down
+    const createRoomX = box.width * 0.50; // Create Room is centered (standalone button)
+    const createRoomY = box.height * 0.56; // Below game selection area
     console.log(`Clicking Create Room at: (${createRoomX}, ${createRoomY})`);
 
     await canvas.click({ position: { x: createRoomX, y: createRoomY } });
@@ -131,13 +131,16 @@ test.describe('Button Click Diagnostics', () => {
     console.log('Focus after click:', JSON.stringify(focusAfter));
 
     // Try multiple clicks on different buttons
+    // NOTE: Editor was removed. Layout is now:
+    //   Game select row: Mini-Golf | Platform Racer | Laser Tag
+    //   Create Room (standalone button)
+    //   [Type room code...] [Join Room] (row)
     const buttonPositions = [
       { name: 'Mini-Golf', x: 0.39, y: 0.35 },
       { name: 'Platform Racer', x: 0.50, y: 0.35 },
       { name: 'Laser Tag', x: 0.61, y: 0.35 },
-      { name: 'Create Room', x: 0.37, y: 0.59 },
-      { name: 'Join Room', x: 0.51, y: 0.59 },
-      { name: 'Editor', x: 0.64, y: 0.59 },
+      { name: 'Create Room', x: 0.50, y: 0.56 },
+      { name: 'Join Room', x: 0.58, y: 0.61 },
     ];
 
     const box = await canvas.boundingBox();
@@ -185,8 +188,8 @@ test.describe('Button Click Diagnostics', () => {
         canvasRect.top + canvasRect.height / 2
       );
       const elementsAtButton = document.elementsFromPoint(
-        canvasRect.left + canvasRect.width * 0.38,
-        canvasRect.top + canvasRect.height * 0.59
+        canvasRect.left + canvasRect.width * 0.50,
+        canvasRect.top + canvasRect.height * 0.56
       );
 
       return {

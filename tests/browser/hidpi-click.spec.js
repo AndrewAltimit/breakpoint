@@ -56,15 +56,15 @@ test.describe('HiDPI Button Click Test (DPR=2)', () => {
       console.log(`  [${m.type}] ${m.text}`);
     }
 
-    // Now test Editor button
-    const editorX = Math.round(box.width * 0.64);
-    const editorY = Math.round(box.height * 0.59);
-    console.log(`Clicking Editor at: (${editorX}, ${editorY})`);
-    await canvas.click({ position: { x: editorX, y: editorY } });
+    // Test Join Room button (in the row with text input)
+    const joinX = Math.round(box.width * 0.58);
+    const joinY = Math.round(box.height * 0.61);
+    console.log(`Clicking Join Room at: (${joinX}, ${joinY})`);
+    await canvas.click({ position: { x: joinX, y: joinY } });
     await page.waitForTimeout(2000);
 
-    const editorScreenshot = await page.screenshot();
-    console.log(`Editor screenshot: ${editorScreenshot.length} bytes`);
+    const joinScreenshot = await page.screenshot();
+    console.log(`Join screenshot: ${joinScreenshot.length} bytes`);
 
     console.log(`\nAll messages (${messages.length}):`);
     for (const m of messages) {

@@ -42,10 +42,10 @@ test('Create Room button works at DPR 2', async ({ page }) => {
   const box = await canvas.boundingBox();
 
   // Scan the button area to find "Create Room"
-  // At 960x540, buttons are roughly centered. Try a range of positions.
+  // Create Room is a centered standalone button (editor removed).
   let hitFound = false;
-  for (let yPct = 0.55; yPct <= 0.70; yPct += 0.02) {
-    for (let xPct = 0.20; xPct <= 0.45; xPct += 0.02) {
+  for (let yPct = 0.50; yPct <= 0.70; yPct += 0.02) {
+    for (let xPct = 0.40; xPct <= 0.60; xPct += 0.02) {
       const beforeCount = messages.filter(m => m.text.includes('WebSocket')).length;
 
       const x = Math.round(box.width * xPct);
@@ -78,9 +78,9 @@ test.describe('DPR 1 baseline', () => {
     const canvas = page.locator('#game-canvas');
     const box = await canvas.boundingBox();
 
-    // At DPR=1 1280x720, buttons at roughly 38% x, 59% y
-    const x = Math.round(box.width * 0.38);
-    const y = Math.round(box.height * 0.59);
+    // At DPR=1 1280x720, Create Room is centered (standalone button, editor removed)
+    const x = Math.round(box.width * 0.50);
+    const y = Math.round(box.height * 0.56);
     console.log(`Clicking at (${x}, ${y})`);
     await canvas.click({ position: { x, y } });
     await page.waitForTimeout(2000);

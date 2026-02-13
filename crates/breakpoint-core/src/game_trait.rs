@@ -43,6 +43,12 @@ pub trait BreakpointGame: Send + Sync {
         10.0
     }
 
+    /// Hint for the number of rounds this game wants to play (e.g. 9 holes for golf).
+    /// The framework uses this to set `round_count` in the initial `GameConfig`.
+    fn round_count_hint(&self) -> u8 {
+        1
+    }
+
     /// Whether the game supports the overlay pausing gameplay.
     fn supports_pause(&self) -> bool {
         true

@@ -12,7 +12,7 @@ use breakpoint_core::game_trait::{
 };
 use breakpoint_core::player::Player;
 
-use course::{Course, default_course};
+use course::{Course, all_courses};
 use physics::BallState;
 use scoring::calculate_score;
 
@@ -24,6 +24,8 @@ pub struct GolfState {
     pub sunk_order: Vec<PlayerId>,
     pub round_timer: f32,
     pub round_complete: bool,
+    /// Which course (0-indexed) is currently being played.
+    pub course_index: u8,
 }
 
 /// Input from a single player for a stroke.
@@ -39,7 +41,8 @@ pub struct GolfInput {
 
 /// The MiniGolf game, implementing `BreakpointGame`.
 pub struct MiniGolf {
-    course: Course,
+    courses: Vec<Course>,
+    course_index: usize,
     state: GolfState,
     player_ids: Vec<PlayerId>,
     paused: bool,
@@ -47,15 +50,18 @@ pub struct MiniGolf {
 
 impl MiniGolf {
     pub fn new() -> Self {
+        let courses = all_courses();
         Self {
-            course: default_course(),
+            course_index: 0,
             state: GolfState {
                 balls: HashMap::new(),
                 strokes: HashMap::new(),
                 sunk_order: Vec::new(),
                 round_timer: 0.0,
                 round_complete: false,
+                course_index: 0,
             },
+            courses,
             player_ids: Vec::new(),
             paused: false,
         }
@@ -63,12 +69,22 @@ impl MiniGolf {
 
     /// Accessor for the current course.
     pub fn course(&self) -> &Course {
-        &self.course
+        &self.courses[self.course_index]
     }
 
     /// Accessor for the current game state.
     pub fn state(&self) -> &GolfState {
         &self.state
+    }
+
+    /// Current course index (0-based).
+    pub fn course_index(&self) -> usize {
+        self.course_index
+    }
+
+    /// Total number of holes available.
+    pub fn total_holes(&self) -> usize {
+        self.courses.len()
     }
 
     /// Round time limit in seconds.
@@ -93,22 +109,30 @@ impl BreakpointGame for MiniGolf {
         }
     }
 
-    fn init(&mut self, players: &[Player], _config: &GameConfig) {
+    fn init(&mut self, players: &[Player], config: &GameConfig) {
+        // Select course from config (default to 0)
+        let hole_index = config
+            .custom
+            .get("hole_index")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
+        self.course_index = hole_index.min(self.courses.len().saturating_sub(1));
+
         self.state.balls.clear();
         self.state.strokes.clear();
         self.state.sunk_order.clear();
         self.state.round_timer = 0.0;
         self.state.round_complete = false;
+        self.state.course_index = self.course_index as u8;
         self.player_ids.clear();
 
+        let spawn = self.courses[self.course_index].spawn_point;
         for player in players {
             if player.is_spectator {
                 continue;
             }
             self.player_ids.push(player.id);
-            self.state
-                .balls
-                .insert(player.id, BallState::new(self.course.spawn_point));
+            self.state.balls.insert(player.id, BallState::new(spawn));
             self.state.strokes.insert(player.id, 0);
         }
     }
@@ -120,9 +144,11 @@ impl BreakpointGame for MiniGolf {
 
         self.state.round_timer += dt;
 
+        let course = &self.courses[self.course_index];
+
         // Tick all balls
         for ball in self.state.balls.values_mut() {
-            ball.tick(&self.course);
+            ball.tick(course);
         }
 
         // Check for newly sunk balls
@@ -135,7 +161,7 @@ impl BreakpointGame for MiniGolf {
                 self.state.sunk_order.push(pid);
                 let was_first = self.state.sunk_order.len() == 1;
                 let strokes = self.state.strokes.get(&pid).copied().unwrap_or(0);
-                let score = calculate_score(strokes, self.course.par, was_first, true);
+                let score = calculate_score(strokes, course.par, was_first, true);
                 events.push(GameEvent::ScoreUpdate {
                     player_id: pid,
                     score,
@@ -196,9 +222,8 @@ impl BreakpointGame for MiniGolf {
         }
         if !self.player_ids.contains(&player.id) {
             self.player_ids.push(player.id);
-            self.state
-                .balls
-                .insert(player.id, BallState::new(self.course.spawn_point));
+            let spawn = self.courses[self.course_index].spawn_point;
+            self.state.balls.insert(player.id, BallState::new(spawn));
             self.state.strokes.insert(player.id, 0);
         }
     }
@@ -207,6 +232,10 @@ impl BreakpointGame for MiniGolf {
         self.player_ids.retain(|&id| id != player_id);
         self.state.balls.remove(&player_id);
         self.state.strokes.remove(&player_id);
+    }
+
+    fn round_count_hint(&self) -> u8 {
+        self.courses.len() as u8
     }
 
     fn supports_pause(&self) -> bool {
@@ -226,13 +255,14 @@ impl BreakpointGame for MiniGolf {
     }
 
     fn round_results(&self) -> Vec<PlayerScore> {
+        let par = self.courses[self.course_index].par;
         self.player_ids
             .iter()
             .map(|&pid| {
                 let strokes = self.state.strokes.get(&pid).copied().unwrap_or(0);
                 let finished = self.state.sunk_order.contains(&pid);
                 let was_first = self.state.sunk_order.first() == Some(&pid);
-                let score = calculate_score(strokes, self.course.par, was_first, finished);
+                let score = calculate_score(strokes, par, was_first, finished);
                 PlayerScore {
                     player_id: pid,
                     score,
@@ -340,8 +370,9 @@ mod tests {
         game.init(&players, &default_config());
 
         // Manually sink both balls
+        let hole_pos = game.course().hole_position;
         for ball in game.state.balls.values_mut() {
-            ball.position = game.course.hole_position;
+            ball.position = hole_pos;
             ball.velocity = course::Vec3::new(0.01, 0.0, 0.0);
             ball.is_sunk = false;
         }

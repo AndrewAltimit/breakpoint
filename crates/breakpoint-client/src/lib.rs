@@ -2,7 +2,6 @@ mod app;
 mod audio;
 mod between_rounds;
 mod camera;
-mod editor;
 pub mod game;
 mod game_over;
 pub mod lobby;
@@ -17,7 +16,6 @@ use app::AppState;
 use audio::AudioPlugin;
 use between_rounds::BetweenRoundsPlugin;
 use camera::GameCameraPlugin;
-use editor::EditorPlugin;
 use game::GamePlugin;
 use game_over::GameOverPlugin;
 use lobby::LobbyPlugin;
@@ -52,7 +50,6 @@ pub fn start() {
             OverlayPlugin,
             AudioPlugin,
             SettingsPlugin,
-            EditorPlugin,
         ))
         .run();
 }
