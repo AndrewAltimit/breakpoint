@@ -119,6 +119,10 @@ struct HoleInfoText;
 #[derive(Component)]
 struct ScoreboardText;
 
+/// Marker for the ground disc under the local player's ball.
+#[derive(Component)]
+struct BallMarker;
+
 /// Marker for sink flash entities.
 #[derive(Component)]
 struct SinkFlash {
@@ -380,6 +384,20 @@ fn setup_golf(
         ));
     }
 
+    // Ground marker disc under local player's ball for visibility
+    commands.spawn((
+        GameEntity,
+        BallMarker,
+        Mesh3d(meshes.add(Cylinder::new(0.6, 0.01))),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgba(1.0, 1.0, 1.0, 0.5),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        })),
+        Transform::from_xyz(course_data.spawn_point.x, 0.01, course_data.spawn_point.z),
+    ));
+
     // Aim dots (5 small spheres along aim direction)
     let dot_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(1.0, 1.0, 0.3),
@@ -615,9 +633,18 @@ fn golf_apply_input_system(
     local_input.power = 0.0;
 }
 
+#[allow(clippy::type_complexity)]
 fn golf_render_sync(
     active_game: Res<ActiveGame>,
-    mut ball_query: Query<(&BallEntity, &mut Transform, &mut Visibility)>,
+    network_role: Res<NetworkRole>,
+    mut ball_query: Query<
+        (&BallEntity, &mut Transform, &mut Visibility),
+        Without<BallMarker>,
+    >,
+    mut marker_query: Query<
+        (&mut Transform, &mut Visibility),
+        (With<BallMarker>, Without<BallEntity>),
+    >,
 ) {
     let state: Option<GolfState> = read_game_state(&active_game);
     let Some(state) = state else {
@@ -631,6 +658,20 @@ fn golf_render_sync(
                 *visibility = Visibility::Visible;
                 transform.translation.x = ball.position.x;
                 transform.translation.y = BALL_RADIUS;
+                transform.translation.z = ball.position.z;
+            }
+        }
+    }
+
+    // Sync ground marker to local player's ball
+    if let Some(ball) = state.balls.get(&network_role.local_player_id) {
+        for (mut transform, mut visibility) in &mut marker_query {
+            if ball.is_sunk {
+                *visibility = Visibility::Hidden;
+            } else {
+                *visibility = Visibility::Visible;
+                transform.translation.x = ball.position.x;
+                transform.translation.y = 0.01;
                 transform.translation.z = ball.position.z;
             }
         }

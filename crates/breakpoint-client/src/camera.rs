@@ -6,6 +6,8 @@ use crate::game::ActiveGame;
 
 #[cfg(feature = "golf")]
 use crate::game::golf_plugin::GolfCourseInfo;
+#[cfg(feature = "golf")]
+use crate::game::{NetworkRole, read_game_state};
 
 pub struct GameCameraPlugin;
 
@@ -81,6 +83,8 @@ fn update_camera(
     game: Option<Res<ActiveGame>>,
     mut camera_query: Query<&mut Transform, (With<GameCamera>, Without<GameLight>)>,
     #[cfg(feature = "golf")] course_info: Option<Res<GolfCourseInfo>>,
+    #[cfg(feature = "golf")] network_role: Option<Res<NetworkRole>>,
+    #[cfg(feature = "golf")] time: Res<Time>,
 ) {
     let Some(game) = game else {
         return;
@@ -101,12 +105,34 @@ fn update_camera(
         },
         #[cfg(feature = "golf")]
         "mini-golf" => {
-            if let Some(ref info) = course_info {
+            // Try to follow the local player's ball for a close-up view.
+            // Falls back to course-center overview if ball position unavailable.
+            let ball_pos = network_role.as_ref().and_then(|role| {
+                let state: Option<breakpoint_golf::GolfState> = read_game_state(&game);
+                state.and_then(|s| {
+                    s.balls
+                        .get(&role.local_player_id)
+                        .map(|b| Vec3::new(b.position.x, 0.0, b.position.z))
+                })
+            });
+
+            if let Some(ball_xz) = ball_pos {
+                let camera_height = 15.0;
+                let offset_z = -2.0; // Slight offset for perspective feel
+                let target =
+                    Vec3::new(ball_xz.x, camera_height, ball_xz.z + offset_z);
+                let look_target = Vec3::new(ball_xz.x, 0.0, ball_xz.z);
+
+                let lerp_factor = (5.0 * time.delta_secs()).min(1.0);
+                for mut transform in &mut camera_query {
+                    transform.translation =
+                        transform.translation.lerp(target, lerp_factor);
+                    *transform = transform.looking_at(look_target, Vec3::Y);
+                }
+            } else if let Some(ref info) = course_info {
                 let cx = info.width / 2.0;
                 let cz = info.depth / 2.0;
-                // Camera height proportional to course size
                 let h = info.width.max(info.depth) * 1.1;
-                // Slight angle offset so it's not perfectly top-down
                 let offset_z = -info.depth * 0.15;
                 for mut transform in &mut camera_query {
                     *transform = Transform::from_xyz(cx, h, cz + offset_z)
