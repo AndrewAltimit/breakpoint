@@ -2,7 +2,7 @@ pub mod course;
 pub mod physics;
 pub mod scoring;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -47,6 +47,8 @@ pub struct MiniGolf {
     state: GolfState,
     player_ids: Vec<PlayerId>,
     paused: bool,
+    /// O(1) lookup companion for `state.sunk_order`.
+    sunk_set: HashSet<PlayerId>,
 }
 
 impl MiniGolf {
@@ -65,6 +67,7 @@ impl MiniGolf {
             courses,
             player_ids: Vec::new(),
             paused: false,
+            sunk_set: HashSet::new(),
         }
     }
 
@@ -122,6 +125,7 @@ impl BreakpointGame for MiniGolf {
         self.state.balls.clear();
         self.state.strokes.clear();
         self.state.sunk_order.clear();
+        self.sunk_set.clear();
         self.state.round_timer = 0.0;
         self.state.round_complete = false;
         self.state.course_index = self.course_index as u8;
@@ -157,9 +161,10 @@ impl BreakpointGame for MiniGolf {
         for &pid in &self.player_ids {
             if let Some(ball) = self.state.balls.get(&pid)
                 && ball.is_sunk
-                && !self.state.sunk_order.contains(&pid)
+                && !self.sunk_set.contains(&pid)
             {
                 self.state.sunk_order.push(pid);
+                self.sunk_set.insert(pid);
                 let was_first = self.state.sunk_order.len() == 1;
                 let strokes = self.state.strokes.get(&pid).copied().unwrap_or(0);
                 let score = calculate_score(strokes, course.par, was_first, true);
@@ -171,10 +176,7 @@ impl BreakpointGame for MiniGolf {
         }
 
         // Check round completion: all sunk or timer expired
-        let all_sunk = self
-            .player_ids
-            .iter()
-            .all(|id| self.state.sunk_order.contains(id));
+        let all_sunk = self.player_ids.iter().all(|id| self.sunk_set.contains(id));
         let timer_expired = self.state.round_timer >= Self::ROUND_DURATION;
 
         if all_sunk || timer_expired {
@@ -231,7 +233,7 @@ impl BreakpointGame for MiniGolf {
             .iter()
             .map(|&pid| {
                 let strokes = self.state.strokes.get(&pid).copied().unwrap_or(0);
-                let finished = self.state.sunk_order.contains(&pid);
+                let finished = self.sunk_set.contains(&pid);
                 let was_first = self.state.sunk_order.first() == Some(&pid);
                 let score = calculate_score(strokes, par, was_first, finished);
                 PlayerScore {
@@ -385,6 +387,7 @@ mod tests {
 
         // Player 1 sinks in 2 strokes (under par 3, first)
         game.state.sunk_order.push(1);
+        game.sunk_set.insert(1);
         game.state.strokes.insert(1, 2);
 
         // Player 2 didn't finish

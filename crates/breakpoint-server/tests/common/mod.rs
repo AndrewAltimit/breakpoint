@@ -87,6 +87,7 @@ pub async fn ws_create_room(
         room_code: String::new(),
         player_name: name.to_string(),
         player_color: PlayerColor::default(),
+        protocol_version: breakpoint_core::net::protocol::PROTOCOL_VERSION,
     });
     let encoded = encode_client_message(&msg).unwrap();
     stream.send(Message::Binary(encoded.into())).await.unwrap();
@@ -115,6 +116,7 @@ pub async fn ws_join_room(
         room_code: room_code.to_string(),
         player_name: name.to_string(),
         player_color: PlayerColor::PALETTE[1],
+        protocol_version: breakpoint_core::net::protocol::PROTOCOL_VERSION,
     });
     let encoded = encode_client_message(&msg).unwrap();
     stream.send(Message::Binary(encoded.into())).await.unwrap();
@@ -136,6 +138,7 @@ pub async fn ws_join_room_expect_error(
         room_code: room_code.to_string(),
         player_name: name.to_string(),
         player_color: PlayerColor::default(),
+        protocol_version: breakpoint_core::net::protocol::PROTOCOL_VERSION,
     });
     let encoded = encode_client_message(&msg).unwrap();
     stream.send(Message::Binary(encoded.into())).await.unwrap();
@@ -157,6 +160,7 @@ pub async fn ws_join_room_with_name(
         room_code: String::new(),
         player_name: name.to_string(),
         player_color: PlayerColor::default(),
+        protocol_version: breakpoint_core::net::protocol::PROTOCOL_VERSION,
     });
     let encoded = encode_client_message(&msg).unwrap();
     stream.send(Message::Binary(encoded.into())).await.unwrap();

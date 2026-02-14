@@ -68,6 +68,10 @@ pub struct JoinRoomMsg {
     pub room_code: String,
     pub player_name: String,
     pub player_color: PlayerColor,
+    /// Protocol version for compatibility checks. Defaults to 0 for
+    /// backwards compatibility with clients that don't send this field.
+    #[serde(default)]
+    pub protocol_version: u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

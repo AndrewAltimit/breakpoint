@@ -26,9 +26,6 @@ pub trait BreakpointGame: Send + Sync {
     /// Apply authoritative state received from the host.
     fn apply_state(&mut self, state: &[u8]);
 
-    /// Serialize local player input for sending to the host.
-    fn serialize_input(&self, player_id: PlayerId) -> Vec<u8>;
-
     /// Apply a remote player's input to the authoritative simulation.
     fn apply_input(&mut self, player_id: PlayerId, input: &[u8]);
 
@@ -104,8 +101,8 @@ pub struct PlayerScore {
     pub score: i32,
 }
 
-/// Generates the 6 boilerplate `BreakpointGame` methods that are identical across all games:
-/// `serialize_state`, `apply_state`, `serialize_input`, `pause`, `resume`, `is_round_complete`.
+/// Generates the 5 boilerplate `BreakpointGame` methods that are identical across all games:
+/// `serialize_state`, `apply_state`, `pause`, `resume`, `is_round_complete`.
 ///
 /// Requires the implementing struct to have `state: $StateType` and `paused: bool` fields,
 /// and `$StateType` to have a `round_complete: bool` field.
@@ -113,17 +110,13 @@ pub struct PlayerScore {
 macro_rules! breakpoint_game_boilerplate {
     (state_type: $StateType:ty) => {
         fn serialize_state(&self) -> Vec<u8> {
-            rmp_serde::to_vec(&self.state).unwrap_or_default()
+            rmp_serde::to_vec(&self.state).expect("game state serialization must succeed")
         }
 
         fn apply_state(&mut self, state: &[u8]) {
             if let Ok(s) = rmp_serde::from_slice::<$StateType>(state) {
                 self.state = s;
             }
-        }
-
-        fn serialize_input(&self, _player_id: breakpoint_core::game_trait::PlayerId) -> Vec<u8> {
-            Vec::new()
         }
 
         fn pause(&mut self) {

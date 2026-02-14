@@ -3,7 +3,7 @@ pub mod physics;
 pub mod powerups;
 pub mod scoring;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -47,6 +47,10 @@ pub struct PlatformRacer {
     pending_inputs: HashMap<PlayerId, PlatformerInput>,
     paused: bool,
     round_duration: f32,
+    /// O(1) lookup companion for `state.finish_order`.
+    finished_set: HashSet<PlayerId>,
+    /// O(1) lookup companion for `state.elimination_order`.
+    eliminated_set: HashSet<PlayerId>,
 }
 
 impl PlatformRacer {
@@ -68,6 +72,8 @@ impl PlatformRacer {
             pending_inputs: HashMap::new(),
             paused: false,
             round_duration: 120.0,
+            finished_set: HashSet::new(),
+            eliminated_set: HashSet::new(),
         }
     }
 
@@ -139,6 +145,8 @@ impl BreakpointGame for PlatformRacer {
         self.player_ids.clear();
         self.pending_inputs.clear();
         self.paused = false;
+        self.finished_set.clear();
+        self.eliminated_set.clear();
         self.round_duration = config.round_duration.as_secs_f32();
 
         // Initialize player states
@@ -191,7 +199,8 @@ impl BreakpointGame for PlatformRacer {
 
         // Process each player
         let sub_dt = dt / SUBSTEPS as f32;
-        for &pid in &self.player_ids.clone() {
+        let player_ids: Vec<PlayerId> = self.player_ids.clone();
+        for &pid in &player_ids {
             let input = self.pending_inputs.remove(&pid).unwrap_or_default();
 
             if let Some(player) = self.state.players.get_mut(&pid) {
@@ -234,16 +243,18 @@ impl BreakpointGame for PlatformRacer {
                     } else {
                         player.eliminated = true;
                         self.state.elimination_order.push(pid);
+                        self.eliminated_set.insert(pid);
                     }
                 }
 
                 // Race: track finish
                 if self.state.mode == GameMode::Race
                     && player.finished
-                    && !self.state.finish_order.contains(&pid)
+                    && !self.finished_set.contains(&pid)
                 {
                     player.finish_time = Some(self.state.round_timer);
                     self.state.finish_order.push(pid);
+                    self.finished_set.insert(pid);
                     events.push(GameEvent::ScoreUpdate {
                         player_id: pid,
                         score: scoring::race_score(Some(self.state.finish_order.len() - 1)),

@@ -216,6 +216,7 @@ mod tests {
             room_code: "ABCD-1234".to_string(),
             player_name: "Alice".to_string(),
             player_color: PlayerColor::default(),
+            protocol_version: PROTOCOL_VERSION,
         });
         let encoded = encode_client_message(&msg).unwrap();
         let decoded = decode_client_message(&encoded).unwrap();
@@ -443,6 +444,7 @@ mod tests {
             room_code: "ABCD-1234".to_string(),
             player_name: "Test".to_string(),
             player_color: PlayerColor::default(),
+            protocol_version: PROTOCOL_VERSION,
         });
         let encoded = encode_client_message(&msg).unwrap();
         assert_eq!(encoded[0], MessageType::JoinRoom as u8);

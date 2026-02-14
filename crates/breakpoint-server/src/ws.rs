@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 use breakpoint_core::game_trait::PlayerId;
 use breakpoint_core::net::messages::{AlertClaimedMsg, MessageType, ServerMessage};
 use breakpoint_core::net::protocol::{
-    decode_client_message, decode_message_type, encode_server_message,
+    PROTOCOL_VERSION, decode_client_message, decode_message_type, encode_server_message,
 };
 use breakpoint_core::room::RoomState;
 
@@ -33,6 +33,16 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     let (room_code, player_id) = match client_msg {
         breakpoint_core::net::messages::ClientMessage::JoinRoom(join) => {
+            // Validate protocol version
+            if join.protocol_version != 0 && join.protocol_version != PROTOCOL_VERSION {
+                let response = crate::room_manager::RoomManager::make_join_error(&format!(
+                    "Protocol version mismatch: client={}, server={}",
+                    join.protocol_version, PROTOCOL_VERSION
+                ));
+                let _ = ws_sender.send(Message::Binary(response.into())).await;
+                return;
+            }
+
             // Validate player name
             let name = join.player_name.trim().to_string();
             if name.is_empty() || name.len() > 32 || name.chars().any(|c| c.is_control()) {

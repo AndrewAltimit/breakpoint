@@ -7,7 +7,9 @@ use breakpoint_core::game_trait::PlayerId;
 use breakpoint_core::net::messages::{
     ClientMessage, GameStartMsg, JoinRoomMsg, JoinRoomResponseMsg, PlayerListMsg,
 };
-use breakpoint_core::net::protocol::{decode_server_message, encode_client_message};
+use breakpoint_core::net::protocol::{
+    PROTOCOL_VERSION, decode_server_message, encode_client_message,
+};
 use breakpoint_core::player::{Player, PlayerColor};
 
 use crate::app::AppState;
@@ -527,6 +529,7 @@ fn lobby_input_system(
                     room_code: String::new(),
                     player_name: lobby.player_name.clone(),
                     player_color: color,
+                    protocol_version: PROTOCOL_VERSION,
                 });
                 if let Ok(data) = encode_client_message(&msg) {
                     let _ = ws_client.send(&data);
@@ -558,6 +561,7 @@ fn lobby_input_system(
                     room_code: code.clone(),
                     player_name: lobby.player_name.clone(),
                     player_color: color,
+                    protocol_version: PROTOCOL_VERSION,
                 });
                 if let Ok(data) = encode_client_message(&msg) {
                     let _ = ws_client.send(&data);

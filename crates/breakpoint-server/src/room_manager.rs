@@ -87,8 +87,7 @@ impl RoomManager {
         player_color: PlayerColor,
         sender: PlayerSender,
     ) -> Result<PlayerId, String> {
-        // Validate room exists and is joinable before allocating ID
-        let is_spectator;
+        // Validate room exists and is joinable
         {
             let entry = self
                 .rooms
@@ -98,13 +97,16 @@ impl RoomManager {
             if entry.room.players.len() >= entry.room.config.max_players as usize {
                 return Err("Room is full".to_string());
             }
-
-            // Late-joiners (room not in Lobby) enter as spectators
-            is_spectator = entry.room.state != RoomState::Lobby;
         }
 
         let player_id = self.alloc_player_id();
-        let entry = self.rooms.get_mut(room_code).unwrap();
+        let entry = self
+            .rooms
+            .get_mut(room_code)
+            .expect("room must exist: validated above");
+
+        // Late-joiners (room not in Lobby) enter as spectators
+        let is_spectator = entry.room.state != RoomState::Lobby;
         entry.last_activity = Instant::now();
         let player = Player {
             id: player_id,
