@@ -63,8 +63,9 @@ These images are pre-built from template-repo and are **not buildable from this 
 | Phase 2 | Alert overlay system | 131 | Claude Code |
 | Phase 3 | Games, multi-round, editor | 131 | Claude Code |
 | Phase 4 | Polish and release preparation | 157 | Claude Code |
+| Post-Phase 4 | Integration tests, production hardening, golf UX polish | 221 | Claude Code |
 
-Total: 157 tests across 8 workspace crates. All clippy-clean with `-D warnings`.
+Total: 221 tests across 8 workspace crates, plus 10 Playwright browser spec files (Chromium + Firefox). All clippy-clean with `-D warnings`.
 
 ## Conventions for Agents
 
@@ -72,7 +73,7 @@ When working on this codebase, agents should:
 
 - Run `cargo fmt --all` after all code changes
 - Run `cargo clippy --workspace --all-targets -- -D warnings` and fix all warnings
-- Run `cargo test --workspace` and ensure all 157+ tests pass
+- Run `cargo test --workspace` and ensure all 221+ tests pass
 - Follow edition 2024 Rust idioms (let chains, etc.)
 - Keep functions under 100 lines, cognitive complexity under 25
 - Use workspace dependencies (`.workspace = true`) for shared crates

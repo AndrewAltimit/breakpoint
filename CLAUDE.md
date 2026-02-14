@@ -8,7 +8,7 @@ Breakpoint is a browser-based multiplayer gaming platform (Rust + WASM) designed
 
 All code is authored by AI agents under human direction. No external contributions are accepted.
 
-**Status:** Feature-complete (Phases 1–4). 194 tests pass across 8 workspace crates. Production-hardened with input validation, state machine enforcement, idle room cleanup, and event batch limits.
+**Status:** Feature-complete (Phases 1–4). 221 tests pass across 8 workspace crates. Production-hardened with input validation, state machine enforcement, idle room cleanup, and event batch limits. Browser integration tests via Playwright (10 spec files, Chromium + Firefox).
 
 ## Build Commands
 
