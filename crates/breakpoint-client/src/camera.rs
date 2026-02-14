@@ -132,8 +132,10 @@ fn update_camera(
         #[cfg(not(feature = "platformer"))]
         GameId::Platformer => {},
         GameId::LaserTag => {
+            // Height 62 gives a full view of the 50x50 arena with margin.
+            // At 45° FOV from height 62: visible Z range = -0.7 to 50.7.
             for mut transform in &mut camera_query {
-                *transform = Transform::from_xyz(25.0, 40.0, 25.0)
+                *transform = Transform::from_xyz(25.0, 62.0, 25.0)
                     .looking_at(Vec3::new(25.0, 0.0, 25.0), Vec3::Z);
             }
         },

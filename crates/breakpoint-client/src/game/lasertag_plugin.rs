@@ -166,7 +166,16 @@ fn setup_lasertag(
     // Get current state for initial positions
     let state: Option<LaserTagState> = read_game_state(&active_game);
 
+    let mut _spawned_count = 0u32;
     for player in &lobby.players {
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(
+            &format!(
+                "BREAKPOINT:LT_PLAYER id={} spectator={} color=({},{},{})",
+                player.id, player.is_spectator, player.color.r, player.color.g, player.color.b
+            )
+            .into(),
+        );
         if player.is_spectator {
             continue;
         }
@@ -178,6 +187,15 @@ fn setup_lasertag(
             .and_then(|s| s.players.get(&player.id))
             .map(|p| (p.x, p.z))
             .unwrap_or((arena.width / 2.0, arena.depth / 2.0));
+
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(
+            &format!(
+                "BREAKPOINT:LT_SPAWN id={} pos=({px:.1}, {pz:.1}) alpha={alpha}",
+                player.id
+            )
+            .into(),
+        );
 
         commands.spawn((
             GameEntity,
@@ -194,6 +212,7 @@ fn setup_lasertag(
             })),
             Transform::from_xyz(px, 0.75, pz),
         ));
+        _spawned_count += 1;
 
         // Aim direction line
         commands.spawn((
@@ -231,7 +250,7 @@ fn setup_lasertag(
     #[cfg(target_arch = "wasm32")]
     web_sys::console::log_1(
         &format!(
-            "BREAKPOINT:SETUP_LASERTAG arena={}x{} local_pid={}",
+            "BREAKPOINT:SETUP_LASERTAG arena={}x{} local_pid={} spawned={_spawned_count}",
             arena.width, arena.depth, local_pid
         )
         .into(),
@@ -342,6 +361,27 @@ fn lasertag_render_sync(
     let Some(state) = state else {
         return;
     };
+
+    // DEBUG: log render sync details for first few ticks
+    #[cfg(target_arch = "wasm32")]
+    if active_game.tick <= 3 {
+        let entity_count = player_query.iter().count();
+        let state_count = state.players.len();
+        let positions: Vec<String> = state
+            .players
+            .iter()
+            .map(|(id, ps)| format!("p{}=({:.1},{:.1})", id, ps.x, ps.z))
+            .collect();
+        web_sys::console::log_1(
+            &format!(
+                "BREAKPOINT:LT_RENDER_SYNC tick={} entities={entity_count} \
+                 state_players={state_count} positions=[{}]",
+                active_game.tick,
+                positions.join(", ")
+            )
+            .into(),
+        );
+    }
 
     for (entity, mut transform, mut visibility) in &mut player_query {
         if let Some(ps) = state.players.get(&entity.0) {
