@@ -19,7 +19,7 @@ use crate::shaders::gradient_material::GradientMaterial;
 use crate::shaders::ripple_material::RippleMaterial;
 
 use super::{
-    ActiveGame, ControlsHint, GameEntity, GameRegistry, HudPosition, NetworkRole,
+    ActiveGame, ControlsHint, GameEntity, GameRegistry, HudPosition, NetworkRole, cursor_to_ground,
     player_color_to_bevy, read_game_state, send_player_input, spawn_hud_text,
 };
 
@@ -619,43 +619,6 @@ fn golf_input_system(
         let dz = ground_point.z - ball_pos.z;
         local_input.aim_angle = dz.atan2(dx);
     }
-}
-
-/// Project a screen-space cursor position onto the Y=0 ground plane using
-/// the camera's current Transform (no dependency on Camera.computed).
-fn cursor_to_ground(cursor_pos: Vec2, window: &Window, cam: &Transform) -> Option<Vec3> {
-    let w = window.width();
-    let h = window.height();
-    if w < 1.0 || h < 1.0 {
-        return None;
-    }
-
-    // Cursor to NDC: x ∈ [-1,1] (left to right), y ∈ [-1,1] (bottom to top)
-    let ndc_x = (cursor_pos.x / w) * 2.0 - 1.0;
-    let ndc_y = 1.0 - (cursor_pos.y / h) * 2.0;
-
-    // Camera3d default vertical FOV = π/4 (45°)
-    let half_v = (std::f32::consts::FRAC_PI_4 * 0.5).tan();
-    let half_h = half_v * (w / h);
-
-    // Build world-space ray direction from camera axes.
-    // Bevy's looking_at rotation places the local +X axis opposite to
-    // screen-right in world space, so negate it to get the correct
-    // screen-right direction for ray construction.
-    let forward = *cam.forward();
-    let right = -*cam.right();
-    let up = *cam.up();
-    let ray_dir = (forward + right * (ndc_x * half_h) + up * (ndc_y * half_v)).normalize();
-
-    // Intersect with Y=0 plane
-    if ray_dir.y.abs() < 1e-6 {
-        return None;
-    }
-    let t = -cam.translation.y / ray_dir.y;
-    if t <= 0.0 {
-        return None;
-    }
-    Some(cam.translation + ray_dir * t)
 }
 
 /// Apply golf input: host applies directly, non-host sends via WS.

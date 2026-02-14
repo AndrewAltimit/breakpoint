@@ -40,6 +40,9 @@ hex.workspace = true
 futures.workspace = true
 serde_json.workspace = true
 breakpoint-golf = { path = "../games/breakpoint-golf" }
+breakpoint-platformer = { path = "../games/breakpoint-platformer" }
+breakpoint-lasertag = { path = "../games/breakpoint-lasertag" }
+breakpoint-core = { path = "../breakpoint-core", features = ["test-helpers"] }
 rmp-serde.workspace = true
 
 [lints]

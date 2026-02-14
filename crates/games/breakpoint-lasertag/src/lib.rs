@@ -443,7 +443,23 @@ impl BreakpointGame for LaserTagArena {
 
     fn apply_input(&mut self, player_id: PlayerId, input: &[u8]) {
         if let Ok(li) = rmp_serde::from_slice::<LaserTagInput>(input) {
-            self.pending_inputs.insert(player_id, li);
+            // Accumulate transient flags (fire, use_powerup) across frames.
+            // Without this, a fire:true in frame N gets overwritten by fire:false
+            // in frame N+1 before the game tick processes it. Continuous values
+            // (move_x, move_z, aim_angle) are always overwritten with the latest.
+            if let Some(existing) = self.pending_inputs.get_mut(&player_id) {
+                existing.move_x = li.move_x;
+                existing.move_z = li.move_z;
+                existing.aim_angle = li.aim_angle;
+                if li.fire {
+                    existing.fire = true;
+                }
+                if li.use_powerup {
+                    existing.use_powerup = true;
+                }
+            } else {
+                self.pending_inputs.insert(player_id, li);
+            }
         }
     }
 
@@ -897,6 +913,324 @@ mod tests {
             player.is_stunned(),
             "Player should still be stunned, remaining={}",
             player.stun_remaining
+        );
+    }
+
+    // ================================================================
+    // Game Trait Contract Tests
+    // ================================================================
+
+    #[test]
+    fn contract_init_creates_player_state() {
+        let mut game = LaserTagArena::new();
+        breakpoint_core::test_helpers::contract_init_creates_player_state(&mut game, 4);
+    }
+
+    #[test]
+    fn contract_apply_input_changes_state() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(180));
+
+        let input = LaserTagInput {
+            move_x: 1.0,
+            move_z: 0.0,
+            aim_angle: 0.5,
+            fire: false,
+            use_powerup: false,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        breakpoint_core::test_helpers::contract_apply_input_changes_state(&mut game, &data, 1);
+    }
+
+    #[test]
+    fn contract_update_advances_time() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(180));
+        breakpoint_core::test_helpers::contract_update_advances_time(&mut game);
+    }
+
+    #[test]
+    fn contract_round_eventually_completes() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(2);
+        // Laser tag reads round_duration from custom config, not GameConfig.round_duration
+        let mut config = default_config(180);
+        config
+            .custom
+            .insert("round_duration".to_string(), serde_json::json!(5.0));
+        game.init(&players, &config);
+        breakpoint_core::test_helpers::contract_round_eventually_completes(&mut game, 10);
+    }
+
+    #[test]
+    fn contract_state_roundtrip_preserves() {
+        // Use a single player to avoid HashMap key ordering non-determinism
+        let mut game = LaserTagArena::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(180));
+        breakpoint_core::test_helpers::contract_state_roundtrip_preserves(&mut game);
+    }
+
+    #[test]
+    fn contract_pause_stops_updates() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(180));
+        breakpoint_core::test_helpers::contract_pause_stops_updates(&mut game);
+    }
+
+    #[test]
+    fn contract_player_left_cleanup() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(3);
+        game.init(&players, &default_config(180));
+        breakpoint_core::test_helpers::contract_player_left_cleanup(&mut game, 3, 3);
+    }
+
+    #[test]
+    fn contract_round_results_complete() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(4);
+        game.init(&players, &default_config(180));
+        breakpoint_core::test_helpers::contract_round_results_complete(&game, 4);
+    }
+
+    // ================================================================
+    // Input encoding/decoding roundtrip tests (Phase 2)
+    // ================================================================
+
+    #[test]
+    fn lasertag_input_encode_decode_roundtrip() {
+        let input = LaserTagInput {
+            move_x: 0.7,
+            move_z: -0.3,
+            aim_angle: 1.57,
+            fire: true,
+            use_powerup: false,
+        };
+        let encoded = rmp_serde::to_vec(&input).unwrap();
+        let decoded: LaserTagInput = rmp_serde::from_slice(&encoded).unwrap();
+        assert!((decoded.move_x - input.move_x).abs() < 1e-5);
+        assert!((decoded.move_z - input.move_z).abs() < 1e-5);
+        assert!((decoded.aim_angle - input.aim_angle).abs() < 1e-5);
+        assert_eq!(decoded.fire, input.fire);
+        assert_eq!(decoded.use_powerup, input.use_powerup);
+    }
+
+    #[test]
+    fn lasertag_input_through_protocol_roundtrip() {
+        use breakpoint_core::net::messages::{ClientMessage, PlayerInputMsg};
+        use breakpoint_core::net::protocol::{decode_client_message, encode_client_message};
+
+        let input = LaserTagInput {
+            move_x: 1.0,
+            move_z: 0.0,
+            aim_angle: 0.5,
+            fire: true,
+            use_powerup: false,
+        };
+        let input_data = rmp_serde::to_vec(&input).unwrap();
+        let msg = ClientMessage::PlayerInput(PlayerInputMsg {
+            player_id: 1,
+            tick: 20,
+            input_data: input_data.clone(),
+        });
+        let encoded = encode_client_message(&msg).unwrap();
+        let decoded = decode_client_message(&encoded).unwrap();
+        match decoded {
+            ClientMessage::PlayerInput(pi) => {
+                assert_eq!(pi.input_data, input_data);
+                let lt_input: LaserTagInput = rmp_serde::from_slice(&pi.input_data).unwrap();
+                assert!((lt_input.aim_angle - 0.5).abs() < 1e-5);
+                assert!(lt_input.fire);
+            },
+            other => panic!("Expected PlayerInput, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn lasertag_input_apply_changes_game_state() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(180));
+
+        let before = game.serialize_state();
+
+        let input = LaserTagInput {
+            move_x: 1.0,
+            move_z: 0.0,
+            aim_angle: 0.0,
+            fire: false,
+            use_powerup: false,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(0.05, &inputs);
+
+        breakpoint_core::test_helpers::assert_game_state_changed(&game, &before);
+    }
+
+    // ================================================================
+    // Game simulation tests (Phase 3)
+    // ================================================================
+
+    #[test]
+    fn lasertag_move_changes_position() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(180));
+
+        let initial_x = game.state.players[&1].x;
+
+        // Apply rightward movement for 20 ticks
+        for _ in 0..20 {
+            let input = LaserTagInput {
+                move_x: 1.0,
+                move_z: 0.0,
+                aim_angle: 0.0,
+                fire: false,
+                use_powerup: false,
+            };
+            let data = rmp_serde::to_vec(&input).unwrap();
+            game.apply_input(1, &data);
+            let inputs = PlayerInputs {
+                inputs: HashMap::new(),
+            };
+            game.update(0.05, &inputs);
+        }
+
+        assert!(
+            game.state.players[&1].x > initial_x,
+            "Player x should increase: initial={initial_x}, final={}",
+            game.state.players[&1].x
+        );
+    }
+
+    #[test]
+    fn lasertag_fire_at_target_scores() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(180));
+
+        // Position player 1 to fire at player 2
+        game.state.players.get_mut(&1).unwrap().x = 5.0;
+        game.state.players.get_mut(&1).unwrap().z = 10.0;
+        game.state.players.get_mut(&1).unwrap().aim_angle = 0.0;
+        game.state.players.get_mut(&1).unwrap().fire_cooldown = 0.0;
+        game.state.players.get_mut(&1).unwrap().stun_remaining = 0.0;
+
+        // Place player 2 directly in line of fire
+        game.state.players.get_mut(&2).unwrap().x = 10.0;
+        game.state.players.get_mut(&2).unwrap().z = 10.0;
+        game.state.players.get_mut(&2).unwrap().stun_remaining = 0.0;
+
+        // Fire
+        let input = LaserTagInput {
+            move_x: 0.0,
+            move_z: 0.0,
+            aim_angle: 0.0,
+            fire: true,
+            use_powerup: false,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(0.05, &inputs);
+
+        assert!(
+            game.state.players[&2].is_stunned(),
+            "Target should be stunned"
+        );
+        assert_eq!(game.state.tags_scored[&1], 1, "Shooter should get 1 tag");
+    }
+
+    #[test]
+    fn lasertag_full_match_round_completes() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(180));
+
+        // Advance to round completion via timer
+        let events = breakpoint_core::test_helpers::run_game_ticks(&mut game, 200, 1.0);
+
+        assert!(
+            game.is_round_complete(),
+            "Round should complete after enough ticks"
+        );
+        assert!(
+            events.iter().any(|e| matches!(e, GameEvent::RoundComplete)),
+            "RoundComplete event should be emitted"
+        );
+    }
+
+    #[test]
+    fn lasertag_fire_input_not_lost_across_overwrites() {
+        // Verifies Bug 2 fix: fire:true must be preserved even if a
+        // subsequent apply_input has fire:false.
+        let mut game = LaserTagArena::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(180));
+
+        // Position player 1 to fire at player 2
+        game.state.players.get_mut(&1).unwrap().x = 5.0;
+        game.state.players.get_mut(&1).unwrap().z = 10.0;
+        game.state.players.get_mut(&1).unwrap().aim_angle = 0.0;
+        game.state.players.get_mut(&1).unwrap().fire_cooldown = 0.0;
+        game.state.players.get_mut(&1).unwrap().stun_remaining = 0.0;
+
+        game.state.players.get_mut(&2).unwrap().x = 10.0;
+        game.state.players.get_mut(&2).unwrap().z = 10.0;
+        game.state.players.get_mut(&2).unwrap().stun_remaining = 0.0;
+
+        // Frame N: fire=true
+        let input_fire = LaserTagInput {
+            move_x: 0.0,
+            move_z: 0.0,
+            aim_angle: 0.0,
+            fire: true,
+            use_powerup: false,
+        };
+        let data_fire = rmp_serde::to_vec(&input_fire).unwrap();
+        game.apply_input(1, &data_fire);
+
+        // Frame N+1: fire=false (would overwrite in old code)
+        let input_no_fire = LaserTagInput {
+            move_x: 0.0,
+            move_z: 0.0,
+            aim_angle: 0.0,
+            fire: false,
+            use_powerup: false,
+        };
+        let data_no_fire = rmp_serde::to_vec(&input_no_fire).unwrap();
+        game.apply_input(1, &data_no_fire);
+
+        // The pending input should still have fire=true
+        assert!(
+            game.pending_inputs.get(&1).is_some_and(|i| i.fire),
+            "Fire flag must be preserved across input overwrites"
+        );
+
+        // Tick the game — fire should actually happen
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(0.05, &inputs);
+
+        assert!(
+            game.state.players[&2].is_stunned(),
+            "Target should be stunned despite fire being overwritten"
+        );
+        assert_eq!(
+            game.state.tags_scored[&1], 1,
+            "Tag should be scored despite fire being overwritten"
         );
     }
 }

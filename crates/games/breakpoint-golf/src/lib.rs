@@ -929,4 +929,151 @@ mod tests {
             physics::MAX_POWER
         );
     }
+
+    // ================================================================
+    // Game Trait Contract Tests
+    // ================================================================
+
+    #[test]
+    fn contract_init_creates_player_state() {
+        let mut game = MiniGolf::new();
+        breakpoint_core::test_helpers::contract_init_creates_player_state(&mut game, 3);
+    }
+
+    #[test]
+    fn contract_apply_input_changes_state() {
+        let mut game = MiniGolf::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(90));
+
+        let input = GolfInput {
+            aim_angle: 0.5,
+            power: 0.5,
+            stroke: true,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        breakpoint_core::test_helpers::contract_apply_input_changes_state(&mut game, &data, 1);
+    }
+
+    #[test]
+    fn contract_update_advances_time() {
+        let mut game = MiniGolf::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(90));
+        breakpoint_core::test_helpers::contract_update_advances_time(&mut game);
+    }
+
+    #[test]
+    fn contract_round_eventually_completes() {
+        let mut game = MiniGolf::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(90));
+        breakpoint_core::test_helpers::contract_round_eventually_completes(&mut game, 100);
+    }
+
+    #[test]
+    fn contract_state_roundtrip_preserves() {
+        // Use a single player to avoid HashMap key ordering non-determinism
+        let mut game = MiniGolf::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(90));
+        breakpoint_core::test_helpers::contract_state_roundtrip_preserves(&mut game);
+    }
+
+    #[test]
+    fn contract_pause_stops_updates() {
+        let mut game = MiniGolf::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(90));
+        breakpoint_core::test_helpers::contract_pause_stops_updates(&mut game);
+    }
+
+    #[test]
+    fn contract_player_left_cleanup() {
+        let mut game = MiniGolf::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(90));
+        breakpoint_core::test_helpers::contract_player_left_cleanup(&mut game, 2, 2);
+    }
+
+    #[test]
+    fn contract_round_results_complete() {
+        let mut game = MiniGolf::new();
+        let players = make_players(3);
+        game.init(&players, &default_config(90));
+        breakpoint_core::test_helpers::contract_round_results_complete(&game, 3);
+    }
+
+    // ================================================================
+    // Input encoding/decoding roundtrip tests (Phase 2)
+    // ================================================================
+
+    #[test]
+    fn golf_input_encode_decode_roundtrip() {
+        let input = GolfInput {
+            aim_angle: 1.23,
+            power: 0.75,
+            stroke: true,
+        };
+        let encoded = rmp_serde::to_vec(&input).unwrap();
+        let decoded: GolfInput = rmp_serde::from_slice(&encoded).unwrap();
+        assert!((decoded.aim_angle - input.aim_angle).abs() < 1e-5);
+        assert!((decoded.power - input.power).abs() < 1e-5);
+        assert_eq!(decoded.stroke, input.stroke);
+    }
+
+    #[test]
+    fn golf_input_through_protocol_roundtrip() {
+        use breakpoint_core::net::messages::{ClientMessage, PlayerInputMsg};
+        use breakpoint_core::net::protocol::{decode_client_message, encode_client_message};
+
+        let input = GolfInput {
+            aim_angle: 0.5,
+            power: 0.8,
+            stroke: true,
+        };
+        let input_data = rmp_serde::to_vec(&input).unwrap();
+        let msg = ClientMessage::PlayerInput(PlayerInputMsg {
+            player_id: 1,
+            tick: 42,
+            input_data: input_data.clone(),
+        });
+        let encoded = encode_client_message(&msg).unwrap();
+        let decoded = decode_client_message(&encoded).unwrap();
+        match decoded {
+            ClientMessage::PlayerInput(pi) => {
+                assert_eq!(pi.player_id, 1);
+                assert_eq!(pi.tick, 42);
+                assert_eq!(pi.input_data, input_data);
+                let golf_input: GolfInput = rmp_serde::from_slice(&pi.input_data).unwrap();
+                assert!((golf_input.aim_angle - 0.5).abs() < 1e-5);
+                assert!(golf_input.stroke);
+            },
+            other => panic!("Expected PlayerInput, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn golf_input_apply_changes_game_state() {
+        let mut game = MiniGolf::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(90));
+
+        let before = game.serialize_state();
+
+        let input = GolfInput {
+            aim_angle: 0.0,
+            power: 0.5,
+            stroke: true,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        let empty = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(0.1, &empty);
+
+        breakpoint_core::test_helpers::assert_game_state_changed(&game, &before);
+    }
 }

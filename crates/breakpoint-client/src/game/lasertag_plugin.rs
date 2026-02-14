@@ -11,7 +11,7 @@ use crate::net_client::WsClient;
 use crate::shaders::glow_material::GlowMaterial;
 
 use super::{
-    ActiveGame, ControlsHint, GameEntity, GameRegistry, HudPosition, NetworkRole,
+    ActiveGame, ControlsHint, GameEntity, GameRegistry, HudPosition, NetworkRole, cursor_to_ground,
     player_color_to_bevy, read_game_state, send_player_input, spawn_hud_text,
 };
 
@@ -252,7 +252,7 @@ fn lasertag_input_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window>,
-    cameras: Query<(&Camera, &GlobalTransform)>,
+    cameras: Query<&Transform, With<crate::camera::GameCamera>>,
     mut local_input: ResMut<LaserTagLocalInput>,
     mut active_game: ResMut<ActiveGame>,
     network_role: Res<NetworkRole>,
@@ -286,16 +286,14 @@ fn lasertag_input_system(
         move_z /= len;
     }
 
-    // Aim: raycast mouse to ground plane (Y=0)
+    // Aim: manual ray-ground intersection (same pattern as golf).
+    // Avoids Camera::viewport_to_world() which silently returns Err in
+    // WASM/WebGL2 when Camera.computed is unpopulated or stale.
     if let Ok(window) = windows.single()
         && let Some(cursor_pos) = window.cursor_position()
-        && let Ok((camera, cam_transform)) = cameras.single()
-        && let Ok(ray) = camera.viewport_to_world(cam_transform, cursor_pos)
-        && ray.direction.y.abs() > 1e-6
+        && let Ok(cam_transform) = cameras.single()
+        && let Some(ground_point) = cursor_to_ground(cursor_pos, window, cam_transform)
     {
-        let t = -ray.origin.y / ray.direction.y;
-        let ground_point = ray.origin + ray.direction * t;
-
         // Get player position from state
         let state: Option<LaserTagState> = read_game_state(&active_game);
         if let Some(ps) = state.and_then(|s| s.players.get(&network_role.local_player_id).cloned())

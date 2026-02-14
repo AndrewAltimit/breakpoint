@@ -517,6 +517,46 @@ fn controls_hint_dismiss_system(
     }
 }
 
+/// Project a screen-space cursor position onto the Y=0 ground plane using
+/// the camera's current Transform (no dependency on Camera.computed).
+///
+/// This avoids `Camera::viewport_to_world()` which silently returns `Err`
+/// in WASM/WebGL2 when `Camera.computed` is unpopulated or stale.
+pub fn cursor_to_ground(cursor_pos: Vec2, window: &Window, cam: &Transform) -> Option<Vec3> {
+    let w = window.width();
+    let h = window.height();
+    if w < 1.0 || h < 1.0 {
+        return None;
+    }
+
+    // Cursor to NDC: x in [-1,1] (left to right), y in [-1,1] (bottom to top)
+    let ndc_x = (cursor_pos.x / w) * 2.0 - 1.0;
+    let ndc_y = 1.0 - (cursor_pos.y / h) * 2.0;
+
+    // Camera3d default vertical FOV = pi/4 (45 degrees)
+    let half_v = (std::f32::consts::FRAC_PI_4 * 0.5).tan();
+    let half_h = half_v * (w / h);
+
+    // Build world-space ray direction from camera axes.
+    // Bevy's looking_at rotation places the local +X axis opposite to
+    // screen-right in world space, so negate it to get the correct
+    // screen-right direction for ray construction.
+    let forward = *cam.forward();
+    let right = -*cam.right();
+    let up = *cam.up();
+    let ray_dir = (forward + right * (ndc_x * half_h) + up * (ndc_y * half_v)).normalize();
+
+    // Intersect with Y=0 plane
+    if ray_dir.y.abs() < 1e-6 {
+        return None;
+    }
+    let t = -cam.translation.y / ray_dir.y;
+    if t <= 0.0 {
+        return None;
+    }
+    Some(cam.translation + ray_dir * t)
+}
+
 /// Despawn 3D game entities only (meshes, UI spawned by game plugins).
 /// Resources (ActiveGame, NetworkRole, RoundTracker) are preserved for BetweenRounds.
 fn cleanup_game_entities(mut commands: Commands, query: Query<Entity, With<GameEntity>>) {

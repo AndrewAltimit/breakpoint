@@ -1560,6 +1560,8 @@ dependencies = [
  "breakpoint-core",
  "breakpoint-github",
  "breakpoint-golf",
+ "breakpoint-lasertag",
+ "breakpoint-platformer",
  "futures",
  "hex",
  "hmac",

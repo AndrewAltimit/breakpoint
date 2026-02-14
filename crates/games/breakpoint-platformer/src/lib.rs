@@ -336,7 +336,21 @@ impl BreakpointGame for PlatformRacer {
 
     fn apply_input(&mut self, player_id: PlayerId, input: &[u8]) {
         if let Ok(pi) = rmp_serde::from_slice::<PlatformerInput>(input) {
-            self.pending_inputs.insert(player_id, pi);
+            // Accumulate transient flags (jump, use_powerup) across frames.
+            // Without this, a jump:true in frame N gets overwritten by jump:false
+            // in frame N+1 before the game tick processes it. Continuous values
+            // (move_dir) are always overwritten with the latest.
+            if let Some(existing) = self.pending_inputs.get_mut(&player_id) {
+                existing.move_dir = pi.move_dir;
+                if pi.jump {
+                    existing.jump = true;
+                }
+                if pi.use_powerup {
+                    existing.use_powerup = true;
+                }
+            } else {
+                self.pending_inputs.insert(player_id, pi);
+            }
         }
     }
 
@@ -719,6 +733,257 @@ mod tests {
         assert!(
             events.iter().any(|e| matches!(e, GameEvent::RoundComplete)),
             "RoundComplete event should be emitted on timer expiry"
+        );
+    }
+
+    // ================================================================
+    // Game Trait Contract Tests
+    // ================================================================
+
+    #[test]
+    fn contract_init_creates_player_state() {
+        let mut game = PlatformRacer::new();
+        breakpoint_core::test_helpers::contract_init_creates_player_state(&mut game, 3);
+    }
+
+    #[test]
+    fn contract_apply_input_changes_state() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(120));
+
+        let input = PlatformerInput {
+            move_dir: 1.0,
+            jump: false,
+            use_powerup: false,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        breakpoint_core::test_helpers::contract_apply_input_changes_state(&mut game, &data, 1);
+    }
+
+    #[test]
+    fn contract_update_advances_time() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(120));
+        breakpoint_core::test_helpers::contract_update_advances_time(&mut game);
+    }
+
+    #[test]
+    fn contract_round_eventually_completes() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(5));
+        breakpoint_core::test_helpers::contract_round_eventually_completes(&mut game, 10);
+    }
+
+    #[test]
+    fn contract_state_roundtrip_preserves() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(120));
+        breakpoint_core::test_helpers::contract_state_roundtrip_preserves(&mut game);
+    }
+
+    #[test]
+    fn contract_pause_stops_updates() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(120));
+        breakpoint_core::test_helpers::contract_pause_stops_updates(&mut game);
+    }
+
+    #[test]
+    fn contract_player_left_cleanup() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(120));
+        breakpoint_core::test_helpers::contract_player_left_cleanup(&mut game, 2, 2);
+    }
+
+    #[test]
+    fn contract_round_results_complete() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(3);
+        game.init(&players, &default_config(120));
+        breakpoint_core::test_helpers::contract_round_results_complete(&game, 3);
+    }
+
+    // ================================================================
+    // Input encoding/decoding roundtrip tests (Phase 2)
+    // ================================================================
+
+    #[test]
+    fn platformer_input_encode_decode_roundtrip() {
+        let input = PlatformerInput {
+            move_dir: -1.0,
+            jump: true,
+            use_powerup: true,
+        };
+        let encoded = rmp_serde::to_vec(&input).unwrap();
+        let decoded: PlatformerInput = rmp_serde::from_slice(&encoded).unwrap();
+        assert!((decoded.move_dir - input.move_dir).abs() < 1e-5);
+        assert_eq!(decoded.jump, input.jump);
+        assert_eq!(decoded.use_powerup, input.use_powerup);
+    }
+
+    #[test]
+    fn platformer_input_through_protocol_roundtrip() {
+        use breakpoint_core::net::messages::{ClientMessage, PlayerInputMsg};
+        use breakpoint_core::net::protocol::{decode_client_message, encode_client_message};
+
+        let input = PlatformerInput {
+            move_dir: 1.0,
+            jump: true,
+            use_powerup: false,
+        };
+        let input_data = rmp_serde::to_vec(&input).unwrap();
+        let msg = ClientMessage::PlayerInput(PlayerInputMsg {
+            player_id: 1,
+            tick: 10,
+            input_data: input_data.clone(),
+        });
+        let encoded = encode_client_message(&msg).unwrap();
+        let decoded = decode_client_message(&encoded).unwrap();
+        match decoded {
+            ClientMessage::PlayerInput(pi) => {
+                assert_eq!(pi.input_data, input_data);
+                let plat_input: PlatformerInput = rmp_serde::from_slice(&pi.input_data).unwrap();
+                assert!((plat_input.move_dir - 1.0).abs() < 1e-5);
+                assert!(plat_input.jump);
+            },
+            other => panic!("Expected PlayerInput, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn platformer_input_apply_changes_game_state() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(120));
+
+        let before = game.serialize_state();
+
+        let input = PlatformerInput {
+            move_dir: 1.0,
+            jump: false,
+            use_powerup: false,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+        game.update(1.0 / 15.0, &empty_inputs());
+
+        breakpoint_core::test_helpers::assert_game_state_changed(&game, &before);
+    }
+
+    // ================================================================
+    // Game simulation tests (Phase 3)
+    // ================================================================
+
+    #[test]
+    fn platformer_move_right_increases_x() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(120));
+
+        let initial_x = game.state.players[&1].x;
+
+        // Apply rightward movement for 30 ticks
+        for _ in 0..30 {
+            let input = PlatformerInput {
+                move_dir: 1.0,
+                jump: false,
+                use_powerup: false,
+            };
+            let data = rmp_serde::to_vec(&input).unwrap();
+            game.apply_input(1, &data);
+            game.update(1.0 / 15.0, &empty_inputs());
+        }
+
+        assert!(
+            game.state.players[&1].x > initial_x,
+            "Player x should increase: initial={initial_x}, final={}",
+            game.state.players[&1].x
+        );
+    }
+
+    #[test]
+    fn platformer_jump_changes_velocity() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(120));
+
+        // First ensure the player is grounded by ticking a few times
+        for _ in 0..20 {
+            game.update(1.0 / 15.0, &empty_inputs());
+        }
+
+        // Apply jump
+        let input = PlatformerInput {
+            move_dir: 0.0,
+            jump: true,
+            use_powerup: false,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+        game.update(1.0 / 15.0, &empty_inputs());
+
+        // vy should be positive (upward) after jump, or at least y should have increased
+        let player = &game.state.players[&1];
+        assert!(
+            player.vy > 0.0 || !player.grounded,
+            "Player should have upward velocity or be airborne after jump: vy={}, grounded={}",
+            player.vy,
+            player.grounded
+        );
+    }
+
+    #[test]
+    fn platformer_jump_input_not_lost_across_overwrites() {
+        // This test verifies the Bug 2 fix: transient inputs (jump) must be
+        // preserved even if a subsequent apply_input overwrites with jump:false.
+        let mut game = PlatformRacer::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(120));
+
+        // Ensure player is grounded
+        for _ in 0..20 {
+            game.update(1.0 / 15.0, &empty_inputs());
+        }
+
+        // Frame N: jump=true
+        let input_jump = PlatformerInput {
+            move_dir: 1.0,
+            jump: true,
+            use_powerup: false,
+        };
+        let data_jump = rmp_serde::to_vec(&input_jump).unwrap();
+        game.apply_input(1, &data_jump);
+
+        // Frame N+1: jump=false (would overwrite in old code)
+        let input_no_jump = PlatformerInput {
+            move_dir: 1.0,
+            jump: false,
+            use_powerup: false,
+        };
+        let data_no_jump = rmp_serde::to_vec(&input_no_jump).unwrap();
+        game.apply_input(1, &data_no_jump);
+
+        // The pending input should still have jump=true
+        assert!(
+            game.pending_inputs.get(&1).is_some_and(|i| i.jump),
+            "Jump flag must be preserved across input overwrites"
+        );
+
+        // Tick the game — jump should actually happen
+        game.update(1.0 / 15.0, &empty_inputs());
+
+        let player = &game.state.players[&1];
+        assert!(
+            player.vy > 0.0 || !player.grounded,
+            "Jump should have occurred despite being overwritten: vy={}, grounded={}",
+            player.vy,
+            player.grounded
         );
     }
 }
