@@ -554,6 +554,175 @@ mod tests {
         assert_eq!(strokes1, strokes2, "Strokes should match after state apply");
     }
 
+    // ================================================================
+    // apply_input direction tests
+    // ================================================================
+
+    #[test]
+    fn apply_input_direction_positive_x() {
+        let mut game = MiniGolf::new();
+        let players = make_players(1);
+        game.init(&players, &gentle_straight_config());
+
+        let input = GolfInput {
+            aim_angle: 0.0,
+            power: 0.5,
+            stroke: true,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        let ball = &game.state.balls[&1];
+        assert!(
+            ball.velocity.x > 0.0,
+            "vx should be positive, got {}",
+            ball.velocity.x
+        );
+        assert!(
+            ball.velocity.z.abs() < 0.1,
+            "vz should be ~0, got {}",
+            ball.velocity.z
+        );
+    }
+
+    #[test]
+    fn apply_input_direction_positive_z() {
+        let mut game = MiniGolf::new();
+        let players = make_players(1);
+        game.init(&players, &gentle_straight_config());
+
+        let input = GolfInput {
+            aim_angle: std::f32::consts::FRAC_PI_2,
+            power: 0.5,
+            stroke: true,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        let ball = &game.state.balls[&1];
+        assert!(
+            ball.velocity.x.abs() < 0.1,
+            "vx should be ~0, got {}",
+            ball.velocity.x
+        );
+        assert!(
+            ball.velocity.z > 0.0,
+            "vz should be positive, got {}",
+            ball.velocity.z
+        );
+    }
+
+    #[test]
+    fn apply_input_aim_at_hole_moves_toward_hole() {
+        let mut game = MiniGolf::new();
+        let players = make_players(1);
+        game.init(&players, &gentle_straight_config());
+
+        let spawn = game.course().spawn_point;
+        let hole = game.course().hole_position;
+        let aim = (hole.z - spawn.z).atan2(hole.x - spawn.x);
+
+        let input = GolfInput {
+            aim_angle: aim,
+            power: 0.4,
+            stroke: true,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        let empty = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        // Tick until ball stops
+        for _ in 0..300 {
+            game.update(0.1, &empty);
+            if game.state.balls[&1].is_stopped() {
+                break;
+            }
+        }
+
+        let final_pos = game.state.balls[&1].position;
+        let initial_dist = ((hole.x - spawn.x).powi(2) + (hole.z - spawn.z).powi(2)).sqrt();
+        let final_dist = ((hole.x - final_pos.x).powi(2) + (hole.z - final_pos.z).powi(2)).sqrt();
+        assert!(
+            final_dist < initial_dist,
+            "Ball should be closer to hole: initial_dist={initial_dist}, final_dist={final_dist}"
+        );
+    }
+
+    #[test]
+    fn apply_input_direction_parametric() {
+        use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
+
+        // (angle, expected_vx_sign, expected_vz_sign)
+        // sign: 1 = positive, -1 = negative
+        let cases: &[(f32, f32, f32)] = &[
+            (0.0, 1.0, 0.0),                // +X
+            (FRAC_PI_4, 1.0, 1.0),          // +X +Z
+            (FRAC_PI_2, 0.0, 1.0),          // +Z
+            (3.0 * FRAC_PI_4, -1.0, 1.0),   // -X +Z
+            (PI, -1.0, 0.0),                // -X
+            (-3.0 * FRAC_PI_4, -1.0, -1.0), // -X -Z
+            (-FRAC_PI_2, 0.0, -1.0),        // -Z
+            (-FRAC_PI_4, 1.0, -1.0),        // +X -Z
+        ];
+
+        for &(angle, expect_vx_sign, expect_vz_sign) in cases {
+            let mut game = MiniGolf::new();
+            let players = make_players(1);
+            game.init(&players, &gentle_straight_config());
+
+            let input = GolfInput {
+                aim_angle: angle,
+                power: 0.5,
+                stroke: true,
+            };
+            let data = rmp_serde::to_vec(&input).unwrap();
+            game.apply_input(1, &data);
+
+            let ball = &game.state.balls[&1];
+            if expect_vx_sign > 0.0 {
+                assert!(
+                    ball.velocity.x > 0.1,
+                    "angle={angle:.2}: vx should be positive, got {}",
+                    ball.velocity.x
+                );
+            } else if expect_vx_sign < 0.0 {
+                assert!(
+                    ball.velocity.x < -0.1,
+                    "angle={angle:.2}: vx should be negative, got {}",
+                    ball.velocity.x
+                );
+            } else {
+                assert!(
+                    ball.velocity.x.abs() < 0.1,
+                    "angle={angle:.2}: vx should be ~0, got {}",
+                    ball.velocity.x
+                );
+            }
+
+            if expect_vz_sign > 0.0 {
+                assert!(
+                    ball.velocity.z > 0.1,
+                    "angle={angle:.2}: vz should be positive, got {}",
+                    ball.velocity.z
+                );
+            } else if expect_vz_sign < 0.0 {
+                assert!(
+                    ball.velocity.z < -0.1,
+                    "angle={angle:.2}: vz should be negative, got {}",
+                    ball.velocity.z
+                );
+            } else {
+                assert!(
+                    ball.velocity.z.abs() < 0.1,
+                    "angle={angle:.2}: vz should be ~0, got {}",
+                    ball.velocity.z
+                );
+            }
+        }
+    }
+
     #[test]
     fn multi_player_independent_strokes() {
         let mut game = MiniGolf::new();

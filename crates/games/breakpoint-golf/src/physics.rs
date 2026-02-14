@@ -311,4 +311,147 @@ mod tests {
             "Power should be clamped to MAX_POWER, got {speed}"
         );
     }
+
+    // ================================================================
+    // Stroke direction unit tests
+    // ================================================================
+
+    #[test]
+    fn stroke_angle_zero_moves_positive_x() {
+        let mut ball = BallState::new(Vec3::new(5.0, 0.0, 5.0));
+        ball.stroke(0.0, 10.0);
+        assert!(
+            ball.velocity.x > 0.0,
+            "vx should be positive, got {}",
+            ball.velocity.x
+        );
+        assert!(
+            ball.velocity.z.abs() < 0.01,
+            "vz should be ~0, got {}",
+            ball.velocity.z
+        );
+    }
+
+    #[test]
+    fn stroke_angle_half_pi_moves_positive_z() {
+        let mut ball = BallState::new(Vec3::new(5.0, 0.0, 5.0));
+        ball.stroke(std::f32::consts::FRAC_PI_2, 10.0);
+        assert!(
+            ball.velocity.x.abs() < 0.01,
+            "vx should be ~0, got {}",
+            ball.velocity.x
+        );
+        assert!(
+            ball.velocity.z > 0.0,
+            "vz should be positive, got {}",
+            ball.velocity.z
+        );
+    }
+
+    #[test]
+    fn stroke_angle_pi_moves_negative_x() {
+        let mut ball = BallState::new(Vec3::new(5.0, 0.0, 5.0));
+        ball.stroke(std::f32::consts::PI, 10.0);
+        assert!(
+            ball.velocity.x < 0.0,
+            "vx should be negative, got {}",
+            ball.velocity.x
+        );
+        assert!(
+            ball.velocity.z.abs() < 0.1,
+            "vz should be ~0, got {}",
+            ball.velocity.z
+        );
+    }
+
+    #[test]
+    fn stroke_angle_neg_half_pi_moves_negative_z() {
+        let mut ball = BallState::new(Vec3::new(5.0, 0.0, 5.0));
+        ball.stroke(-std::f32::consts::FRAC_PI_2, 10.0);
+        assert!(
+            ball.velocity.x.abs() < 0.01,
+            "vx should be ~0, got {}",
+            ball.velocity.x
+        );
+        assert!(
+            ball.velocity.z < 0.0,
+            "vz should be negative, got {}",
+            ball.velocity.z
+        );
+    }
+
+    #[test]
+    fn stroke_angle_quarter_pi_moves_diagonal() {
+        let mut ball = BallState::new(Vec3::new(5.0, 0.0, 5.0));
+        ball.stroke(std::f32::consts::FRAC_PI_4, 10.0);
+        assert!(
+            ball.velocity.x > 0.0,
+            "vx should be positive, got {}",
+            ball.velocity.x
+        );
+        assert!(
+            ball.velocity.z > 0.0,
+            "vz should be positive, got {}",
+            ball.velocity.z
+        );
+        let ratio = (ball.velocity.x / ball.velocity.z).abs();
+        assert!(
+            (ratio - 1.0).abs() < 0.01,
+            "|vx|/|vz| should be ~1.0 for π/4, got {ratio}"
+        );
+    }
+
+    // ================================================================
+    // Stroke-to-position integration tests (Gentle Straight, no obstacles)
+    // ================================================================
+
+    fn gentle_straight_course() -> Course {
+        crate::course::all_courses().into_iter().nth(1).unwrap()
+    }
+
+    #[test]
+    fn stroke_at_angle_zero_ball_travels_positive_x() {
+        let course = gentle_straight_course();
+        // Start left-of-center so there's plenty of room in +X before wall
+        let mut ball = BallState::new(Vec3::new(2.0, 0.0, course.depth / 2.0));
+        let start_x = ball.position.x;
+        ball.stroke(0.0, 2.0);
+
+        for _ in 0..200 {
+            ball.tick(&course);
+            if ball.is_stopped() {
+                break;
+            }
+        }
+
+        let dx = ball.position.x - start_x;
+        let dz = (ball.position.z - course.depth / 2.0).abs();
+        assert!(
+            dx > 0.0 && dx.abs() > dz,
+            "X displacement ({dx}) should dominate over Z displacement ({dz})"
+        );
+    }
+
+    #[test]
+    fn stroke_at_angle_half_pi_ball_travels_positive_z() {
+        let course = gentle_straight_course();
+        // Start low-Z so there's plenty of room in +Z before wall
+        let mut ball = BallState::new(Vec3::new(course.width / 2.0, 0.0, 2.0));
+        let start_z = ball.position.z;
+        ball.stroke(std::f32::consts::FRAC_PI_2, 2.0);
+
+        for _ in 0..200 {
+            ball.tick(&course);
+            if ball.is_stopped() {
+                break;
+            }
+        }
+
+        let dz = ball.position.z - start_z;
+        let dx = (ball.position.x - course.width / 2.0).abs();
+        assert!(
+            dz > 0.0 && dz.abs() > dx,
+            "Z displacement ({dz}) should dominate over X displacement ({dx})"
+        );
+    }
 }

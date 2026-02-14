@@ -9,6 +9,7 @@ use breakpoint_golf::physics::{BALL_RADIUS, HOLE_RADIUS};
 use breakpoint_golf::{GolfInput, GolfState, MiniGolf};
 
 use crate::app::AppState;
+use crate::camera::GameCamera;
 use crate::net_client::WsClient;
 
 use super::{
@@ -531,7 +532,7 @@ fn setup_golf(
 /// Gather mouse input and populate GolfLocalInput (no network or game mutation).
 fn golf_input_system(
     windows: Query<&Window>,
-    cameras: Query<(&Camera, &GlobalTransform)>,
+    cameras: Query<&Transform, With<GameCamera>>,
     mut local_input: ResMut<GolfLocalInput>,
     active_game: Res<ActiveGame>,
     network_role: Res<NetworkRole>,
@@ -562,7 +563,7 @@ fn golf_input_system(
     let Some(cursor_pos) = window.cursor_position() else {
         return;
     };
-    let Ok((camera, cam_transform)) = cameras.single() else {
+    let Ok(cam_transform) = cameras.single() else {
         return;
     };
 
@@ -577,16 +578,51 @@ fn golf_input_system(
         return;
     };
 
-    if let Ok(ray) = camera.viewport_to_world(cam_transform, cursor_pos)
-        && ray.direction.y.abs() > 1e-6
-    {
-        let t = -ray.origin.y / ray.direction.y;
-        let ground_point = ray.origin + ray.direction * t;
-
+    // Manual ray-ground intersection — bypasses Camera.computed which can
+    // be unpopulated or stale in WASM/WebGL2, causing viewport_to_world
+    // to silently return Err every frame.
+    if let Some(ground_point) = cursor_to_ground(cursor_pos, window, cam_transform) {
         let dx = ground_point.x - ball_pos.x;
         let dz = ground_point.z - ball_pos.z;
         local_input.aim_angle = dz.atan2(dx);
     }
+}
+
+/// Project a screen-space cursor position onto the Y=0 ground plane using
+/// the camera's current Transform (no dependency on Camera.computed).
+fn cursor_to_ground(cursor_pos: Vec2, window: &Window, cam: &Transform) -> Option<Vec3> {
+    let w = window.width();
+    let h = window.height();
+    if w < 1.0 || h < 1.0 {
+        return None;
+    }
+
+    // Cursor to NDC: x ∈ [-1,1] (left to right), y ∈ [-1,1] (bottom to top)
+    let ndc_x = (cursor_pos.x / w) * 2.0 - 1.0;
+    let ndc_y = 1.0 - (cursor_pos.y / h) * 2.0;
+
+    // Camera3d default vertical FOV = π/4 (45°)
+    let half_v = (std::f32::consts::FRAC_PI_4 * 0.5).tan();
+    let half_h = half_v * (w / h);
+
+    // Build world-space ray direction from camera axes.
+    // Bevy's looking_at rotation places the local +X axis opposite to
+    // screen-right in world space, so negate it to get the correct
+    // screen-right direction for ray construction.
+    let forward = *cam.forward();
+    let right = -*cam.right();
+    let up = *cam.up();
+    let ray_dir = (forward + right * (ndc_x * half_h) + up * (ndc_y * half_v)).normalize();
+
+    // Intersect with Y=0 plane
+    if ray_dir.y.abs() < 1e-6 {
+        return None;
+    }
+    let t = -cam.translation.y / ray_dir.y;
+    if t <= 0.0 {
+        return None;
+    }
+    Some(cam.translation + ray_dir * t)
 }
 
 /// Apply golf input: host applies directly, non-host sends via WS.
@@ -637,10 +673,7 @@ fn golf_apply_input_system(
 fn golf_render_sync(
     active_game: Res<ActiveGame>,
     network_role: Res<NetworkRole>,
-    mut ball_query: Query<
-        (&BallEntity, &mut Transform, &mut Visibility),
-        Without<BallMarker>,
-    >,
+    mut ball_query: Query<(&BallEntity, &mut Transform, &mut Visibility), Without<BallMarker>>,
     mut marker_query: Query<
         (&mut Transform, &mut Visibility),
         (With<BallMarker>, Without<BallEntity>),
@@ -860,4 +893,175 @@ fn cleanup_golf(mut commands: Commands) {
     commands.remove_resource::<SunkTracker>();
     // Note: GolfCourseInfo is preserved for BetweenRounds UI.
     // It's cleaned up in full_cleanup when returning to Lobby.
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::window::WindowResolution;
+
+    fn test_window(w: u32, h: u32) -> Window {
+        Window {
+            resolution: WindowResolution::new(w, h),
+            ..default()
+        }
+    }
+
+    /// Camera transform matching the golf camera setup: looking down at the ball.
+    fn golf_cam(ball_x: f32, ball_z: f32) -> Transform {
+        Transform::from_xyz(ball_x, 15.0, ball_z - 2.0)
+            .looking_at(Vec3::new(ball_x, 0.0, ball_z), Vec3::Y)
+    }
+
+    #[test]
+    fn cursor_center_hits_near_look_target() {
+        let window = test_window(1280, 720);
+        let cam = golf_cam(6.0, 12.0);
+        let center = Vec2::new(640.0, 360.0);
+
+        let ground = cursor_to_ground(center, &window, &cam);
+        assert!(ground.is_some(), "Center cursor should hit ground");
+        let pt = ground.unwrap();
+        // Should be near the look-at target (6, 0, 12)
+        assert!(
+            (pt.x - 6.0).abs() < 3.0,
+            "Ground X should be near 6.0, got {}",
+            pt.x
+        );
+        assert!(
+            (pt.z - 12.0).abs() < 3.0,
+            "Ground Z should be near 12.0, got {}",
+            pt.z
+        );
+    }
+
+    #[test]
+    fn cursor_right_of_center_gives_positive_x_offset() {
+        let window = test_window(1280, 720);
+        let cam = golf_cam(6.0, 12.0);
+
+        let center = cursor_to_ground(Vec2::new(640.0, 360.0), &window, &cam).unwrap();
+        let right = cursor_to_ground(Vec2::new(960.0, 360.0), &window, &cam).unwrap();
+
+        assert!(
+            right.x > center.x,
+            "Right cursor ({}) should map to greater X than center ({})",
+            right.x,
+            center.x
+        );
+    }
+
+    #[test]
+    fn cursor_left_of_center_gives_negative_x_offset() {
+        let window = test_window(1280, 720);
+        let cam = golf_cam(6.0, 12.0);
+
+        let center = cursor_to_ground(Vec2::new(640.0, 360.0), &window, &cam).unwrap();
+        let left = cursor_to_ground(Vec2::new(320.0, 360.0), &window, &cam).unwrap();
+
+        assert!(
+            left.x < center.x,
+            "Left cursor ({}) should map to lesser X than center ({})",
+            left.x,
+            center.x
+        );
+    }
+
+    #[test]
+    fn cursor_above_center_gives_positive_z_offset() {
+        let window = test_window(1280, 720);
+        let cam = golf_cam(6.0, 12.0);
+
+        // In screen coords, y=0 is top. Top of screen = further from camera = +Z.
+        let center = cursor_to_ground(Vec2::new(640.0, 360.0), &window, &cam).unwrap();
+        let top = cursor_to_ground(Vec2::new(640.0, 100.0), &window, &cam).unwrap();
+
+        assert!(
+            top.z > center.z,
+            "Top-of-screen cursor (z={}) should map to greater Z than center (z={})",
+            top.z,
+            center.z
+        );
+    }
+
+    #[test]
+    fn cursor_below_center_gives_negative_z_offset() {
+        let window = test_window(1280, 720);
+        let cam = golf_cam(6.0, 12.0);
+
+        let center = cursor_to_ground(Vec2::new(640.0, 360.0), &window, &cam).unwrap();
+        let bottom = cursor_to_ground(Vec2::new(640.0, 620.0), &window, &cam).unwrap();
+
+        assert!(
+            bottom.z < center.z,
+            "Bottom-of-screen cursor (z={}) should map to lesser Z than center (z={})",
+            bottom.z,
+            center.z
+        );
+    }
+
+    #[test]
+    fn different_camera_heights_consistent_direction() {
+        let window = test_window(1280, 720);
+
+        for height in [10.0, 15.0, 25.0] {
+            let cam = Transform::from_xyz(6.0, height, 10.0)
+                .looking_at(Vec3::new(6.0, 0.0, 12.0), Vec3::Y);
+
+            let center = cursor_to_ground(Vec2::new(640.0, 360.0), &window, &cam).unwrap();
+            let right = cursor_to_ground(Vec2::new(960.0, 360.0), &window, &cam).unwrap();
+
+            assert!(
+                right.x > center.x,
+                "height={height}: right cursor X ({}) should exceed center X ({})",
+                right.x,
+                center.x
+            );
+        }
+    }
+
+    #[test]
+    fn zero_dimension_window_returns_none() {
+        let cam = golf_cam(6.0, 12.0);
+
+        let zero_w = test_window(0, 720);
+        assert!(
+            cursor_to_ground(Vec2::new(0.0, 360.0), &zero_w, &cam).is_none(),
+            "Zero-width window should return None"
+        );
+
+        let zero_h = test_window(1280, 0);
+        assert!(
+            cursor_to_ground(Vec2::new(640.0, 0.0), &zero_h, &cam).is_none(),
+            "Zero-height window should return None"
+        );
+    }
+
+    #[test]
+    fn cursor_right_of_ball_gives_positive_x_stroke() {
+        // End-to-end: cursor → ground → aim_angle → BallState::stroke → check vx>0
+        let window = test_window(1280, 720);
+        let ball_x = 6.0;
+        let ball_z = 12.0;
+        let cam = golf_cam(ball_x, ball_z);
+
+        // Cursor to the right of center
+        let ground = cursor_to_ground(Vec2::new(960.0, 360.0), &window, &cam).unwrap();
+
+        let ball_pos = Vec3::new(ball_x, BALL_RADIUS, ball_z);
+        let dx = ground.x - ball_pos.x;
+        let dz = ground.z - ball_pos.z;
+        let aim_angle = dz.atan2(dx);
+
+        let mut ball = breakpoint_golf::physics::BallState::new(
+            breakpoint_golf::course::Vec3::new(ball_x, 0.0, ball_z),
+        );
+        ball.stroke(aim_angle, 10.0);
+
+        assert!(
+            ball.velocity.x > 0.0,
+            "Cursor right of ball should produce positive vx, got {}",
+            ball.velocity.x
+        );
+    }
 }

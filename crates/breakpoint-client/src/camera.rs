@@ -119,14 +119,12 @@ fn update_camera(
             if let Some(ball_xz) = ball_pos {
                 let camera_height = 15.0;
                 let offset_z = -2.0; // Slight offset for perspective feel
-                let target =
-                    Vec3::new(ball_xz.x, camera_height, ball_xz.z + offset_z);
+                let target = Vec3::new(ball_xz.x, camera_height, ball_xz.z + offset_z);
                 let look_target = Vec3::new(ball_xz.x, 0.0, ball_xz.z);
 
                 let lerp_factor = (5.0 * time.delta_secs()).min(1.0);
                 for mut transform in &mut camera_query {
-                    transform.translation =
-                        transform.translation.lerp(target, lerp_factor);
+                    transform.translation = transform.translation.lerp(target, lerp_factor);
                     *transform = transform.looking_at(look_target, Vec3::Y);
                 }
             } else if let Some(ref info) = course_info {

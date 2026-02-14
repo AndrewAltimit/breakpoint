@@ -298,9 +298,11 @@ mod tests {
                 // input_data should be the 12 raw bytes of the GolfInput
                 assert_eq!(
                     pi.input_data,
-                    vec![0x93, 0xCA, 0x00, 0x00, 0x00, 0x00, 0xCA, 0x3F, 0x19, 0x99, 0x9A, 0xC3]
+                    vec![
+                        0x93, 0xCA, 0x00, 0x00, 0x00, 0x00, 0xCA, 0x3F, 0x19, 0x99, 0x9A, 0xC3
+                    ]
                 );
-            }
+            },
             other => panic!("Expected PlayerInput, got {:?}", other),
         }
     }
