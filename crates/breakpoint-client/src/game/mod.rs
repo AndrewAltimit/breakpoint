@@ -242,9 +242,19 @@ fn setup_game(
     }
 
     let game_id = lobby.selected_game.clone();
-    let mut game = registry
-        .create(&game_id)
-        .unwrap_or_else(|| registry.create("mini-golf").unwrap());
+    let mut game = match registry.create(&game_id) {
+        Some(g) => g,
+        None => {
+            #[cfg(target_arch = "wasm32")]
+            web_sys::console::warn_1(
+                &format!("Unknown game ID '{game_id}', falling back to mini-golf").into(),
+            );
+            match registry.create("mini-golf") {
+                Some(g) => g,
+                None => return,
+            }
+        },
+    };
 
     let round_count = game.round_count_hint();
 

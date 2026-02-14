@@ -40,13 +40,20 @@ async fn main() {
 
     tracing::info!("Breakpoint server listening on {listen_addr}");
 
-    axum::serve(listener, app).await.expect("Server error");
+    if let Err(e) = axum::serve(listener, app).await {
+        tracing::error!("Server error: {e}");
+        std::process::exit(1);
+    }
 }
 
 /// Spawn the GitHub Actions polling monitor as a background task.
 #[cfg(feature = "github-poller")]
 fn spawn_github_poller(state: &breakpoint_server::state::AppState) {
-    let gh = state.config.github.as_ref().unwrap();
+    let gh = state
+        .config
+        .github
+        .as_ref()
+        .expect("github config must exist when github-poller feature is enabled");
     let poller_config = breakpoint_github::GitHubPollerConfig {
         token: gh.token.clone().unwrap_or_default(),
         repos: gh.repos.clone(),

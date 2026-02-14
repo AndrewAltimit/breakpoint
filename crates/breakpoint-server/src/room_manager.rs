@@ -251,7 +251,7 @@ impl RoomManager {
             room_state: Some(room_state),
             error: None,
         });
-        encode_server_message(&msg).unwrap_or_default()
+        encode_server_message(&msg).expect("JoinRoomResponse serialization must succeed")
     }
 
     /// Build a JoinRoomResponse error message.
@@ -263,7 +263,7 @@ impl RoomManager {
             room_state: None,
             error: Some(error.to_string()),
         });
-        encode_server_message(&msg).unwrap_or_default()
+        encode_server_message(&msg).expect("JoinRoomResponse error serialization must succeed")
     }
 
     /// Broadcast raw binary data to all players in all rooms.
