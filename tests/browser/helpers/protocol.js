@@ -153,6 +153,49 @@ export function parseGolfState(stateData) {
 }
 
 /**
+ * Parse a PlatformerState from raw msgpack state_data bytes.
+ * PlatformerState fields: [players, powerups, active_powerups, finish_order,
+ *   elimination_order, round_timer, hazard_y, round_complete, mode]
+ * PlatformerPlayerState fields: [x, y, vx, vy, grounded, has_double_jump,
+ *   jumps_remaining, last_checkpoint_x, last_checkpoint_y, finished, eliminated, finish_time]
+ */
+export function parsePlatformerState(stateData) {
+  const raw = unpack(Buffer.from(stateData));
+  return {
+    players: raw[0],
+    powerups: raw[1],
+    activePowerups: raw[2],
+    finishOrder: raw[3],
+    eliminationOrder: raw[4],
+    roundTimer: raw[5],
+    hazardY: raw[6],
+    roundComplete: raw[7],
+    mode: raw[8],
+  };
+}
+
+/**
+ * Parse a LaserTagState from raw msgpack state_data bytes.
+ * LaserTagState fields: [players, powerups, active_powerups, round_timer,
+ *   round_complete, team_mode, teams, tags_scored, laser_trails]
+ * LaserPlayerState fields: [x, z, aim_angle, stun_remaining, fire_cooldown, move_speed]
+ */
+export function parseLaserTagState(stateData) {
+  const raw = unpack(Buffer.from(stateData));
+  return {
+    players: raw[0],
+    powerups: raw[1],
+    activePowerups: raw[2],
+    roundTimer: raw[3],
+    roundComplete: raw[4],
+    teamMode: raw[5],
+    teams: raw[6],
+    tagsScored: raw[7],
+    laserTrails: raw[8],
+  };
+}
+
+/**
  * Human-readable message type name.
  */
 export function msgTypeName(type) {

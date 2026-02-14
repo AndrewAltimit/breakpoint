@@ -10,8 +10,8 @@ use crate::app::AppState;
 use crate::net_client::WsClient;
 
 use super::{
-    ActiveGame, GameEntity, GameRegistry, HudPosition, NetworkRole, player_color_to_bevy,
-    read_game_state, send_player_input, spawn_hud_text,
+    ActiveGame, ControlsHint, GameEntity, GameRegistry, HudPosition, NetworkRole,
+    player_color_to_bevy, read_game_state, send_player_input, spawn_hud_text,
 };
 
 pub struct PlatformerPlugin;
@@ -202,6 +202,24 @@ fn setup_platformer(
         Color::WHITE,
         HudPosition::TopRight,
     );
+
+    // Controls hint (bottom-left, auto-dismiss)
+    commands.spawn((
+        GameEntity,
+        ControlsHint { timer: 8.0 },
+        Text::new("A/D or Arrows to move\nSpace to jump\nE for power-up"),
+        TextFont {
+            font_size: 16.0,
+            ..default()
+        },
+        TextColor(Color::srgba(0.9, 0.9, 0.9, 0.85)),
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(60.0),
+            left: Val::Px(10.0),
+            ..default()
+        },
+    ));
 }
 
 fn platformer_input_system(

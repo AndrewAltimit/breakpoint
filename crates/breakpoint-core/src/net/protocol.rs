@@ -264,6 +264,47 @@ mod tests {
         assert_eq!(msg, decoded);
     }
 
+    /// Test decoding a PlayerInput message encoded by JS msgpackr
+    /// (with Vec<u8> as array-of-integers, not binary).
+    #[test]
+    fn decode_player_input_from_js_encoding() {
+        // Exact wire bytes captured from browser test:
+        // 01 93 55 01 9c cc93 ccca 00 00 00 00 ccca 3f 19 cc99 cc9a ccc3
+        let wire: Vec<u8> = vec![
+            0x01, // type byte: PlayerInput
+            0x93, // fixarray(3): [player_id, tick, input_data]
+            0x55, // fixint(85): player_id
+            0x01, // fixint(1): tick
+            0x9C, // fixarray(12): input_data
+            0xCC, 0x93, // uint8(147)
+            0xCC, 0xCA, // uint8(202)
+            0x00, // fixint(0)
+            0x00, // fixint(0)
+            0x00, // fixint(0)
+            0x00, // fixint(0)
+            0xCC, 0xCA, // uint8(202)
+            0x3F, // fixint(63)
+            0x19, // fixint(25)
+            0xCC, 0x99, // uint8(153)
+            0xCC, 0x9A, // uint8(154)
+            0xCC, 0xC3, // uint8(195)
+        ];
+
+        let decoded = decode_client_message(&wire).expect("should decode PlayerInput from JS");
+        match decoded {
+            ClientMessage::PlayerInput(pi) => {
+                assert_eq!(pi.player_id, 85);
+                assert_eq!(pi.tick, 1);
+                // input_data should be the 12 raw bytes of the GolfInput
+                assert_eq!(
+                    pi.input_data,
+                    vec![0x93, 0xCA, 0x00, 0x00, 0x00, 0x00, 0xCA, 0x3F, 0x19, 0x99, 0x9A, 0xC3]
+                );
+            }
+            other => panic!("Expected PlayerInput, got {:?}", other),
+        }
+    }
+
     #[test]
     fn roundtrip_join_room_response() {
         let msg = ServerMessage::JoinRoomResponse(JoinRoomResponseMsg {

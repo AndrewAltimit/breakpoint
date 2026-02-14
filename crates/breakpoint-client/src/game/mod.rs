@@ -145,6 +145,8 @@ impl Plugin for GamePlugin {
                     game_tick_system,
                     host_broadcast_system,
                     client_receive_system,
+                    controls_hint_spawn_log,
+                    controls_hint_dismiss_system,
                 )
                     .run_if(in_state(AppState::InGame)),
             )
@@ -192,6 +194,12 @@ pub struct NetworkRole {
 /// Marker for game entities to clean up on exit.
 #[derive(Component)]
 pub struct GameEntity;
+
+/// Controls hint that auto-dismisses after a timeout.
+#[derive(Component)]
+pub struct ControlsHint {
+    pub timer: f32,
+}
 
 /// Round tracking for multi-round games.
 #[derive(Resource)]
@@ -448,6 +456,32 @@ fn client_receive_system(
                 }
             },
             _ => {},
+        }
+    }
+}
+
+fn controls_hint_spawn_log(query: Query<&ControlsHint, Added<ControlsHint>>) {
+    if !query.is_empty() {
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(
+            "BREAKPOINT:CONTROLS_HINT:SPAWNED",
+        ));
+    }
+}
+
+fn controls_hint_dismiss_system(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut query: Query<(Entity, &mut ControlsHint)>,
+) {
+    for (entity, mut hint) in &mut query {
+        hint.timer -= time.delta_secs();
+        if hint.timer <= 0.0 {
+            #[cfg(target_arch = "wasm32")]
+            web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(
+                "BREAKPOINT:CONTROLS_HINT:DISMISSED",
+            ));
+            commands.entity(entity).despawn();
         }
     }
 }

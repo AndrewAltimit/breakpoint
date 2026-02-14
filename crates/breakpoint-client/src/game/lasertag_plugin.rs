@@ -10,8 +10,8 @@ use crate::app::AppState;
 use crate::net_client::WsClient;
 
 use super::{
-    ActiveGame, GameEntity, GameRegistry, HudPosition, NetworkRole, player_color_to_bevy,
-    read_game_state, send_player_input, spawn_hud_text,
+    ActiveGame, ControlsHint, GameEntity, GameRegistry, HudPosition, NetworkRole,
+    player_color_to_bevy, read_game_state, send_player_input, spawn_hud_text,
 };
 
 pub struct LaserTagPlugin;
@@ -221,6 +221,24 @@ fn setup_lasertag(
         Color::WHITE,
         HudPosition::TopLeft,
     );
+
+    // Controls hint (bottom-left, auto-dismiss)
+    commands.spawn((
+        GameEntity,
+        ControlsHint { timer: 8.0 },
+        Text::new("WASD to move\nMouse to aim\nClick to fire\nE for power-up"),
+        TextFont {
+            font_size: 16.0,
+            ..default()
+        },
+        TextColor(Color::srgba(0.9, 0.9, 0.9, 0.85)),
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(60.0),
+            left: Val::Px(10.0),
+            ..default()
+        },
+    ));
 }
 
 #[allow(clippy::too_many_arguments)]

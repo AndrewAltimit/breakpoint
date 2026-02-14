@@ -12,8 +12,8 @@ use crate::app::AppState;
 use crate::net_client::WsClient;
 
 use super::{
-    ActiveGame, GameEntity, GameRegistry, HudPosition, NetworkRole, player_color_to_bevy,
-    read_game_state, send_player_input, spawn_hud_text,
+    ActiveGame, ControlsHint, GameEntity, GameRegistry, HudPosition, NetworkRole,
+    player_color_to_bevy, read_game_state, send_player_input, spawn_hud_text,
 };
 
 pub struct GolfPlugin;
@@ -275,11 +275,11 @@ fn setup_golf(
         ));
     }
 
-    // Bumpers (metallic red)
+    // Bumpers (metallic silver-blue, distinct from player ball colors)
     let bumper_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.85, 0.15, 0.15),
-        metallic: 0.8,
-        perceptual_roughness: 0.3,
+        base_color: Color::srgb(0.55, 0.55, 0.65),
+        metallic: 0.9,
+        perceptual_roughness: 0.2,
         ..default()
     });
     for bumper in &course_data.bumpers {
@@ -349,17 +349,20 @@ fn setup_golf(
             continue;
         }
         let color = player_color_to_bevy(&player.color);
-        let alpha = if player.id == local_player_id {
-            1.0
-        } else {
-            0.6
-        };
+        let is_local = player.id == local_player_id;
+        let alpha = if is_local { 1.0 } else { 0.6 };
         commands.spawn((
             GameEntity,
             BallEntity(player.id),
             Mesh3d(ball_mesh.clone()),
             MeshMaterial3d(materials.add(StandardMaterial {
                 base_color: color.with_alpha(alpha),
+                // Local player ball glows slightly to stand out from obstacles
+                emissive: if is_local {
+                    color.to_linear() * 0.4
+                } else {
+                    LinearRgba::NONE
+                },
                 alpha_mode: if alpha < 1.0 {
                     AlphaMode::Blend
                 } else {
@@ -487,6 +490,24 @@ fn setup_golf(
             ..default()
         },
     ));
+
+    // Controls hint (bottom-left, auto-dismiss)
+    commands.spawn((
+        GameEntity,
+        ControlsHint { timer: 8.0 },
+        Text::new("Hold LMB to charge\nRelease to stroke\nMove mouse to aim"),
+        TextFont {
+            font_size: 16.0,
+            ..default()
+        },
+        TextColor(Color::srgba(0.9, 0.9, 0.9, 0.85)),
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(60.0),
+            left: Val::Px(10.0),
+            ..default()
+        },
+    ));
 }
 
 /// Gather mouse input and populate GolfLocalInput (no network or game mutation).
@@ -502,6 +523,21 @@ fn golf_input_system(
         return;
     }
 
+    // Power charging works regardless of cursor position — prevents losing
+    // charge if the cursor briefly leaves the canvas.
+    if mouse.pressed(MouseButton::Left) {
+        local_input.power = (local_input.power + 0.025).min(1.0);
+    }
+    if mouse.just_released(MouseButton::Left) && local_input.power > 0.01 {
+        local_input.power = local_input.power.max(0.15); // Minimum visible stroke
+        local_input.stroke_requested = true;
+    }
+    if !mouse.pressed(MouseButton::Left) && !local_input.stroke_requested {
+        local_input.power = 0.0;
+    }
+
+    // Aim angle needs cursor position + camera for raycasting.
+    // If unavailable, aim_angle retains its previous value.
     let Ok(window) = windows.single() else {
         return;
     };
@@ -512,7 +548,6 @@ fn golf_input_system(
         return;
     };
 
-    // Deserialize current golf state to get ball position
     let state: Option<GolfState> = read_game_state(&active_game);
     let ball_pos = state.as_ref().and_then(|s| {
         s.balls
@@ -524,7 +559,6 @@ fn golf_input_system(
         return;
     };
 
-    // Raycast from cursor to the ground plane (Y=0)
     if let Ok(ray) = camera.viewport_to_world(cam_transform, cursor_pos)
         && ray.direction.y.abs() > 1e-6
     {
@@ -534,17 +568,6 @@ fn golf_input_system(
         let dx = ground_point.x - ball_pos.x;
         let dz = ground_point.z - ball_pos.z;
         local_input.aim_angle = dz.atan2(dx);
-    }
-
-    // Power: hold left mouse button to charge, release to stroke
-    if mouse.pressed(MouseButton::Left) {
-        local_input.power = (local_input.power + 0.02).min(1.0);
-    }
-    if mouse.just_released(MouseButton::Left) && local_input.power > 0.01 {
-        local_input.stroke_requested = true;
-    }
-    if !mouse.pressed(MouseButton::Left) && !local_input.stroke_requested {
-        local_input.power = 0.0;
     }
 }
 
