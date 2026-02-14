@@ -16,7 +16,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 # Install wasm-pack for WASM client build
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    cargo install wasm-pack --locked 2>/dev/null || true
+    cargo install wasm-pack --locked
 
 WORKDIR /build
 
@@ -44,10 +44,10 @@ RUN mkdir -p crates/breakpoint-core/src && echo "" > crates/breakpoint-core/src/
     mkdir -p crates/games/breakpoint-lasertag/src && echo "" > crates/games/breakpoint-lasertag/src/lib.rs && \
     mkdir -p crates/adapters/breakpoint-github/src && echo "" > crates/adapters/breakpoint-github/src/lib.rs
 
-# Pre-build dependencies (cached layer)
+# Pre-build dependencies (cached layer — stubs may cause warnings, but deps are compiled)
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \
-    cargo build --release -p breakpoint-server --features github-poller 2>/dev/null || true
+    cargo build --release -p breakpoint-server --features github-poller; exit 0
 
 # Copy actual source code
 COPY crates/ crates/
@@ -70,6 +70,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -u 1000 breakpoint
@@ -95,5 +96,8 @@ USER breakpoint
 EXPOSE 8080
 
 ENV RUST_LOG=info
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -qO- http://localhost:8080/api/v1/status || exit 1
 
 ENTRYPOINT ["/app/breakpoint-server"]

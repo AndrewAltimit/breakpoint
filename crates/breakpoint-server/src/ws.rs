@@ -83,6 +83,15 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 spawn_writer(ws_sender, rx);
                 (code, pid)
             } else {
+                // Validate room code format before lookup
+                if !breakpoint_core::room::is_valid_room_code(&join.room_code) {
+                    let response =
+                        crate::room_manager::RoomManager::make_join_error("Invalid room code");
+                    drop(rooms);
+                    let _ = ws_sender.send(Message::Binary(response.into())).await;
+                    return;
+                }
+
                 // Join existing room
                 match rooms.join_room(&join.room_code, name, join.player_color, tx) {
                     Ok(pid) => {
@@ -155,18 +164,60 @@ fn spawn_writer(
     });
 }
 
+/// Per-connection rate limiter (token bucket).
+struct RateLimiter {
+    tokens: f64,
+    last_refill: tokio::time::Instant,
+    max_tokens: f64,
+    refill_rate: f64, // tokens per second
+}
+
+impl RateLimiter {
+    fn new(max_tokens: f64, refill_rate: f64) -> Self {
+        Self {
+            tokens: max_tokens,
+            last_refill: tokio::time::Instant::now(),
+            max_tokens,
+            refill_rate,
+        }
+    }
+
+    /// Returns true if the message is allowed; false if rate-limited.
+    fn allow(&mut self) -> bool {
+        let now = tokio::time::Instant::now();
+        let elapsed = now.duration_since(self.last_refill).as_secs_f64();
+        self.tokens = (self.tokens + elapsed * self.refill_rate).min(self.max_tokens);
+        self.last_refill = now;
+
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 async fn read_loop(
     ws_receiver: &mut futures::stream::SplitStream<WebSocket>,
     state: &AppState,
     room_code: &str,
     player_id: PlayerId,
 ) {
+    let mut rate_limiter = RateLimiter::new(50.0, 50.0); // 50 msg/sec burst, 50/sec sustained
+
     while let Some(Ok(msg)) = ws_receiver.next().await {
         let data = match msg {
             Message::Binary(d) => d.to_vec(),
             Message::Close(_) => break,
             _ => continue,
         };
+
+        // Rate limit: drop messages that exceed per-connection rate
+        if !rate_limiter.allow() {
+            tracing::warn!(player_id, room_code, "Rate limited");
+            continue;
+        }
 
         // Drop oversized messages
         if data.len() > breakpoint_core::net::protocol::MAX_MESSAGE_SIZE {

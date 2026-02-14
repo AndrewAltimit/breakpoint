@@ -31,6 +31,9 @@ impl Default for ServerConfig {
 pub struct AuthFileConfig {
     pub bearer_token: Option<String>,
     pub github_webhook_secret: Option<String>,
+    /// When true, reject GitHub webhooks that have no HMAC signature.
+    /// Defaults to true for production safety.
+    pub require_webhook_signature: bool,
 }
 
 /// Default overlay settings applied to new rooms.
@@ -80,6 +83,18 @@ impl ServerConfig {
             std::process::exit(1);
         }
 
+        // Warn about secrets in config file (should use env vars in production)
+        if self.auth.bearer_token.is_some() {
+            tracing::warn!(
+                "bearer_token is set in config file — use BREAKPOINT_API_TOKEN env var in production"
+            );
+        }
+        if self.auth.github_webhook_secret.is_some() {
+            tracing::warn!(
+                "github_webhook_secret is set in config file — use BREAKPOINT_GITHUB_SECRET env var in production"
+            );
+        }
+
         if let Some(ref gh) = self.github {
             if gh.enabled && gh.token.is_none() {
                 tracing::warn!("GitHub poller enabled but no token configured");
@@ -87,6 +102,11 @@ impl ServerConfig {
             if gh.poll_interval_secs == 0 {
                 tracing::error!("GitHub poll_interval_secs must be > 0");
                 std::process::exit(1);
+            }
+            if gh.enabled && gh.token.is_some() {
+                tracing::warn!(
+                    "GitHub token is set in config file — use environment variables in production"
+                );
             }
         }
     }

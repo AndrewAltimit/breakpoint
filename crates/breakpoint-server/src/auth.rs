@@ -14,6 +14,8 @@ pub struct AuthConfig {
     /// GitHub webhook HMAC secret. None = signature verification disabled.
     /// Used by the webhook handler (webhooks module).
     pub github_webhook_secret: Option<String>,
+    /// When true, reject unsigned webhooks even if no secret is configured.
+    pub require_webhook_signature: bool,
 }
 
 /// Axum middleware that validates Bearer token authentication.
@@ -31,6 +33,7 @@ pub async fn bearer_auth_middleware(
         .unwrap_or(AuthConfig {
             bearer_token: None,
             github_webhook_secret: None,
+            require_webhook_signature: false,
         });
 
     if let Some(ref expected) = auth_config.bearer_token {

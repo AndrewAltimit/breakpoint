@@ -36,6 +36,7 @@ impl TestServer {
             auth: AuthFileConfig {
                 bearer_token: Some(token.to_string()),
                 github_webhook_secret: Some(webhook_secret.to_string()),
+                require_webhook_signature: false,
             },
             ..ServerConfig::default()
         };

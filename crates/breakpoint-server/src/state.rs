@@ -23,6 +23,7 @@ impl AppState {
         let auth = AuthConfig {
             bearer_token: config.auth.bearer_token.clone(),
             github_webhook_secret: config.auth.github_webhook_secret.clone(),
+            require_webhook_signature: config.auth.require_webhook_signature,
         };
         Self {
             rooms: Arc::new(RwLock::new(RoomManager::new())),
