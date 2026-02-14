@@ -711,6 +711,127 @@ mod tests {
                     );
                 }
             }
+
+            // P2-1: Player position stays valid after collision resolution
+            // The tile collision system allows AABB overlap with multi-tile
+            // solid blocks (resolved incrementally per-tile), so we check
+            // that the player doesn't fall through the world entirely.
+            #[test]
+            fn player_position_stays_valid(
+                seed in 0u64..200,
+                moves in proptest::collection::vec(-1.0f32..=1.0, 20..80)
+            ) {
+                let course = generate_course(seed);
+                let mut player = PlatformerPlayerState::new(
+                    course.spawn_x,
+                    course.spawn_y,
+                );
+
+                for &move_dir in &moves {
+                    let input = PlatformerInput {
+                        move_dir,
+                        jump: move_dir > 0.3,
+                        ..Default::default()
+                    };
+                    for _ in 0..SUBSTEPS {
+                        tick_player(&mut player, &input, &course, 1.0 / SUBSTEPS as f32);
+                    }
+
+                    if player.finished || player.eliminated {
+                        break;
+                    }
+
+                    // Player should be in valid position:
+                    // - x within course bounds (with some margin for edge)
+                    // - y above respawn threshold (respawn catches y < -5.0)
+                    // - All coordinates finite
+                    prop_assert!(
+                        player.x.is_finite() && player.y.is_finite(),
+                        "Player position must be finite: ({}, {})",
+                        player.x,
+                        player.y
+                    );
+                    prop_assert!(
+                        player.y >= -5.0,
+                        "Player y={} fell below respawn threshold",
+                        player.y
+                    );
+                    // Player can walk off course edges (no invisible walls)
+                    // but shouldn't teleport to absurd positions
+                    let course_extent = course.width as f32 * TILE_SIZE;
+                    prop_assert!(
+                        player.x >= -course_extent && player.x <= course_extent * 2.0,
+                        "Player x={} teleported far beyond course bounds [0, {}]",
+                        player.x,
+                        course_extent
+                    );
+                }
+            }
+
+            // P2-1: double_jump_remaining resets on every ground contact
+            #[test]
+            fn double_jump_resets_on_ground(
+                seed in 0u64..100
+            ) {
+                let course = generate_course(seed);
+                let mut player = PlatformerPlayerState::new(
+                    course.spawn_x,
+                    course.spawn_y,
+                );
+                player.has_double_jump = true;
+
+                // Let player settle to ground
+                let no_input = PlatformerInput::default();
+                for _ in 0..100 {
+                    for _ in 0..SUBSTEPS {
+                        tick_player(&mut player, &no_input, &course, 1.0 / SUBSTEPS as f32);
+                    }
+                }
+
+                if player.grounded && player.has_double_jump {
+                    prop_assert_eq!(
+                        player.jumps_remaining, 2,
+                        "Grounded player with double jump should have 2 jumps remaining"
+                    );
+
+                    // Jump
+                    let jump_input = PlatformerInput {
+                        jump: true,
+                        ..Default::default()
+                    };
+                    for _ in 0..SUBSTEPS {
+                        tick_player(&mut player, &jump_input, &course, 1.0 / SUBSTEPS as f32);
+                    }
+
+                    // Should have fewer jumps
+                    prop_assert!(
+                        player.jumps_remaining < 2,
+                        "After jumping, should have fewer jumps"
+                    );
+
+                    // Let player land again
+                    for _ in 0..200 {
+                        for _ in 0..SUBSTEPS {
+                            tick_player(
+                                &mut player,
+                                &no_input,
+                                &course,
+                                1.0 / SUBSTEPS as f32,
+                            );
+                        }
+                        if player.grounded {
+                            break;
+                        }
+                    }
+
+                    if player.grounded {
+                        prop_assert_eq!(
+                            player.jumps_remaining, 2,
+                            "Jumps should reset on landing"
+                        );
+                    }
+                }
+            }
         }
     }
 }

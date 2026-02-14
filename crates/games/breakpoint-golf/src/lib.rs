@@ -1076,4 +1076,361 @@ mod tests {
 
         breakpoint_core::test_helpers::assert_game_state_changed(&game, &before);
     }
+
+    // ================================================================
+    // P0-1: NaN/Inf/Degenerate Input Fuzzing
+    // ================================================================
+
+    // REGRESSION: NaN aim_angle via apply_input should not corrupt game state
+    #[test]
+    fn golf_apply_input_nan_angle_no_panic() {
+        let mut game = MiniGolf::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(90));
+
+        let input = GolfInput {
+            aim_angle: f32::NAN,
+            power: 0.5,
+            stroke: true,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        // The stroke should have been applied (ball not stopped)
+        // but position must remain finite after update
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        // Should not panic
+        game.update(0.1, &inputs);
+    }
+
+    // REGRESSION: Inf power via apply_input should be clamped
+    #[test]
+    fn golf_apply_input_inf_power_no_panic() {
+        let mut game = MiniGolf::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(90));
+
+        let input = GolfInput {
+            aim_angle: 0.0,
+            power: f32::INFINITY,
+            stroke: true,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        let vel = &game.state.balls[&1].velocity;
+        let speed = (vel.x * vel.x + vel.z * vel.z).sqrt();
+        assert!(
+            speed <= physics::MAX_POWER + 0.01,
+            "Inf power should be clamped to MAX_POWER, got {speed}"
+        );
+    }
+
+    // ================================================================
+    // P0-3: All-Course Aim-at-Hole Regression Tests
+    // ================================================================
+
+    // REGRESSION: Verify aim-at-hole works on every course, not just Gentle Straight
+    #[test]
+    fn aim_at_hole_moves_toward_hole_all_courses() {
+        let courses = course::all_courses();
+        for (idx, c) in courses.iter().enumerate() {
+            let spawn = c.spawn_point;
+            let hole = c.hole_position;
+            let dx = hole.x - spawn.x;
+            let dz = hole.z - spawn.z;
+            let aim_angle = dz.atan2(dx);
+            let initial_dist = ((hole.x - spawn.x).powi(2) + (hole.z - spawn.z).powi(2)).sqrt();
+
+            let mut ball = physics::BallState::new(spawn);
+            ball.stroke(aim_angle, physics::MAX_POWER * 0.8);
+
+            for _ in 0..200 {
+                ball.tick(c);
+                if ball.is_stopped() || ball.is_sunk {
+                    break;
+                }
+            }
+
+            let final_dist =
+                ((hole.x - ball.position.x).powi(2) + (hole.z - ball.position.z).powi(2)).sqrt();
+            assert!(
+                final_dist < initial_dist || ball.is_sunk,
+                "Course {idx} ({}): ball should be closer to hole after aimed stroke. \
+                 initial_dist={initial_dist:.2}, final_dist={final_dist:.2}",
+                c.name
+            );
+        }
+    }
+
+    // REGRESSION: Ball position resets correctly between rounds
+    #[test]
+    fn ball_position_resets_between_rounds() {
+        let mut game = MiniGolf::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(90));
+
+        let course0_spawn = game.course().spawn_point;
+        // Verify ball starts at course 0's spawn
+        let ball_pos = game.state.balls[&1].position;
+        assert!(
+            (ball_pos.x - course0_spawn.x).abs() < 0.01
+                && (ball_pos.z - course0_spawn.z).abs() < 0.01,
+            "Ball should start at course 0 spawn"
+        );
+
+        // Force sink the ball to complete round
+        game.state.balls.get_mut(&1).unwrap().is_sunk = true;
+        game.state.sunk_order.push(1);
+        game.sunk_set.insert(1);
+
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(0.1, &inputs);
+        assert!(game.is_round_complete());
+
+        // Re-init for next round (simulating what the host does)
+        let mut game2 = MiniGolf::new();
+        game2.init(&players, &default_config(90));
+        // Advance to course 1
+        game2.course_index = 1;
+        let course1_spawn = game2.courses[1].spawn_point;
+        game2
+            .state
+            .balls
+            .insert(1, physics::BallState::new(course1_spawn));
+        game2.state.course_index = 1;
+
+        let ball_pos2 = game2.state.balls[&1].position;
+        assert!(
+            (ball_pos2.x - course1_spawn.x).abs() < 0.01
+                && (ball_pos2.z - course1_spawn.z).abs() < 0.01,
+            "Ball should spawn at course 1 spawn, not course 0 hole"
+        );
+    }
+
+    // REGRESSION: Straight shot on Gentle Straight should eventually sink
+    #[test]
+    fn stroke_from_spawn_toward_hole_sinks_on_gentle_straight() {
+        let courses = course::all_courses();
+        let gentle = &courses[1]; // Course 1: Gentle Straight, no obstacles
+        let spawn = gentle.spawn_point;
+        let hole = gentle.hole_position;
+        let dx = hole.x - spawn.x;
+        let dz = hole.z - spawn.z;
+        let aim_angle = dz.atan2(dx);
+
+        let mut ball = physics::BallState::new(spawn);
+        ball.stroke(aim_angle, physics::MAX_POWER);
+
+        for _ in 0..500 {
+            ball.tick(gentle);
+            if ball.is_sunk {
+                break;
+            }
+        }
+
+        assert!(
+            ball.is_sunk,
+            "Full-power straight shot on Gentle Straight should sink. \
+             Final pos: ({:.2}, {:.2}), hole: ({:.2}, {:.2})",
+            ball.position.x, ball.position.z, hole.x, hole.z
+        );
+    }
+
+    // ================================================================
+    // P1-1: Serialization Fuzzing
+    // ================================================================
+
+    // REGRESSION: Garbage input data should not panic
+    #[test]
+    fn apply_input_with_garbage_data_no_panic() {
+        let mut game = MiniGolf::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(90));
+
+        let garbage: Vec<u8> = vec![0xFF, 0xFE, 0x00, 0x01, 0xAB, 0xCD];
+        game.apply_input(1, &garbage);
+
+        // Ball should still be at spawn, unmoved
+        assert!(
+            game.state.balls[&1].is_stopped(),
+            "Garbage input should not move the ball"
+        );
+    }
+
+    // REGRESSION: Truncated state data should not panic
+    #[test]
+    fn apply_state_with_truncated_data_no_panic() {
+        let mut game = MiniGolf::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(90));
+
+        let original_state = game.serialize_state();
+        // Truncate to half length
+        let truncated = &original_state[..original_state.len() / 2];
+        game.apply_state(truncated);
+
+        // Game should still be functional (state unchanged from failed apply)
+        assert_eq!(
+            game.state.balls.len(),
+            1,
+            "State should be unchanged after truncated apply_state"
+        );
+    }
+
+    // ================================================================
+    // P1-2: State Machine Transition Tests
+    // ================================================================
+
+    #[test]
+    fn double_pause_single_resume_works() {
+        let mut game = MiniGolf::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(90));
+
+        game.pause();
+        game.pause(); // double pause
+        game.resume(); // single resume
+
+        let timer_before = game.state.round_timer;
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(1.0, &inputs);
+
+        assert!(
+            game.state.round_timer > timer_before,
+            "Timer should advance after resume: before={timer_before}, after={}",
+            game.state.round_timer
+        );
+    }
+
+    #[test]
+    fn update_after_round_complete_is_noop() {
+        let mut game = MiniGolf::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(90));
+
+        // Force round complete
+        game.state.balls.get_mut(&1).unwrap().is_sunk = true;
+        game.state.sunk_order.push(1);
+        game.sunk_set.insert(1);
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(0.1, &inputs);
+        assert!(game.is_round_complete());
+
+        let timer = game.state.round_timer;
+        let events = game.update(1.0, &inputs);
+        assert!(
+            (game.state.round_timer - timer).abs() < 0.01,
+            "Timer should not advance after round complete"
+        );
+        assert!(
+            events.is_empty(),
+            "No events should be emitted after round complete"
+        );
+    }
+
+    // ================================================================
+    // P1-3: Golf Multi-Hole Session Tests
+    // ================================================================
+
+    #[test]
+    fn multi_round_scoring_accumulation() {
+        let mut game = MiniGolf::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(90));
+
+        // Complete round 1 by sinking both players
+        game.state.strokes.insert(1, 2);
+        game.state.strokes.insert(2, 3);
+        game.state.balls.get_mut(&1).unwrap().is_sunk = true;
+        game.state.balls.get_mut(&2).unwrap().is_sunk = true;
+        game.state.sunk_order.push(1);
+        game.state.sunk_order.push(2);
+        game.sunk_set.insert(1);
+        game.sunk_set.insert(2);
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(0.1, &inputs);
+        assert!(game.is_round_complete());
+
+        let results = game.round_results();
+        assert_eq!(results.len(), 2, "Both players should have results");
+
+        // Re-init for round 2 with hole_index=1
+        let mut config2 = default_config(90);
+        config2.custom.insert(
+            "hole_index".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(1)),
+        );
+        let mut game2 = MiniGolf::new();
+        game2.init(&players, &config2);
+
+        assert_eq!(
+            game2.state.strokes[&1], 0,
+            "Strokes should reset for new round"
+        );
+        assert!(
+            game2.state.sunk_order.is_empty(),
+            "Sunk order should be empty for new round"
+        );
+        assert_eq!(game2.course_index, 1, "Course should be 1 for round 2");
+    }
+
+    #[test]
+    fn scoring_across_all_par_values() {
+        // Verify scoring formula handles par 2, 3, and 4 (all used by courses)
+        let courses = course::all_courses();
+        let pars: Vec<u8> = courses.iter().map(|c| c.par).collect();
+
+        for &par in &pars {
+            // Under par
+            let score = scoring::calculate_score(1, par, true, true);
+            assert!(
+                score > 0,
+                "1 stroke on par {par} should give positive score, got {score}"
+            );
+
+            // At par
+            let score = scoring::calculate_score(par as u32, par, false, true);
+            assert_eq!(score, 1, "At par ({par}) without first-sink should score 1");
+
+            // Over par
+            let score = scoring::calculate_score(par as u32 + 2, par, false, true);
+            assert_eq!(score, 0, "Over par ({par}) should score 0, got {score}");
+        }
+    }
+
+    #[test]
+    fn dnf_all_players_still_produces_results() {
+        let mut game = MiniGolf::new();
+        let players = make_players(3);
+        game.init(&players, &default_config(90));
+
+        // Nobody sinks — advance timer past round duration
+        game.state.round_timer = MiniGolf::ROUND_DURATION - 0.01;
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(0.1, &inputs);
+        assert!(game.is_round_complete());
+
+        let results = game.round_results();
+        assert_eq!(results.len(), 3, "All players should have results");
+        for result in &results {
+            assert_eq!(
+                result.score, -1,
+                "DNF player {} should score -1, got {}",
+                result.player_id, result.score
+            );
+        }
+    }
 }

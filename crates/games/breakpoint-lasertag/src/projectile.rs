@@ -681,6 +681,52 @@ mod tests {
                     distance - radius
                 );
             }
+
+            // P2-1: All aim angles produce finite laser segments
+            #[test]
+            fn all_angles_produce_finite_segments(
+                angle in -std::f32::consts::PI..std::f32::consts::PI,
+                ox in 5.0f32..45.0,
+                oz in 5.0f32..45.0
+            ) {
+                let arena = generate_arena(ArenaSize::Default);
+                let result = raycast_laser(
+                    ox, oz, angle, &arena.walls, &[], 0, &[], 100.0,
+                );
+                for (i, &(sx, sz, ex, ez)) in result.segments.iter().enumerate() {
+                    prop_assert!(
+                        sx.is_finite() && sz.is_finite() && ex.is_finite() && ez.is_finite(),
+                        "Segment {i} has non-finite coords: ({sx}, {sz}) -> ({ex}, {ez})"
+                    );
+                }
+                prop_assert!(
+                    result.total_distance.is_finite(),
+                    "Total distance should be finite: {}",
+                    result.total_distance
+                );
+            }
+
+            // P2-1: Reflected laser never exceeds MAX_RANGE total distance
+            #[test]
+            fn reflected_laser_within_max_range(
+                angle in -std::f32::consts::PI..std::f32::consts::PI
+            ) {
+                let arena = generate_arena(ArenaSize::Default);
+                let max_range = 100.0;
+                let result = raycast_laser(
+                    25.0, 25.0, angle, &arena.walls, &[], 0, &[], max_range,
+                );
+                // Sum actual segment lengths
+                let actual_dist: f32 = result
+                    .segments
+                    .iter()
+                    .map(|&(sx, sz, ex, ez)| ((ex - sx).powi(2) + (ez - sz).powi(2)).sqrt())
+                    .sum();
+                prop_assert!(
+                    actual_dist <= max_range + 2.0,
+                    "Summed segment length ({actual_dist:.2}) exceeds max range ({max_range})"
+                );
+            }
         }
     }
 }

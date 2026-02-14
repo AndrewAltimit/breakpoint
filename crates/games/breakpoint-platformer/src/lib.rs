@@ -1109,4 +1109,249 @@ mod tests {
             player.grounded
         );
     }
+
+    // ================================================================
+    // P0-1: NaN/Inf/Degenerate Input Fuzzing
+    // ================================================================
+
+    // REGRESSION: NaN move_dir should not corrupt player position
+    #[test]
+    fn platformer_apply_input_nan_move_no_panic() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(120));
+
+        let input = PlatformerInput {
+            move_dir: f32::NAN,
+            jump: false,
+            use_powerup: false,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        // Should not panic on update
+        game.update(1.0 / 15.0, &empty_inputs());
+    }
+
+    // REGRESSION: Inf move_dir should not crash
+    #[test]
+    fn platformer_apply_input_inf_move_no_panic() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(120));
+
+        let input = PlatformerInput {
+            move_dir: f32::INFINITY,
+            jump: false,
+            use_powerup: false,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        game.update(1.0 / 15.0, &empty_inputs());
+    }
+
+    // ================================================================
+    // P1-1: Serialization Fuzzing
+    // ================================================================
+
+    // REGRESSION: Garbage input data should not panic
+    #[test]
+    fn platformer_apply_input_garbage_no_panic() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(120));
+
+        let garbage: Vec<u8> = vec![0xFF, 0xFE, 0x00, 0x01, 0xAB, 0xCD];
+        game.apply_input(1, &garbage);
+
+        // Player should be unchanged
+        assert!(
+            !game.state.players[&1].finished,
+            "Garbage input should not finish the player"
+        );
+    }
+
+    // REGRESSION: Truncated state data should not panic
+    #[test]
+    fn platformer_apply_state_truncated_no_panic() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(120));
+
+        let state = game.serialize_state();
+        let truncated = &state[..state.len() / 2];
+        game.apply_state(truncated);
+
+        // Game should still be functional
+        assert_eq!(game.state.players.len(), 1);
+    }
+
+    // ================================================================
+    // P1-2: State Machine Transition Tests
+    // ================================================================
+
+    #[test]
+    fn platformer_double_pause_single_resume_works() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(120));
+
+        game.pause();
+        game.pause();
+        game.resume();
+
+        let timer_before = game.state.round_timer;
+        game.update(1.0 / 15.0, &empty_inputs());
+
+        assert!(
+            game.state.round_timer > timer_before,
+            "Timer should advance after resume"
+        );
+    }
+
+    #[test]
+    fn platformer_update_after_round_complete_is_noop() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(120));
+
+        // Force round complete by finishing the player
+        game.state.players.get_mut(&1).unwrap().finished = true;
+        game.state.finish_order.push(1);
+        game.finished_set.insert(1);
+        game.update(1.0 / 15.0, &empty_inputs());
+        assert!(game.is_round_complete());
+
+        let timer = game.state.round_timer;
+        let events = game.update(1.0 / 15.0, &empty_inputs());
+        assert!(
+            (game.state.round_timer - timer).abs() < 0.01,
+            "Timer should not advance after round complete"
+        );
+        assert!(events.is_empty(), "No events after round complete");
+    }
+
+    // ================================================================
+    // P1-5: Platformer Edge Cases
+    // ================================================================
+
+    // REGRESSION: Checkpoint should not be lost when player moves backward
+    #[test]
+    fn checkpoint_not_lost_on_backward_movement() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(120));
+
+        // Move player forward past what would be a checkpoint
+        let _initial_checkpoint_x = game.state.players[&1].last_checkpoint_x;
+
+        // Manually set a checkpoint further ahead
+        game.state.players.get_mut(&1).unwrap().last_checkpoint_x = 50.0;
+        game.state.players.get_mut(&1).unwrap().last_checkpoint_y = 2.0;
+        let checkpoint_x = 50.0;
+
+        // Move backward
+        game.state.players.get_mut(&1).unwrap().x = 30.0;
+        game.state.players.get_mut(&1).unwrap().y = 2.0;
+
+        // Run a few ticks with leftward input
+        let input = PlatformerInput {
+            move_dir: -1.0,
+            jump: false,
+            use_powerup: false,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        for _ in 0..10 {
+            game.apply_input(1, &data);
+            game.update(1.0 / 15.0, &empty_inputs());
+        }
+
+        // Checkpoint should still be at 50.0
+        assert!(
+            game.state.players[&1].last_checkpoint_x >= checkpoint_x,
+            "Checkpoint should not regress: expected >= {checkpoint_x}, got {}",
+            game.state.players[&1].last_checkpoint_x
+        );
+    }
+
+    // REGRESSION: Magnet powerup should not crash (it's a stub)
+    #[test]
+    fn magnet_powerup_stub_no_crash() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(120));
+
+        // Give player a Magnet powerup
+        game.state
+            .active_powerups
+            .entry(1)
+            .or_default()
+            .push(ActivePowerUp::new(PowerUpKind::Magnet));
+
+        // Use powerup input
+        let input = PlatformerInput {
+            move_dir: 1.0,
+            jump: false,
+            use_powerup: true,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        // Should not panic
+        game.update(1.0 / 15.0, &empty_inputs());
+    }
+
+    // REGRESSION: Simultaneous finish should produce valid scores for both
+    #[test]
+    fn simultaneous_finish_produces_valid_scores() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(120));
+
+        // Both players finish on the same tick
+        game.state.players.get_mut(&1).unwrap().finished = true;
+        game.state.players.get_mut(&2).unwrap().finished = true;
+        game.state.finish_order.push(1);
+        game.state.finish_order.push(2);
+        game.finished_set.insert(1);
+        game.finished_set.insert(2);
+
+        game.update(1.0 / 15.0, &empty_inputs());
+        assert!(game.is_round_complete());
+
+        let results = game.round_results();
+        assert_eq!(results.len(), 2, "Both players should have results");
+        for result in &results {
+            assert!(
+                result.score >= 0,
+                "Player {} should have non-negative score, got {}",
+                result.player_id,
+                result.score
+            );
+        }
+        // First finisher should score higher
+        let p1_score = results.iter().find(|r| r.player_id == 1).unwrap().score;
+        let p2_score = results.iter().find(|r| r.player_id == 2).unwrap().score;
+        assert!(
+            p1_score >= p2_score,
+            "First finisher should score >= second: p1={p1_score}, p2={p2_score}"
+        );
+    }
+
+    // P1-5: Course always has reachable finish for multiple seeds
+    #[test]
+    fn course_always_has_finish_tile() {
+        for seed in 0..10 {
+            let course = generate_course(seed);
+            let has_finish = course
+                .tiles
+                .iter()
+                .any(|t| matches!(t, course_gen::Tile::Finish));
+            assert!(
+                has_finish,
+                "Course with seed {seed} should have at least one Finish tile"
+            );
+        }
+    }
 }

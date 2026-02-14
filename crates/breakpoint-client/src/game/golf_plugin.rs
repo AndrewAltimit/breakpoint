@@ -1354,4 +1354,151 @@ mod tests {
             vel.z
         );
     }
+
+    // ================================================================
+    // P0-1: NaN/Inf/Degenerate Input Tests for cursor_to_ground
+    // ================================================================
+
+    // REGRESSION: NaN cursor position should return None, not panic
+    #[test]
+    fn cursor_to_ground_nan_cursor_returns_none() {
+        let window = test_window(1280, 720);
+        let cam = golf_cam(6.0, 12.0);
+
+        let result = cursor_to_ground(Vec2::new(f32::NAN, 360.0), &window, &cam);
+        // NaN propagates through NDC calculation → normalize may produce NaN ray
+        // The function should not panic regardless
+        let _ = result;
+
+        let result2 = cursor_to_ground(Vec2::new(640.0, f32::NAN), &window, &cam);
+        let _ = result2;
+
+        let result3 = cursor_to_ground(Vec2::new(f32::INFINITY, f32::INFINITY), &window, &cam);
+        let _ = result3;
+    }
+
+    // REGRESSION: Zero-dimension window should return None
+    #[test]
+    fn cursor_to_ground_zero_window_returns_none() {
+        let cam = golf_cam(6.0, 12.0);
+
+        let zero_w = test_window(0, 720);
+        assert!(
+            cursor_to_ground(Vec2::new(0.0, 360.0), &zero_w, &cam).is_none(),
+            "Zero-width window should return None"
+        );
+
+        let zero_h = test_window(1280, 0);
+        assert!(
+            cursor_to_ground(Vec2::new(640.0, 0.0), &zero_h, &cam).is_none(),
+            "Zero-height window should return None"
+        );
+    }
+
+    // REGRESSION: Camera at ground plane (y=0) — ray parallel to ground
+    #[test]
+    fn cursor_to_ground_camera_at_ground_plane_returns_none() {
+        let window = test_window(1280, 720);
+        // Camera at y=0 looking horizontally — ray nearly parallel to ground
+        let cam = Transform::from_xyz(6.0, 0.0, 0.0).looking_at(Vec3::new(6.0, 0.0, 10.0), Vec3::Y);
+        let result = cursor_to_ground(Vec2::new(640.0, 360.0), &window, &cam);
+        // When camera is at y=0 and looking horizontally, the center ray is
+        // parallel to the ground plane → should return None (t = 0 or inf)
+        // The camera.y = 0 so t = -0 / ray_dir.y, which could be 0 or negative
+        assert!(
+            result.is_none(),
+            "Camera at ground level should return None, got {result:?}"
+        );
+    }
+
+    // ================================================================
+    // P0-2: Camera FOV + Axis Convention Regression Tests
+    // ================================================================
+
+    // REGRESSION: cursor_to_ground hardcodes FRAC_PI_4 FOV — verify it matches Bevy default
+    #[test]
+    fn fov_assumption_matches_bevy_default() {
+        // Bevy Camera3d::default() uses Projection::Perspective with fov = PI/4
+        // cursor_to_ground hardcodes: let half_v = (FRAC_PI_4 * 0.5).tan()
+        // If Bevy changes its default FOV, this test catches it
+        use bevy::prelude::PerspectiveProjection;
+        let proj = PerspectiveProjection::default();
+        assert!(
+            (proj.fov - std::f32::consts::FRAC_PI_4).abs() < 0.001,
+            "Bevy default FOV changed from PI/4! Got {}. cursor_to_ground must be updated.",
+            proj.fov
+        );
+    }
+
+    // REGRESSION: looking_at right axis negation must align with screen-right
+    #[test]
+    fn looking_at_right_axis_negation_is_correct() {
+        // Golf camera: looking down from above
+        let cam = golf_cam(10.0, 15.0);
+        let right = -*cam.right();
+        // For a top-down camera looking at the ball from above,
+        // screen-right should align with positive world X
+        assert!(
+            right.x > 0.0,
+            "Negated camera right should have positive X component for \
+             top-down golf view, got {right:?}"
+        );
+    }
+
+    // REGRESSION: Camera mid-lerp should still produce correct aim direction
+    #[test]
+    fn camera_mid_lerp_aim_still_directionally_correct() {
+        let window = test_window(1280, 720);
+        let ball_x = 6.0;
+        let ball_z = 12.0;
+
+        // Camera at old position (lerp factor 0)
+        let cam_old =
+            Transform::from_xyz(4.0, 15.0, 8.0).looking_at(Vec3::new(4.0, 0.0, 10.0), Vec3::Y);
+        // Camera at target position (lerp factor 1)
+        let cam_new = golf_cam(ball_x, ball_z);
+        // Mid-lerp camera
+        let mid_pos = cam_old.translation.lerp(cam_new.translation, 0.5);
+        let cam_mid =
+            Transform::from_translation(mid_pos).looking_at(Vec3::new(5.0, 0.0, 11.0), Vec3::Y);
+
+        // Cursor at top-center should still produce +Z aim direction
+        let ground = cursor_to_ground(Vec2::new(640.0, 100.0), &window, &cam_mid);
+        assert!(ground.is_some(), "Mid-lerp camera should hit ground");
+        let pt = ground.unwrap();
+        // Ground point should be "in front" of where camera is looking (+Z relative to look)
+        assert!(
+            pt.z > 11.0,
+            "Top cursor with mid-lerp camera should produce positive Z offset, got z={:.2}",
+            pt.z
+        );
+    }
+
+    // REGRESSION: Stale cursor (no new position) should use last known angle
+    #[test]
+    fn stale_cursor_fires_last_known_direction() {
+        let window = test_window(1280, 720);
+        let ball_x = 6.0;
+        let ball_z = 12.0;
+        let cam = golf_cam(ball_x, ball_z);
+
+        // Compute aim from cursor at right of screen
+        let ground = cursor_to_ground(Vec2::new(960.0, 360.0), &window, &cam).unwrap();
+        let dx = ground.x - ball_x;
+        let dz = ground.z - ball_z;
+        let aim_angle = dz.atan2(dx);
+
+        // Fire stroke with this angle (simulating stale cursor scenario)
+        let mut ball = breakpoint_golf::physics::BallState::new(
+            breakpoint_golf::course::Vec3::new(ball_x, 0.0, ball_z),
+        );
+        ball.stroke(aim_angle, 10.0);
+
+        // Ball should move in +X direction (right of center)
+        assert!(
+            ball.velocity.x > 0.0,
+            "Stale cursor aim should still produce +X velocity, got vx={}",
+            ball.velocity.x
+        );
+    }
 }

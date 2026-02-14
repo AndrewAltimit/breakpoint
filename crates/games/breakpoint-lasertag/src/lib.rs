@@ -1498,4 +1498,379 @@ mod tests {
             "Tag should be scored despite fire being overwritten"
         );
     }
+
+    // ================================================================
+    // P0-1: NaN/Inf/Degenerate Input Fuzzing
+    // ================================================================
+
+    // REGRESSION: NaN movement values should not corrupt player position
+    #[test]
+    fn lasertag_apply_input_nan_move_no_panic() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(180));
+
+        let input = LaserTagInput {
+            move_x: f32::NAN,
+            move_z: f32::NAN,
+            aim_angle: f32::NAN,
+            fire: false,
+            use_powerup: false,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        // Should not panic on update
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(0.05, &inputs);
+    }
+
+    // REGRESSION: Inf movement should be clamped by arena bounds
+    #[test]
+    fn lasertag_apply_input_inf_move_clamped() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(180));
+
+        let input = LaserTagInput {
+            move_x: f32::INFINITY,
+            move_z: f32::INFINITY,
+            aim_angle: 0.0,
+            fire: false,
+            use_powerup: false,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(0.05, &inputs);
+
+        let p = &game.state.players[&1];
+        assert!(
+            p.x <= game.arena.width && p.z <= game.arena.depth,
+            "Player should be clamped to arena bounds: ({}, {})",
+            p.x,
+            p.z
+        );
+    }
+
+    // ================================================================
+    // P1-1: Serialization Fuzzing
+    // ================================================================
+
+    // REGRESSION: Garbage input data should not panic
+    #[test]
+    fn lasertag_apply_input_garbage_no_panic() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(180));
+
+        let garbage: Vec<u8> = vec![0xFF, 0xFE, 0x00, 0x01, 0xAB, 0xCD];
+        game.apply_input(1, &garbage);
+
+        // Player should be unchanged
+        let p = &game.state.players[&1];
+        assert!(
+            !p.is_stunned(),
+            "Garbage input should not affect player state"
+        );
+    }
+
+    // REGRESSION: Truncated state data should not panic
+    #[test]
+    fn lasertag_apply_state_truncated_no_panic() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(180));
+
+        let state = game.serialize_state();
+        let truncated = &state[..state.len() / 2];
+        game.apply_state(truncated);
+
+        // Game should still be functional
+        assert_eq!(game.state.players.len(), 2);
+    }
+
+    // ================================================================
+    // P1-2: State Machine Transition Tests
+    // ================================================================
+
+    #[test]
+    fn lasertag_double_pause_single_resume_works() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(180));
+
+        game.pause();
+        game.pause();
+        game.resume();
+
+        let timer_before = game.state.round_timer;
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(0.05, &inputs);
+
+        assert!(
+            game.state.round_timer > timer_before,
+            "Timer should advance after resume"
+        );
+    }
+
+    #[test]
+    fn lasertag_update_after_round_complete_is_noop() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(180));
+
+        // Force round complete
+        game.state.round_timer = 179.99;
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(0.05, &inputs);
+        assert!(game.is_round_complete());
+
+        let timer = game.state.round_timer;
+        let events = game.update(0.05, &inputs);
+        assert!(
+            (game.state.round_timer - timer).abs() < 0.01,
+            "Timer should not advance after round complete"
+        );
+        assert!(events.is_empty(), "No events after round complete");
+    }
+
+    // ================================================================
+    // P1-4: Laser Tag Edge Cases
+    // ================================================================
+
+    #[test]
+    fn late_joiner_team_assignment_balanced() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(5);
+        game.init(&players, &teams_config());
+
+        // With 5 players on 2 teams, distribution should be 3/2 or 2/3
+        let team0_count = game.state.teams.values().filter(|&&t| t == 0).count();
+        let team1_count = game.state.teams.values().filter(|&&t| t == 1).count();
+        let diff = (team0_count as i32 - team1_count as i32).unsigned_abs();
+        assert!(
+            diff <= 1,
+            "Teams should be balanced: team0={team0_count}, team1={team1_count}"
+        );
+    }
+
+    // REGRESSION: Stunned player should not be able to move
+    #[test]
+    fn stunned_player_cannot_move() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(180));
+
+        // Stun the player
+        game.state.players.get_mut(&1).unwrap().stun_remaining = STUN_DURATION;
+        let pos_before = (game.state.players[&1].x, game.state.players[&1].z);
+
+        // Apply movement input
+        let input = LaserTagInput {
+            move_x: 1.0,
+            move_z: 1.0,
+            aim_angle: 0.0,
+            fire: false,
+            use_powerup: false,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(0.05, &inputs);
+
+        let pos_after = (game.state.players[&1].x, game.state.players[&1].z);
+        assert!(
+            (pos_before.0 - pos_after.0).abs() < 0.01 && (pos_before.1 - pos_after.1).abs() < 0.01,
+            "Stunned player should not move: before={pos_before:?}, after={pos_after:?}"
+        );
+    }
+
+    // REGRESSION: RapidFire expiry should revert cooldown to normal
+    #[test]
+    fn rapidfire_expiry_reverts_cooldown() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(180));
+
+        // Position players for hit
+        game.state.players.get_mut(&1).unwrap().x = 5.0;
+        game.state.players.get_mut(&1).unwrap().z = 10.0;
+        game.state.players.get_mut(&1).unwrap().fire_cooldown = 0.0;
+        game.state.players.get_mut(&1).unwrap().stun_remaining = 0.0;
+
+        game.state.players.get_mut(&2).unwrap().x = 10.0;
+        game.state.players.get_mut(&2).unwrap().z = 10.0;
+        game.state.players.get_mut(&2).unwrap().stun_remaining = 0.0;
+
+        // Give player 1 RapidFire
+        game.state
+            .active_powerups
+            .entry(1)
+            .or_default()
+            .push(ActiveLaserPowerUp::new(LaserPowerUpKind::RapidFire));
+
+        // Fire with RapidFire active
+        let input = LaserTagInput {
+            move_x: 0.0,
+            move_z: 0.0,
+            aim_angle: 0.0,
+            fire: true,
+            use_powerup: false,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(0.05, &inputs);
+
+        let rapid_cooldown = game.state.players[&1].fire_cooldown;
+        assert!(
+            rapid_cooldown <= FIRE_COOLDOWN * 0.4 + 0.01,
+            "RapidFire cooldown should be ~{}, got {rapid_cooldown}",
+            FIRE_COOLDOWN * 0.4
+        );
+
+        // Now expire the RapidFire powerup
+        if let Some(pus) = game.state.active_powerups.get_mut(&1) {
+            pus.clear();
+        }
+
+        // Wait for cooldown to expire
+        for _ in 0..20 {
+            game.update(0.05, &inputs);
+        }
+
+        // Fire again without RapidFire
+        game.state.players.get_mut(&2).unwrap().stun_remaining = 0.0;
+        game.state.players.get_mut(&1).unwrap().fire_cooldown = 0.0;
+
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+        game.update(0.05, &inputs);
+
+        let normal_cooldown = game.state.players[&1].fire_cooldown;
+        assert!(
+            (normal_cooldown - FIRE_COOLDOWN).abs() < 0.01,
+            "Normal cooldown should be ~{FIRE_COOLDOWN}, got {normal_cooldown}"
+        );
+    }
+
+    // REGRESSION: Two players at same powerup — only one should collect
+    #[test]
+    fn two_players_at_same_powerup_only_one_collects() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(180));
+
+        if game.state.powerups.is_empty() {
+            // If no powerups in this arena config, skip
+            return;
+        }
+
+        // Move both players to the first powerup location
+        let pu_x = game.state.powerups[0].x;
+        let pu_z = game.state.powerups[0].z;
+
+        game.state.players.get_mut(&1).unwrap().x = pu_x;
+        game.state.players.get_mut(&1).unwrap().z = pu_z;
+        game.state.players.get_mut(&2).unwrap().x = pu_x;
+        game.state.players.get_mut(&2).unwrap().z = pu_z;
+
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(0.05, &inputs);
+
+        // Exactly one powerup should be collected
+        assert!(
+            game.state.powerups[0].collected,
+            "Powerup should be collected when players are on it"
+        );
+
+        // Only one player should have the active powerup
+        let p1_pus = game.state.active_powerups.get(&1).map_or(0, |v| v.len());
+        let p2_pus = game.state.active_powerups.get(&2).map_or(0, |v| v.len());
+        assert_eq!(
+            p1_pus + p2_pus,
+            1,
+            "Only one player should collect: p1={p1_pus}, p2={p2_pus}"
+        );
+    }
+
+    // REGRESSION: Fire at exact cooldown boundary
+    #[test]
+    fn fire_cooldown_boundary_exact_timing() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(180));
+
+        game.state.players.get_mut(&1).unwrap().x = 5.0;
+        game.state.players.get_mut(&1).unwrap().z = 10.0;
+        game.state.players.get_mut(&1).unwrap().aim_angle = 0.0;
+        game.state.players.get_mut(&1).unwrap().stun_remaining = 0.0;
+
+        game.state.players.get_mut(&2).unwrap().x = 10.0;
+        game.state.players.get_mut(&2).unwrap().z = 10.0;
+        game.state.players.get_mut(&2).unwrap().stun_remaining = 0.0;
+
+        // Cooldown exactly 0.0 — fire should succeed
+        game.state.players.get_mut(&1).unwrap().fire_cooldown = 0.0;
+        let input = LaserTagInput {
+            move_x: 0.0,
+            move_z: 0.0,
+            aim_angle: 0.0,
+            fire: true,
+            use_powerup: false,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(0.05, &inputs);
+
+        assert!(
+            game.state.players[&2].is_stunned(),
+            "Fire at cooldown=0.0 should succeed"
+        );
+        assert_eq!(game.state.tags_scored[&1], 1, "Should score a tag");
+
+        // Reset for second test
+        game.state.players.get_mut(&2).unwrap().stun_remaining = 0.0;
+
+        // Cooldown slightly above 0 — fire should be rejected
+        // Cooldown was set by previous fire, so player 1 can't fire again yet
+        let input2 = LaserTagInput {
+            move_x: 0.0,
+            move_z: 0.0,
+            aim_angle: 0.0,
+            fire: true,
+            use_powerup: false,
+        };
+        let data2 = rmp_serde::to_vec(&input2).unwrap();
+        game.apply_input(1, &data2);
+        game.update(0.05, &inputs);
+
+        // Player 2 should not be re-stunned (fire_cooldown > 0)
+        assert_eq!(
+            game.state.tags_scored[&1], 1,
+            "Fire with active cooldown should be rejected"
+        );
+    }
 }

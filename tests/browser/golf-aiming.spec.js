@@ -361,4 +361,74 @@ test.describe('Golf Aiming Direction (mouse-driven)', () => {
 
     p2.ws.close();
   });
+
+  // P2-3: cursor-left → ball moves -X
+  test('cursor left of canvas strokes ball -X', async ({ page }) => {
+    const result = await startGolfGame(page);
+    if (!result) { test.skip(); return; }
+    const { canvas, box, p2, hostPlayerId } = result;
+
+    const initialGolf = getLatestGolfState(p2);
+    const initialBall = initialGolf?.balls?.[hostPlayerId];
+    const initialX = initialBall ? initialBall[0][0] : 0;
+    console.log(`Host initial ball X: ${initialX}`);
+
+    // Move mouse to left 20% of canvas (-X in world)
+    const absX = box.x + box.width * 0.2;
+    const absY = box.y + box.height * 0.5;
+    await page.mouse.move(absX, absY);
+    await page.waitForTimeout(500);
+
+    await page.mouse.down();
+    await page.waitForTimeout(1200);
+    await page.mouse.up();
+
+    await page.waitForTimeout(4000);
+
+    const afterGolf = getLatestGolfState(p2);
+    const afterBall = afterGolf?.balls?.[hostPlayerId];
+    if (afterBall) {
+      const afterX = afterBall[0][0];
+      const dx = afterX - initialX;
+      console.log(`Host ball X after left-aim stroke: ${afterX} (dx=${dx.toFixed(3)})`);
+      expect(dx).toBeLessThan(0);
+    }
+
+    p2.ws.close();
+  });
+
+  // P2-3: cursor-bottom → ball moves -Z
+  test('cursor bottom of canvas strokes ball -Z', async ({ page }) => {
+    const result = await startGolfGame(page);
+    if (!result) { test.skip(); return; }
+    const { canvas, box, p2, hostPlayerId } = result;
+
+    const initialGolf = getLatestGolfState(p2);
+    const initialBall = initialGolf?.balls?.[hostPlayerId];
+    const initialZ = initialBall ? initialBall[0][2] : 0;
+    console.log(`Host initial ball Z: ${initialZ}`);
+
+    // Move mouse to bottom 80% of canvas (closer to camera = -Z in world)
+    const absX = box.x + box.width * 0.5;
+    const absY = box.y + box.height * 0.8;
+    await page.mouse.move(absX, absY);
+    await page.waitForTimeout(500);
+
+    await page.mouse.down();
+    await page.waitForTimeout(1200);
+    await page.mouse.up();
+
+    await page.waitForTimeout(4000);
+
+    const afterGolf = getLatestGolfState(p2);
+    const afterBall = afterGolf?.balls?.[hostPlayerId];
+    if (afterBall) {
+      const afterZ = afterBall[0][2];
+      const dz = afterZ - initialZ;
+      console.log(`Host ball Z after bottom-aim stroke: ${afterZ} (dz=${dz.toFixed(3)})`);
+      expect(dz).toBeLessThan(0);
+    }
+
+    p2.ws.close();
+  });
 });
