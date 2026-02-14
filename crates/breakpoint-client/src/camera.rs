@@ -9,7 +9,8 @@ use crate::game::ActiveGame;
 
 #[cfg(feature = "golf")]
 use crate::game::golf_plugin::GolfCourseInfo;
-#[cfg(feature = "golf")]
+// NetworkRole and read_game_state needed for golf ball-follow and platformer player-follow cameras
+#[cfg(any(feature = "golf", feature = "platformer"))]
 use crate::game::{NetworkRole, read_game_state};
 
 pub struct GameCameraPlugin;
@@ -35,8 +36,9 @@ impl Plugin for GameCameraPlugin {
 pub struct GameCamera;
 
 /// Marker to distinguish the light entity from the camera entity.
+/// Public so game plugins can exclude it from camera queries.
 #[derive(Component)]
-struct GameLight;
+pub struct GameLight;
 
 /// Marker to track cleanup needed when returning to lobby.
 #[derive(Resource)]
@@ -87,20 +89,48 @@ fn update_camera(
     mut camera_query: Query<&mut Transform, (With<GameCamera>, Without<GameLight>)>,
     screen_shake: Option<Res<ScreenShake>>,
     #[cfg(feature = "golf")] course_info: Option<Res<GolfCourseInfo>>,
-    #[cfg(feature = "golf")] network_role: Option<Res<NetworkRole>>,
-    #[cfg(feature = "golf")] time: Res<Time>,
+    #[cfg(any(feature = "golf", feature = "platformer"))] network_role: Option<Res<NetworkRole>>,
+    #[cfg(any(feature = "golf", feature = "platformer"))] time: Res<Time>,
 ) {
     let Some(game) = game else {
         return;
     };
 
     match game.game_id {
+        #[cfg(feature = "platformer")]
         GameId::Platformer => {
-            for mut transform in &mut camera_query {
-                *transform = Transform::from_xyz(50.0, 15.0, -30.0)
-                    .looking_at(Vec3::new(50.0, 10.0, 0.0), Vec3::Y);
+            // Follow the local player (side-view: XY plane at Z=0, camera at Z<0).
+            let player_pos = network_role.as_ref().and_then(|role| {
+                let state: Option<breakpoint_platformer::PlatformerState> =
+                    read_game_state(&game);
+                state.and_then(|s| {
+                    s.players
+                        .get(&role.local_player_id)
+                        .map(|p| Vec2::new(p.x, p.y))
+                })
+            });
+
+            if let Some(pos) = player_pos {
+                let camera_z = -25.0;
+                let look_y_offset = 3.0;
+                let target = Vec3::new(pos.x, pos.y + look_y_offset, camera_z);
+                let look_at = Vec3::new(pos.x, pos.y + look_y_offset, 0.0);
+
+                let lerp_factor = (5.0 * time.delta_secs()).min(1.0);
+                for mut transform in &mut camera_query {
+                    transform.translation = transform.translation.lerp(target, lerp_factor);
+                    *transform = transform.looking_at(look_at, Vec3::Y);
+                }
+            } else {
+                // Fallback: fixed overview while state isn't ready
+                for mut transform in &mut camera_query {
+                    *transform = Transform::from_xyz(10.0, 10.0, -25.0)
+                        .looking_at(Vec3::new(10.0, 10.0, 0.0), Vec3::Y);
+                }
             }
         },
+        #[cfg(not(feature = "platformer"))]
+        GameId::Platformer => {},
         GameId::LaserTag => {
             for mut transform in &mut camera_query {
                 *transform = Transform::from_xyz(25.0, 40.0, 25.0)

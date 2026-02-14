@@ -228,6 +228,15 @@ fn setup_lasertag(
         HudPosition::TopLeft,
     );
 
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(
+        &format!(
+            "BREAKPOINT:SETUP_LASERTAG arena={}x{} local_pid={}",
+            arena.width, arena.depth, local_pid
+        )
+        .into(),
+    );
+
     // Controls hint (bottom-left, auto-dismiss)
     commands.spawn((
         GameEntity,
@@ -252,7 +261,7 @@ fn lasertag_input_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window>,
-    cameras: Query<&Transform, With<crate::camera::GameCamera>>,
+    cameras: Query<&Transform, (With<crate::camera::GameCamera>, Without<crate::camera::GameLight>)>,
     mut local_input: ResMut<LaserTagLocalInput>,
     mut active_game: ResMut<ActiveGame>,
     network_role: Res<NetworkRole>,

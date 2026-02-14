@@ -44,6 +44,23 @@ pub fn send_player_input(
     ws_client: &WsClient,
 ) {
     if let Ok(data) = rmp_serde::to_vec(input) {
+        #[cfg(target_arch = "wasm32")]
+        if active_game.tick <= 10 {
+            let path = if network_role.is_host {
+                "host-direct"
+            } else {
+                "ws-send"
+            };
+            web_sys::console::log_1(
+                &format!(
+                    "BREAKPOINT:INPUT tick={} path={path} bytes={}",
+                    active_game.tick,
+                    data.len()
+                )
+                .into(),
+            );
+        }
+
         if network_role.is_host {
             active_game
                 .game
@@ -283,6 +300,17 @@ fn setup_game(
     let is_host = lobby.is_host;
     let local_player_id = lobby.local_player_id.unwrap_or(0);
 
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(
+        &format!(
+            "BREAKPOINT:SETUP_GAME game={game_id} is_host={is_host} local_pid={local_player_id} \
+             players={} spectator={}",
+            lobby.players.len(),
+            lobby.is_spectator
+        )
+        .into(),
+    );
+
     commands.insert_resource(ActiveGame {
         game,
         game_id,
@@ -322,6 +350,17 @@ fn game_tick_system(
             inputs: HashMap::new(),
         };
         active_game.game.update(tick_interval, &inputs);
+
+        #[cfg(target_arch = "wasm32")]
+        if active_game.tick <= 5 {
+            web_sys::console::log_1(
+                &format!(
+                    "BREAKPOINT:TICK #{} dt={tick_interval:.4}",
+                    active_game.tick
+                )
+                .into(),
+            );
+        }
     }
     active_game.interp_alpha = active_game.tick_accumulator / tick_interval;
 

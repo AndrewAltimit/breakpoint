@@ -9,7 +9,7 @@ use breakpoint_golf::physics::{BALL_RADIUS, HOLE_RADIUS};
 use breakpoint_golf::{GolfInput, GolfState, MiniGolf};
 
 use crate::app::AppState;
-use crate::camera::GameCamera;
+use crate::camera::{GameCamera, GameLight};
 use crate::effects::particles::{sink_particle_update_system, spawn_sink_particles};
 use crate::effects::squash_stretch::{
     BallVelocityTracker, bounce_detect_system, squash_stretch_animate_system,
@@ -543,6 +543,15 @@ fn setup_golf(
         },
     ));
 
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(
+        &format!(
+            "BREAKPOINT:SETUP_GOLF hole={} course={} local_pid={}",
+            course_index, course_data.name, local_player_id
+        )
+        .into(),
+    );
+
     // Controls hint (bottom-left, auto-dismiss)
     commands.spawn((
         GameEntity,
@@ -565,7 +574,7 @@ fn setup_golf(
 /// Gather mouse input and populate GolfLocalInput (no network or game mutation).
 fn golf_input_system(
     windows: Query<&Window>,
-    cameras: Query<&Transform, With<GameCamera>>,
+    cameras: Query<&Transform, (With<GameCamera>, Without<GameLight>)>,
     mut local_input: ResMut<GolfLocalInput>,
     active_game: Res<ActiveGame>,
     network_role: Res<NetworkRole>,

@@ -203,6 +203,15 @@ fn setup_platformer(
         HudPosition::TopRight,
     );
 
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::log_1(
+        &format!(
+            "BREAKPOINT:SETUP_PLATFORMER course={}x{} local_pid={}",
+            course.width, course.height, local_pid
+        )
+        .into(),
+    );
+
     // Controls hint (bottom-left, auto-dismiss)
     commands.spawn((
         GameEntity,
