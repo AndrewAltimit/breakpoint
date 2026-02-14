@@ -572,6 +572,8 @@ fn golf_input_system(
 }
 
 /// Apply golf input: host applies directly, non-host sends via WS.
+/// Only fires when the local player's ball is stopped — prevents misleading
+/// audio feedback and wasted network messages while the ball is in motion.
 fn golf_apply_input_system(
     mut local_input: ResMut<GolfLocalInput>,
     mut active_game: ResMut<ActiveGame>,
@@ -580,6 +582,22 @@ fn golf_apply_input_system(
     mut audio_queue: ResMut<crate::audio::AudioEventQueue>,
 ) {
     if !local_input.stroke_requested || network_role.is_spectator {
+        return;
+    }
+
+    // Check if ball is actually ready for a stroke before sending input.
+    // The game engine also checks this, but checking here lets us gate audio
+    // feedback accurately — no sound when the ball is still rolling.
+    let state: Option<GolfState> = read_game_state(&active_game);
+    let can_stroke = state.as_ref().is_some_and(|s| {
+        s.balls
+            .get(&network_role.local_player_id)
+            .is_some_and(|b| b.is_stopped() && !b.is_sunk)
+    });
+
+    if !can_stroke {
+        local_input.stroke_requested = false;
+        local_input.power = 0.0;
         return;
     }
 
@@ -649,8 +667,26 @@ fn aim_line_system(
 
 fn power_bar_system(
     local_input: Res<GolfLocalInput>,
+    active_game: Res<ActiveGame>,
+    network_role: Res<NetworkRole>,
     mut fill_query: Query<(&mut Node, &mut BackgroundColor), With<PowerBarFill>>,
+    mut label_query: Query<&mut Text, With<PowerBarLabel>>,
 ) {
+    // Update label to show ball status
+    let state: Option<GolfState> = read_game_state(&active_game);
+    let ball_stopped = state.as_ref().is_some_and(|s| {
+        s.balls
+            .get(&network_role.local_player_id)
+            .is_some_and(|b| b.is_stopped() && !b.is_sunk)
+    });
+    if let Ok(mut label) = label_query.single_mut() {
+        **label = if ball_stopped {
+            "POWER".to_string()
+        } else {
+            "Ball in motion...".to_string()
+        };
+    }
+
     if let Ok((mut node, mut bg)) = fill_query.single_mut() {
         node.width = Val::Percent(local_input.power * 100.0);
         // Gradient: green → yellow → red

@@ -5,11 +5,12 @@ pub const BALL_RADIUS: f32 = 0.3;
 /// Hole radius — ball sinks when center is within this distance.
 pub const HOLE_RADIUS: f32 = 0.6;
 /// Friction multiplier per tick (velocity *= FRICTION each tick).
-pub const FRICTION: f32 = 0.985;
+/// At 10 Hz with 0.95 friction, a min-power ball stops in ~7s, max-power in ~12s.
+pub const FRICTION: f32 = 0.95;
 /// Maximum power a stroke can impart.
 pub const MAX_POWER: f32 = 25.0;
 /// Minimum velocity magnitude; below this the ball is considered stopped.
-pub const MIN_VELOCITY: f32 = 0.05;
+pub const MIN_VELOCITY: f32 = 0.1;
 /// Physics substeps per tick for more accurate collision detection.
 const SUBSTEPS: u32 = 4;
 
