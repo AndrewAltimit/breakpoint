@@ -181,6 +181,11 @@ pub struct ActiveGame {
     pub game_id: GameId,
     pub tick: u32,
     pub tick_accumulator: f32,
+    /// Previous serialized state (for client-side interpolation).
+    /// Game plugins can use this to lerp positions between updates.
+    pub prev_state: Option<Vec<u8>>,
+    /// Fraction [0..1] of progress toward next tick (for smooth rendering).
+    pub interp_alpha: f32,
 }
 
 /// Network role for this client.
@@ -241,6 +246,16 @@ fn setup_game(
         return;
     }
 
+    // Validate we have enough state to start — spectators joining mid-game
+    // may not have full lobby data yet.
+    if lobby.players.is_empty() && lobby.is_spectator {
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::warn_1(
+            &"Spectator join: no player data yet, deferring game setup".into(),
+        );
+        return;
+    }
+
     let game_id = lobby.selected_game;
     let mut game = match registry.create(game_id) {
         Some(g) => g,
@@ -273,6 +288,8 @@ fn setup_game(
         game_id,
         tick: 0,
         tick_accumulator: 0.0,
+        prev_state: None,
+        interp_alpha: 0.0,
     });
     commands.insert_resource(NetworkRole {
         is_host,
@@ -306,6 +323,7 @@ fn game_tick_system(
         };
         active_game.game.update(tick_interval, &inputs);
     }
+    active_game.interp_alpha = active_game.tick_accumulator / tick_interval;
 
     // Check round completion
     if active_game.game.is_round_complete() {
@@ -400,8 +418,11 @@ fn client_receive_system(
                 if let Ok(breakpoint_core::net::messages::ServerMessage::GameState(gs)) =
                     decode_server_message(&data)
                 {
+                    // Store previous state for interpolation
+                    active_game.prev_state = Some(active_game.game.serialize_state());
                     active_game.game.apply_state(&gs.state_data);
                     active_game.tick = gs.tick;
+                    active_game.interp_alpha = 0.0;
                 }
             },
             MessageType::RoundEnd => {

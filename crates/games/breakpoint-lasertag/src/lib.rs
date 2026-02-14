@@ -721,9 +721,18 @@ mod tests {
 
         // ScoreUpdate event should be emitted
         let has_score_event = events.iter().any(|e| {
-            matches!(e, GameEvent::ScoreUpdate { player_id: 1, score: 1 })
+            matches!(
+                e,
+                GameEvent::ScoreUpdate {
+                    player_id: 1,
+                    score: 1
+                }
+            )
         });
-        assert!(has_score_event, "ScoreUpdate event should be emitted for tag");
+        assert!(
+            has_score_event,
+            "ScoreUpdate event should be emitted for tag"
+        );
     }
 
     #[test]

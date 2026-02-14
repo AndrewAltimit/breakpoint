@@ -252,8 +252,7 @@ fn between_rounds_network(
 
         match msg {
             breakpoint_core::net::messages::ServerMessage::GameStart(gs) => {
-                lobby.selected_game =
-                    GameId::from_str_opt(&gs.game_name).unwrap_or_default();
+                lobby.selected_game = GameId::from_str_opt(&gs.game_name).unwrap_or_default();
                 // Promote spectators: check if our player is active in the new round
                 if network_role.is_spectator {
                     let is_active = gs

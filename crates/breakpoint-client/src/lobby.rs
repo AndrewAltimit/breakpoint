@@ -358,7 +358,12 @@ fn setup_lobby(mut commands: Commands, mut lobby: ResMut<LobbyState>) {
         });
 }
 
-fn spawn_game_button(parent: &mut ChildSpawnerCommands, label: &str, game_id: GameId, color: Color) {
+fn spawn_game_button(
+    parent: &mut ChildSpawnerCommands,
+    label: &str,
+    game_id: GameId,
+    color: Color,
+) {
     parent
         .spawn((
             GameSelectButton(game_id),
@@ -683,8 +688,7 @@ fn lobby_network_system(
                 }
             },
             breakpoint_core::net::messages::ServerMessage::GameStart(gs) => {
-                lobby.selected_game =
-                    GameId::from_str_opt(&gs.game_name).unwrap_or_default();
+                lobby.selected_game = GameId::from_str_opt(&gs.game_name).unwrap_or_default();
                 next_state.set(AppState::InGame);
             },
             breakpoint_core::net::messages::ServerMessage::AlertEvent(ae) => {

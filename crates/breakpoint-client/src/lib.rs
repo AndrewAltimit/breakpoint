@@ -23,7 +23,7 @@ use effects::EffectsPlugin;
 use game::GamePlugin;
 use game_over::GameOverPlugin;
 use lobby::LobbyPlugin;
-use net_client::WsClient;
+use net_client::{ConnectionStatusPlugin, WsClient};
 use overlay::OverlayPlugin;
 use settings::SettingsPlugin;
 use shaders::ShadersPlugin;
@@ -57,6 +57,7 @@ pub fn start() {
             OverlayPlugin,
             AudioPlugin,
             SettingsPlugin,
+            ConnectionStatusPlugin,
         ))
         .run();
 }

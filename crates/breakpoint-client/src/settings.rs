@@ -13,7 +13,7 @@ impl Plugin for SettingsPlugin {
             .insert_resource(PlayerPrefs(OverlayPlayerPrefs::default()))
             .add_systems(OnEnter(AppState::Lobby), load_player_prefs)
             .add_systems(Update, settings_toggle.run_if(in_state(AppState::Lobby)))
-            .add_systems(Update, settings_ui_system);
+            .add_systems(Update, (settings_ui_system, settings_flash_system));
     }
 }
 
@@ -21,14 +21,22 @@ impl Plugin for SettingsPlugin {
 #[derive(Resource)]
 pub struct PlayerPrefs(pub OverlayPlayerPrefs);
 
-/// Tracks whether the settings panel is visible.
+/// Tracks whether the settings panel is visible and save feedback.
 #[derive(Resource, Default)]
 struct SettingsState {
     visible: bool,
+    /// Countdown timer for "Saved!" flash message.
+    save_flash_timer: f32,
 }
 
 #[derive(Component)]
 struct SettingsPanel;
+
+#[derive(Component)]
+struct SettingsValueText;
+
+#[derive(Component)]
+struct SaveFlashText;
 
 #[derive(Component)]
 enum SettingsButton {
@@ -139,6 +147,28 @@ fn spawn_settings_panel(commands: &mut Commands) {
                     spawn_settings_btn(row, "Density", SettingsButton::DensityCycle, btn_color);
                 });
 
+            // Current values display
+            parent.spawn((
+                SettingsValueText,
+                Text::new(""),
+                TextFont {
+                    font_size: 14.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.6, 0.8, 0.6)),
+            ));
+
+            // Save flash text (hidden initially)
+            parent.spawn((
+                SaveFlashText,
+                Text::new(""),
+                TextFont {
+                    font_size: 14.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.3, 1.0, 0.3)),
+            ));
+
             // Close button
             spawn_settings_btn(
                 parent,
@@ -175,6 +205,7 @@ fn spawn_settings_btn(
         ));
 }
 
+#[allow(clippy::too_many_arguments)]
 fn settings_ui_system(
     interaction_query: Query<(&Interaction, &SettingsButton), Changed<Interaction>>,
     mut audio_settings: ResMut<AudioSettings>,
@@ -182,24 +213,47 @@ fn settings_ui_system(
     mut settings_state: ResMut<SettingsState>,
     mut commands: Commands,
     panel_query: Query<Entity, With<SettingsPanel>>,
+    mut value_text: Query<&mut Text, (With<SettingsValueText>, Without<SaveFlashText>)>,
+    mut flash_text: Query<&mut Text, (With<SaveFlashText>, Without<SettingsValueText>)>,
 ) {
+    // Update current values display
+    if let Ok(mut text) = value_text.single_mut() {
+        let mute_str = if audio_settings.muted {
+            "Muted"
+        } else {
+            "Unmuted"
+        };
+        **text = format!(
+            "Volume: {:.0}% ({}) | Toasts: {:?} | Density: {:?}",
+            audio_settings.master_volume * 100.0,
+            mute_str,
+            player_prefs.0.toast_position,
+            player_prefs.0.notification_density,
+        );
+    }
+
     for (interaction, button) in &interaction_query {
         if *interaction != Interaction::Pressed {
             continue;
         }
 
+        let mut saved = false;
+
         match button {
             SettingsButton::ToggleMute => {
                 audio_settings.muted = !audio_settings.muted;
                 save_audio_prefs(&audio_settings);
+                saved = true;
             },
             SettingsButton::VolumeUp => {
                 audio_settings.master_volume = (audio_settings.master_volume + 0.1).min(1.0);
                 save_audio_prefs(&audio_settings);
+                saved = true;
             },
             SettingsButton::VolumeDown => {
                 audio_settings.master_volume = (audio_settings.master_volume - 0.1).max(0.0);
                 save_audio_prefs(&audio_settings);
+                saved = true;
             },
             SettingsButton::ToastPositionCycle => {
                 player_prefs.0.toast_position = match player_prefs.0.toast_position {
@@ -209,6 +263,7 @@ fn settings_ui_system(
                     ToastPosition::BottomLeft => ToastPosition::TopRight,
                 };
                 save_overlay_prefs(&player_prefs.0);
+                saved = true;
             },
             SettingsButton::DensityCycle => {
                 player_prefs.0.notification_density = match player_prefs.0.notification_density {
@@ -217,6 +272,7 @@ fn settings_ui_system(
                     NotificationDensity::CriticalOnly => NotificationDensity::All,
                 };
                 save_overlay_prefs(&player_prefs.0);
+                saved = true;
             },
             SettingsButton::Close => {
                 settings_state.visible = false;
@@ -224,6 +280,29 @@ fn settings_ui_system(
                     commands.entity(entity).despawn();
                 }
             },
+        }
+
+        if saved {
+            settings_state.save_flash_timer = 1.5;
+            if let Ok(mut text) = flash_text.single_mut() {
+                **text = "Saved!".to_string();
+            }
+        }
+    }
+}
+
+/// Fade out the "Saved!" flash message.
+fn settings_flash_system(
+    time: Res<Time>,
+    mut settings: ResMut<SettingsState>,
+    mut flash_text: Query<&mut Text, With<SaveFlashText>>,
+) {
+    if settings.save_flash_timer > 0.0 {
+        settings.save_flash_timer -= time.delta_secs();
+        if settings.save_flash_timer <= 0.0
+            && let Ok(mut text) = flash_text.single_mut()
+        {
+            **text = String::new();
         }
     }
 }
