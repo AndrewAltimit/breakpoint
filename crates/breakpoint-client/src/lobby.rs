@@ -3,7 +3,7 @@ use bevy::ecs::system::NonSendMut;
 use bevy::input::ButtonInput;
 use bevy::prelude::*;
 
-use breakpoint_core::game_trait::PlayerId;
+use breakpoint_core::game_trait::{GameId, PlayerId};
 use breakpoint_core::net::messages::{
     ClientMessage, GameStartMsg, JoinRoomMsg, JoinRoomResponseMsg, PlayerListMsg,
 };
@@ -48,7 +48,7 @@ pub struct LobbyState {
     pub is_spectator: bool,
     pub error_message: Option<String>,
     pub ws_url: String,
-    pub selected_game: String,
+    pub selected_game: GameId,
     /// Room code being typed by the user for joining.
     pub join_code_input: String,
     /// Status message to display (set by various systems, rendered by status_display).
@@ -108,7 +108,7 @@ struct StartGameButton;
 struct JoinRow;
 
 #[derive(Component)]
-struct GameSelectButton(String);
+struct GameSelectButton(GameId);
 
 #[derive(Component)]
 struct GameSelectionText;
@@ -121,10 +121,6 @@ fn setup_lobby(mut commands: Commands, mut lobby: ResMut<LobbyState>) {
     if lobby.player_name.is_empty() {
         lobby.player_name = format!("Player{}", fastrand::u16(..1000));
     }
-    if lobby.selected_game.is_empty() {
-        lobby.selected_game = "mini-golf".to_string();
-    }
-
     // Determine WebSocket URL
     if lobby.ws_url.is_empty() {
         #[cfg(target_family = "wasm")]
@@ -227,9 +223,9 @@ fn setup_lobby(mut commands: Commands, mut lobby: ResMut<LobbyState>) {
                     ..default()
                 })
                 .with_children(|row| {
-                    spawn_game_button(row, "Mini-Golf", "mini-golf", btn_color);
-                    spawn_game_button(row, "Platform Racer", "platform-racer", btn_color);
-                    spawn_game_button(row, "Laser Tag", "laser-tag", btn_color);
+                    spawn_game_button(row, "Mini-Golf", GameId::Golf, btn_color);
+                    spawn_game_button(row, "Platform Racer", GameId::Platformer, btn_color);
+                    spawn_game_button(row, "Laser Tag", GameId::LaserTag, btn_color);
                 });
 
             // Selected game indicator
@@ -362,10 +358,10 @@ fn setup_lobby(mut commands: Commands, mut lobby: ResMut<LobbyState>) {
         });
 }
 
-fn spawn_game_button(parent: &mut ChildSpawnerCommands, label: &str, game_id: &str, color: Color) {
+fn spawn_game_button(parent: &mut ChildSpawnerCommands, label: &str, game_id: GameId, color: Color) {
     parent
         .spawn((
-            GameSelectButton(game_id.to_string()),
+            GameSelectButton(game_id),
             Button,
             Node {
                 padding: UiRect::axes(Val::Px(16.0), Val::Px(8.0)),
@@ -497,7 +493,7 @@ fn lobby_input_system(
     // Handle game selection buttons
     for (interaction, btn) in &game_select_query {
         if *interaction == Interaction::Pressed {
-            lobby.selected_game = btn.0.clone();
+            lobby.selected_game = btn.0;
             if let Ok(mut text) = game_text_query.single_mut() {
                 **text = format!("Game: {}", lobby.selected_game);
             }
@@ -572,7 +568,7 @@ fn lobby_input_system(
                 if lobby.is_host {
                     let msg =
                         breakpoint_core::net::messages::ServerMessage::GameStart(GameStartMsg {
-                            game_name: lobby.selected_game.clone(),
+                            game_name: lobby.selected_game.to_string(),
                             players: lobby.players.clone(),
                             host_id: lobby.local_player_id.unwrap_or(0),
                         });
@@ -687,7 +683,8 @@ fn lobby_network_system(
                 }
             },
             breakpoint_core::net::messages::ServerMessage::GameStart(gs) => {
-                lobby.selected_game = gs.game_name;
+                lobby.selected_game =
+                    GameId::from_str_opt(&gs.game_name).unwrap_or_default();
                 next_state.set(AppState::InGame);
             },
             breakpoint_core::net::messages::ServerMessage::AlertEvent(ae) => {

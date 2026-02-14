@@ -1,10 +1,47 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
 /// Unique identifier for a player in the game.
 pub type PlayerId = u64;
+
+/// Identifies which game is selected. Used in lobby, registry, and network messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum GameId {
+    #[default]
+    Golf,
+    Platformer,
+    LaserTag,
+}
+
+impl GameId {
+    /// Wire-format string used in `GameStartMsg` and registry keys.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Golf => "mini-golf",
+            Self::Platformer => "platform-racer",
+            Self::LaserTag => "laser-tag",
+        }
+    }
+
+    /// Parse from wire-format string. Returns `None` for unknown IDs.
+    pub fn from_str_opt(s: &str) -> Option<Self> {
+        match s {
+            "mini-golf" => Some(Self::Golf),
+            "platform-racer" => Some(Self::Platformer),
+            "laser-tag" => Some(Self::LaserTag),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for GameId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 /// Core trait that all Breakpoint games must implement.
 ///

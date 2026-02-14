@@ -20,15 +20,8 @@ pub struct GitHubPoller {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 struct RunState {
-    id: u64,
-    name: String,
     status: String,
-    conclusion: Option<String>,
-    actor: String,
-    repo: String,
-    html_url: String,
 }
 
 #[derive(Debug, Default)]
@@ -187,13 +180,7 @@ impl GitHubPoller {
             self.active_runs.insert(
                 run.id,
                 RunState {
-                    id: run.id,
-                    name: run_name.to_string(),
                     status: run.status.clone(),
-                    conclusion: run.conclusion.clone(),
-                    actor: run.actor.login.clone(),
-                    repo: repo.to_string(),
-                    html_url: run.html_url.clone(),
                 },
             );
         }

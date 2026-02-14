@@ -11,7 +11,7 @@ use bevy::ecs::system::NonSend;
 use bevy::prelude::*;
 
 use breakpoint_core::game_trait::{
-    BreakpointGame, GameConfig, PlayerId, PlayerInputs, PlayerScore,
+    BreakpointGame, GameConfig, GameId, PlayerId, PlayerInputs, PlayerScore,
 };
 use breakpoint_core::net::messages::{
     GameEndMsg, GameStateMsg, PlayerInputMsg, PlayerScoreEntry, RoundEndMsg,
@@ -161,16 +161,16 @@ type GameFactory = fn() -> Box<dyn BreakpointGame>;
 /// Registry mapping game IDs to factory functions.
 #[derive(Resource, Default)]
 pub struct GameRegistry {
-    factories: HashMap<String, GameFactory>,
+    factories: HashMap<GameId, GameFactory>,
 }
 
 impl GameRegistry {
-    pub fn register(&mut self, game_id: &str, factory: GameFactory) {
-        self.factories.insert(game_id.to_string(), factory);
+    pub fn register(&mut self, game_id: GameId, factory: GameFactory) {
+        self.factories.insert(game_id, factory);
     }
 
-    pub fn create(&self, game_id: &str) -> Option<Box<dyn BreakpointGame>> {
-        self.factories.get(game_id).map(|f| f())
+    pub fn create(&self, game_id: GameId) -> Option<Box<dyn BreakpointGame>> {
+        self.factories.get(&game_id).map(|f| f())
     }
 }
 
@@ -178,7 +178,7 @@ impl GameRegistry {
 #[derive(Resource)]
 pub struct ActiveGame {
     pub game: Box<dyn BreakpointGame>,
-    pub game_id: String,
+    pub game_id: GameId,
     pub tick: u32,
     pub tick_accumulator: f32,
 }
@@ -241,15 +241,15 @@ fn setup_game(
         return;
     }
 
-    let game_id = lobby.selected_game.clone();
-    let mut game = match registry.create(&game_id) {
+    let game_id = lobby.selected_game;
+    let mut game = match registry.create(game_id) {
         Some(g) => g,
         None => {
             #[cfg(target_arch = "wasm32")]
             web_sys::console::warn_1(
                 &format!("Unknown game ID '{game_id}', falling back to mini-golf").into(),
             );
-            match registry.create("mini-golf") {
+            match registry.create(GameId::Golf) {
                 Some(g) => g,
                 None => return,
             }

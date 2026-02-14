@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use bevy::ecs::system::NonSend;
 use bevy::prelude::*;
 
-use breakpoint_core::game_trait::PlayerId;
+use breakpoint_core::game_trait::{GameId, PlayerId};
 use breakpoint_golf::course::all_courses;
 use breakpoint_golf::physics::{BALL_RADIUS, HOLE_RADIUS};
 use breakpoint_golf::{GolfInput, GolfState, MiniGolf};
@@ -66,11 +66,11 @@ impl Plugin for GolfPlugin {
 }
 
 fn register_golf(mut registry: ResMut<GameRegistry>) {
-    registry.register("mini-golf", || Box::new(MiniGolf::new()));
+    registry.register(GameId::Golf, || Box::new(MiniGolf::new()));
 }
 
 fn is_golf_active(game: Option<Res<ActiveGame>>) -> bool {
-    game.is_some_and(|g| g.game_id == "mini-golf")
+    game.is_some_and(|g| g.game_id == GameId::Golf)
 }
 
 fn golf_needs_setup(input: Option<Res<GolfLocalInput>>) -> bool {

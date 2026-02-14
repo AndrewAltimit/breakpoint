@@ -6,9 +6,7 @@ use axum::response::{IntoResponse, Response};
 pub enum AppError {
     BadRequest(String),
     NotFound(String),
-    #[allow(dead_code)]
     Unauthorized(String),
-    #[allow(dead_code)]
     Internal(String),
 }
 

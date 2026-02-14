@@ -1,7 +1,7 @@
 use bevy::ecs::system::NonSend;
 use bevy::prelude::*;
 
-use breakpoint_core::game_trait::PlayerId;
+use breakpoint_core::game_trait::{GameId, PlayerId};
 use breakpoint_platformer::course_gen::Tile;
 use breakpoint_platformer::physics::{PLAYER_HEIGHT, PLAYER_WIDTH, PlatformerInput, TILE_SIZE};
 use breakpoint_platformer::{PlatformRacer, PlatformerState};
@@ -41,11 +41,11 @@ impl Plugin for PlatformerPlugin {
 }
 
 fn register_platformer(mut registry: ResMut<GameRegistry>) {
-    registry.register("platform-racer", || Box::new(PlatformRacer::new()));
+    registry.register(GameId::Platformer, || Box::new(PlatformRacer::new()));
 }
 
 fn is_platformer_active(game: Option<Res<ActiveGame>>) -> bool {
-    game.is_some_and(|g| g.game_id == "platform-racer")
+    game.is_some_and(|g| g.game_id == GameId::Platformer)
 }
 
 fn platformer_needs_setup(input: Option<Res<PlatformerLocalInput>>) -> bool {

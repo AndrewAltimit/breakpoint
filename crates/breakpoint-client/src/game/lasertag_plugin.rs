@@ -1,7 +1,7 @@
 use bevy::ecs::system::NonSend;
 use bevy::prelude::*;
 
-use breakpoint_core::game_trait::PlayerId;
+use breakpoint_core::game_trait::{GameId, PlayerId};
 use breakpoint_lasertag::arena::WallType;
 use breakpoint_lasertag::projectile::PLAYER_RADIUS;
 use breakpoint_lasertag::{LaserTagArena, LaserTagInput, LaserTagState};
@@ -43,11 +43,11 @@ impl Plugin for LaserTagPlugin {
 }
 
 fn register_lasertag(mut registry: ResMut<GameRegistry>) {
-    registry.register("laser-tag", || Box::new(LaserTagArena::new()));
+    registry.register(GameId::LaserTag, || Box::new(LaserTagArena::new()));
 }
 
 fn is_lasertag_active(game: Option<Res<ActiveGame>>) -> bool {
-    game.is_some_and(|g| g.game_id == "laser-tag")
+    game.is_some_and(|g| g.game_id == GameId::LaserTag)
 }
 
 fn lasertag_needs_setup(input: Option<Res<LaserTagLocalInput>>) -> bool {

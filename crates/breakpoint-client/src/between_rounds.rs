@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use bevy::ecs::system::NonSend;
 use bevy::prelude::*;
 
-use breakpoint_core::game_trait::PlayerId;
+use breakpoint_core::game_trait::{GameId, PlayerId};
 use breakpoint_core::net::messages::GameStartMsg;
 use breakpoint_core::net::protocol::encode_server_message;
 
@@ -221,7 +221,7 @@ fn between_rounds_host_transition(
 
     // Send GameStart to other clients (with promoted player list)
     let msg = breakpoint_core::net::messages::ServerMessage::GameStart(GameStartMsg {
-        game_name: lobby.selected_game.clone(),
+        game_name: lobby.selected_game.to_string(),
         players: players_for_round,
         host_id: lobby.local_player_id.unwrap_or(0),
     });
@@ -252,7 +252,8 @@ fn between_rounds_network(
 
         match msg {
             breakpoint_core::net::messages::ServerMessage::GameStart(gs) => {
-                lobby.selected_game = gs.game_name;
+                lobby.selected_game =
+                    GameId::from_str_opt(&gs.game_name).unwrap_or_default();
                 // Promote spectators: check if our player is active in the new round
                 if network_role.is_spectator {
                     let is_active = gs

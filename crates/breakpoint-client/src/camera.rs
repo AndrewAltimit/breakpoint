@@ -1,6 +1,8 @@
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::prelude::*;
 
+use breakpoint_core::game_trait::GameId;
+
 use crate::app::AppState;
 use crate::effects::screen_shake::ScreenShake;
 use crate::game::ActiveGame;
@@ -92,21 +94,21 @@ fn update_camera(
         return;
     };
 
-    match game.game_id.as_str() {
-        "platform-racer" => {
+    match game.game_id {
+        GameId::Platformer => {
             for mut transform in &mut camera_query {
                 *transform = Transform::from_xyz(50.0, 15.0, -30.0)
                     .looking_at(Vec3::new(50.0, 10.0, 0.0), Vec3::Y);
             }
         },
-        "laser-tag" => {
+        GameId::LaserTag => {
             for mut transform in &mut camera_query {
                 *transform = Transform::from_xyz(25.0, 40.0, 25.0)
                     .looking_at(Vec3::new(25.0, 0.0, 25.0), Vec3::Z);
             }
         },
         #[cfg(feature = "golf")]
-        "mini-golf" => {
+        GameId::Golf => {
             // Try to follow the local player's ball for a close-up view.
             // Falls back to course-center overview if ball position unavailable.
             let ball_pos = network_role.as_ref().and_then(|role| {
@@ -140,7 +142,8 @@ fn update_camera(
                 }
             }
         },
-        _ => {},
+        #[cfg(not(feature = "golf"))]
+        GameId::Golf => {},
     }
 
     // Apply screen shake offset after all camera positioning
