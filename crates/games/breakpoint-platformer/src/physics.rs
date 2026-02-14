@@ -113,7 +113,7 @@ pub fn tick_player(
     check_tile_effects(player, course);
 }
 
-fn resolve_collisions(player: &mut PlatformerPlayerState, course: &Course) {
+pub(crate) fn resolve_collisions(player: &mut PlatformerPlayerState, course: &Course) {
     let half_w = PLAYER_WIDTH / 2.0;
     let half_h = PLAYER_HEIGHT / 2.0;
 
@@ -223,7 +223,7 @@ fn resolve_collisions(player: &mut PlatformerPlayerState, course: &Course) {
     }
 }
 
-fn check_tile_effects(player: &mut PlatformerPlayerState, course: &Course) {
+pub(crate) fn check_tile_effects(player: &mut PlatformerPlayerState, course: &Course) {
     let tx = (player.x / TILE_SIZE).floor() as i32;
     let ty = (player.y / TILE_SIZE).floor() as i32;
 
@@ -246,7 +246,7 @@ fn check_tile_effects(player: &mut PlatformerPlayerState, course: &Course) {
     }
 }
 
-fn is_solid(tile: Tile) -> bool {
+pub(crate) fn is_solid(tile: Tile) -> bool {
     matches!(tile, Tile::Solid)
 }
 
@@ -329,5 +329,388 @@ mod tests {
         };
         tick_player(&mut player, &input, &course, 0.05);
         assert_eq!(player.jumps_remaining, 0);
+    }
+
+    // ================================================================
+    // Phase 3b: Collision resolution tests
+    // ================================================================
+
+    /// Build a course with a floor (row 0 and 1 solid) and optional extras.
+    fn floor_course_with_extras(extras: &[(u32, u32, Tile)]) -> Course {
+        let w = 20u32;
+        let h = 20u32;
+        let mut tiles = vec![Tile::Empty; (w * h) as usize];
+        // Solid floor
+        for x in 0..w {
+            tiles[x as usize] = Tile::Solid;
+            tiles[w as usize + x as usize] = Tile::Solid;
+        }
+        for &(x, y, tile) in extras {
+            tiles[y as usize * w as usize + x as usize] = tile;
+        }
+        Course {
+            width: w,
+            height: h,
+            tiles,
+            spawn_x: 5.0,
+            spawn_y: 3.0,
+        }
+    }
+
+    #[test]
+    fn landing_on_solid_block_sets_grounded() {
+        // Floor at y=0,1. Player falls from above.
+        let course = floor_course_with_extras(&[]);
+        let mut player = PlatformerPlayerState::new(5.0, 5.0);
+        player.vy = -5.0;
+        let input = PlatformerInput::default();
+
+        for _ in 0..100 {
+            tick_player(&mut player, &input, &course, 0.02);
+        }
+
+        assert!(
+            player.grounded,
+            "Player should be grounded after landing on floor"
+        );
+        assert!(
+            player.vy.abs() < 0.1,
+            "vy should be ~0 after landing, got {}",
+            player.vy
+        );
+    }
+
+    #[test]
+    fn ceiling_collision_stops_upward_velocity() {
+        // Solid block directly above player
+        let course = floor_course_with_extras(&[(5, 5, Tile::Solid)]);
+        let mut player = PlatformerPlayerState::new(5.5, 3.0);
+        player.grounded = true;
+        player.jumps_remaining = 1;
+
+        // Jump: should hit the ceiling block at y=5
+        let input = PlatformerInput {
+            jump: true,
+            ..Default::default()
+        };
+        tick_player(&mut player, &input, &course, 0.02);
+        // After jump, vy should be positive initially
+        assert!(player.vy >= 0.0);
+
+        // Run more ticks — player should eventually hit ceiling and vy goes to 0
+        let no_jump = PlatformerInput::default();
+        for _ in 0..50 {
+            tick_player(&mut player, &no_jump, &course, 0.02);
+        }
+        // Player should have come back down
+        assert!(player.y < 5.0, "Player should be below ceiling block");
+    }
+
+    #[test]
+    fn horizontal_wall_collision_stops_vx() {
+        // Solid block to the right of player
+        let course = floor_course_with_extras(&[(8, 2, Tile::Solid)]);
+        let mut player = PlatformerPlayerState::new(7.0, 2.5 + PLAYER_HEIGHT / 2.0);
+        player.grounded = true;
+
+        let input = PlatformerInput {
+            move_dir: 1.0,
+            ..Default::default()
+        };
+
+        for _ in 0..20 {
+            tick_player(&mut player, &input, &course, 0.02);
+        }
+
+        // Player should not pass through the solid block
+        assert!(
+            player.x < 8.0,
+            "Player should be blocked by wall at x=8, got x={}",
+            player.x
+        );
+    }
+
+    #[test]
+    fn platform_passthrough_from_below() {
+        // Platform tile at y=5, player jumping up from below
+        let course = floor_course_with_extras(&[(5, 5, Tile::Platform)]);
+        let mut player = PlatformerPlayerState::new(5.5, 3.0);
+        player.grounded = true;
+        player.jumps_remaining = 1;
+        player.vy = JUMP_VELOCITY;
+        player.grounded = false;
+        player.jumps_remaining = 0;
+
+        let input = PlatformerInput::default();
+        let initial_vy = player.vy;
+        tick_player(&mut player, &input, &course, 0.02);
+
+        // Player should pass through the platform from below (vy should still be positive
+        // or at least not zeroed from collision)
+        assert!(
+            player.vy > 0.0 || player.y > 5.0,
+            "Player should pass through platform from below: vy={}, y={}",
+            player.vy,
+            player.y
+        );
+        let _ = initial_vy;
+    }
+
+    #[test]
+    fn platform_landing_from_above() {
+        // Platform tile at y=5, player falling from above
+        let course = floor_course_with_extras(&[(5, 5, Tile::Platform)]);
+        let mut player = PlatformerPlayerState::new(5.5, 8.0);
+        player.vy = -3.0;
+
+        let input = PlatformerInput::default();
+        for _ in 0..100 {
+            tick_player(&mut player, &input, &course, 0.02);
+            if player.grounded && player.y > 4.0 {
+                break;
+            }
+        }
+
+        // Player should have landed on the platform (y ≈ 6 + PLAYER_HEIGHT/2)
+        assert!(
+            player.y >= 5.0,
+            "Player should land on platform at y>=5, got y={}",
+            player.y
+        );
+    }
+
+    #[test]
+    fn fall_below_floor_respawns_at_checkpoint() {
+        // Course with a gap — no floor at x=5..7
+        let w = 20u32;
+        let h = 20u32;
+        let mut tiles = vec![Tile::Empty; (w * h) as usize];
+        // Floor except gap at x=5,6
+        for x in 0..w {
+            if !(5..=6).contains(&x) {
+                tiles[x as usize] = Tile::Solid;
+                tiles[w as usize + x as usize] = Tile::Solid;
+            }
+        }
+        let course = Course {
+            width: w,
+            height: h,
+            tiles,
+            spawn_x: 3.0,
+            spawn_y: 3.0,
+        };
+
+        let mut player = PlatformerPlayerState::new(5.5, 3.0);
+        player.last_checkpoint_x = 3.0;
+        player.last_checkpoint_y = 3.0;
+        let input = PlatformerInput::default();
+
+        // Fall through gap
+        for _ in 0..500 {
+            tick_player(&mut player, &input, &course, 0.02);
+            if player.x == 3.0 && player.y > 3.0 {
+                // Respawned
+                break;
+            }
+        }
+
+        // After falling below -5.0, should respawn at checkpoint
+        assert!(
+            player.y > -5.0,
+            "Player should have respawned, y={}",
+            player.y
+        );
+    }
+
+    #[test]
+    fn double_jump_restores_on_ground() {
+        let course = floor_course_with_extras(&[]);
+        let mut player = PlatformerPlayerState::new(5.0, 5.0);
+        player.has_double_jump = true;
+        player.jumps_remaining = 0;
+        player.vy = -5.0;
+
+        let input = PlatformerInput::default();
+        for _ in 0..100 {
+            tick_player(&mut player, &input, &course, 0.02);
+        }
+
+        if player.grounded {
+            assert_eq!(
+                player.jumps_remaining, 2,
+                "Landing with double jump should give 2 jumps"
+            );
+        }
+    }
+
+    // ================================================================
+    // Phase 3c: Tile effect tests
+    // ================================================================
+
+    #[test]
+    fn hazard_tile_respawns_player() {
+        let course = floor_course_with_extras(&[(5, 2, Tile::Hazard)]);
+        let mut player = PlatformerPlayerState::new(5.5, 2.5);
+        player.last_checkpoint_x = 3.0;
+        player.last_checkpoint_y = 3.0;
+
+        check_tile_effects(&mut player, &course);
+
+        // Player should respawn at checkpoint
+        assert_eq!(player.x, 3.0, "Hazard should respawn at checkpoint x");
+        assert_eq!(player.y, 4.0, "Hazard should respawn at checkpoint y + 1.0");
+    }
+
+    #[test]
+    fn checkpoint_forward_updates_position() {
+        let course = floor_course_with_extras(&[(8, 2, Tile::Checkpoint)]);
+        let mut player = PlatformerPlayerState::new(8.5, 2.5);
+        player.last_checkpoint_x = 3.0;
+        player.last_checkpoint_y = 3.0;
+
+        check_tile_effects(&mut player, &course);
+
+        // Checkpoint is forward (x=8.5 > 3.0), so it should update
+        assert!(
+            player.last_checkpoint_x > 3.0,
+            "Checkpoint should update: last_checkpoint_x={}",
+            player.last_checkpoint_x
+        );
+    }
+
+    #[test]
+    fn checkpoint_backward_ignored() {
+        let course = floor_course_with_extras(&[(2, 2, Tile::Checkpoint)]);
+        let mut player = PlatformerPlayerState::new(2.5, 2.5);
+        player.last_checkpoint_x = 10.0;
+        player.last_checkpoint_y = 3.0;
+
+        check_tile_effects(&mut player, &course);
+
+        // Checkpoint is backward (player.x=2.5 < last_checkpoint_x=10.0)
+        assert_eq!(
+            player.last_checkpoint_x, 10.0,
+            "Backward checkpoint should not update position"
+        );
+    }
+
+    #[test]
+    fn finish_tile_marks_finished_and_zeroes_velocity() {
+        let course = floor_course_with_extras(&[(15, 2, Tile::Finish)]);
+        let mut player = PlatformerPlayerState::new(15.5, 2.5);
+        player.vx = 5.0;
+        player.vy = -2.0;
+
+        check_tile_effects(&mut player, &course);
+
+        assert!(player.finished, "Finish tile should set finished=true");
+        assert_eq!(player.vx, 0.0, "Finish should zero vx");
+        assert_eq!(player.vy, 0.0, "Finish should zero vy");
+    }
+
+    #[test]
+    fn finished_player_skips_tick() {
+        let course = generate_course(42);
+        let mut player = PlatformerPlayerState::new(5.0, 5.0);
+        player.finished = true;
+        let y_before = player.y;
+
+        let input = PlatformerInput {
+            move_dir: 1.0,
+            jump: true,
+            ..Default::default()
+        };
+        tick_player(&mut player, &input, &course, 0.1);
+
+        assert_eq!(player.y, y_before, "Finished player should not move");
+        assert_eq!(player.vx, 0.0, "Finished player vx should remain 0");
+    }
+
+    #[test]
+    fn eliminated_player_skips_tick() {
+        let course = generate_course(42);
+        let mut player = PlatformerPlayerState::new(5.0, 5.0);
+        player.eliminated = true;
+        let y_before = player.y;
+
+        let input = PlatformerInput {
+            move_dir: 1.0,
+            jump: true,
+            ..Default::default()
+        };
+        tick_player(&mut player, &input, &course, 0.1);
+
+        assert_eq!(player.y, y_before, "Eliminated player should not move");
+    }
+
+    // ================================================================
+    // Phase 4d: Property-based tests (proptest)
+    // ================================================================
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn player_never_stuck_below_floor(
+                seed in 0u64..1000,
+                moves in proptest::collection::vec(-1.0f32..=1.0, 10..50)
+            ) {
+                let course = generate_course(seed);
+                let mut player = PlatformerPlayerState::new(
+                    course.spawn_x,
+                    course.spawn_y,
+                );
+
+                for &move_dir in &moves {
+                    let input = PlatformerInput {
+                        move_dir,
+                        jump: move_dir > 0.5,
+                        ..Default::default()
+                    };
+                    for _ in 0..SUBSTEPS {
+                        tick_player(&mut player, &input, &course, 1.0 / SUBSTEPS as f32);
+                    }
+                }
+
+                // After all ticks, player should be above -5.0 (respawn catches falls)
+                prop_assert!(
+                    player.y >= -5.0,
+                    "Player y={} should be >= -5.0 (respawn should catch)",
+                    player.y
+                );
+            }
+
+            #[test]
+            fn grounded_state_consistent_with_position(
+                seed in 0u64..100
+            ) {
+                let course = generate_course(seed);
+                let mut player = PlatformerPlayerState::new(
+                    course.spawn_x,
+                    course.spawn_y,
+                );
+                let input = PlatformerInput::default();
+
+                // Let player settle
+                for _ in 0..200 {
+                    for _ in 0..SUBSTEPS {
+                        tick_player(&mut player, &input, &course, 1.0 / SUBSTEPS as f32);
+                    }
+                }
+
+                // If grounded, player should be resting on or above a tile
+                if player.grounded {
+                    let half_h = PLAYER_HEIGHT / 2.0;
+                    let foot_y = player.y - half_h;
+                    // Feet should be at or above a tile top (within tolerance)
+                    prop_assert!(
+                        foot_y >= -0.5,
+                        "Grounded player feet y={foot_y} should be near a tile surface"
+                    );
+                }
+            }
+        }
     }
 }

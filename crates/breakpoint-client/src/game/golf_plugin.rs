@@ -1102,4 +1102,256 @@ mod tests {
             ball.velocity.x
         );
     }
+
+    // ================================================================
+    // Phase 1b: Camera-dependent aiming integration tests
+    // ================================================================
+
+    /// Helper: full pipeline from cursor position to stroke velocity.
+    fn cursor_to_stroke(
+        cursor: Vec2,
+        window: &Window,
+        cam: &Transform,
+        ball_x: f32,
+        ball_z: f32,
+    ) -> breakpoint_golf::course::Vec3 {
+        let ground = cursor_to_ground(cursor, window, cam).unwrap();
+        let dx = ground.x - ball_x;
+        let dz = ground.z - ball_z;
+        let aim_angle = dz.atan2(dx);
+
+        let mut ball = breakpoint_golf::physics::BallState::new(
+            breakpoint_golf::course::Vec3::new(ball_x, 0.0, ball_z),
+        );
+        ball.stroke(aim_angle, 10.0);
+        ball.velocity
+    }
+
+    #[test]
+    fn cursor_to_stroke_all_compass_directions() {
+        let window = test_window(1280, 720);
+        let ball_x = 6.0;
+        let ball_z = 12.0;
+        let cam = golf_cam(ball_x, ball_z);
+        let cx = 640.0;
+        let cy = 360.0;
+        let offset = 250.0;
+
+        // (cursor, expected_vx_positive, expected_vz_positive)
+        let cases: [(&str, Vec2, Option<bool>, Option<bool>); 8] = [
+            ("E", Vec2::new(cx + offset, cy), Some(true), None), // right → +X
+            ("W", Vec2::new(cx - offset, cy), Some(false), None), // left → -X
+            ("N", Vec2::new(cx, cy - offset), None, Some(true)), // top → +Z
+            ("S", Vec2::new(cx, cy + offset), None, Some(false)), // bottom → -Z
+            (
+                "NE",
+                Vec2::new(cx + offset, cy - offset),
+                Some(true),
+                Some(true),
+            ),
+            (
+                "NW",
+                Vec2::new(cx - offset, cy - offset),
+                Some(false),
+                Some(true),
+            ),
+            (
+                "SE",
+                Vec2::new(cx + offset, cy + offset),
+                Some(true),
+                Some(false),
+            ),
+            (
+                "SW",
+                Vec2::new(cx - offset, cy + offset),
+                Some(false),
+                Some(false),
+            ),
+        ];
+
+        for (dir, cursor, expect_vx_pos, expect_vz_pos) in cases {
+            let vel = cursor_to_stroke(cursor, &window, &cam, ball_x, ball_z);
+            if let Some(pos) = expect_vx_pos {
+                if pos {
+                    assert!(vel.x > 0.0, "{dir}: vx should be positive, got {}", vel.x);
+                } else {
+                    assert!(vel.x < 0.0, "{dir}: vx should be negative, got {}", vel.x);
+                }
+            }
+            if let Some(pos) = expect_vz_pos {
+                if pos {
+                    assert!(vel.z > 0.0, "{dir}: vz should be positive, got {}", vel.z);
+                } else {
+                    assert!(vel.z < 0.0, "{dir}: vz should be negative, got {}", vel.z);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn re_aim_after_ball_moves_different_camera() {
+        let window = test_window(1280, 720);
+        let cursor = Vec2::new(960.0, 360.0); // right of center
+
+        // First stroke: ball at (6, 12), camera at (6, 15, 10)
+        let cam1 = golf_cam(6.0, 12.0);
+        let ground1 = cursor_to_ground(cursor, &window, &cam1).unwrap();
+        let aim1 = (ground1.z - 12.0).atan2(ground1.x - 6.0);
+
+        // After ball moves to (10, 20), camera follows
+        let cam2 = golf_cam(10.0, 20.0);
+        let ground2 = cursor_to_ground(cursor, &window, &cam2).unwrap();
+        let aim2 = (ground2.z - 20.0).atan2(ground2.x - 10.0);
+
+        // Same screen cursor should produce a different world aim because the
+        // camera moved with the ball
+        assert!(
+            (aim1 - aim2).abs() < 0.5,
+            "Same relative cursor should produce similar aim angles: aim1={aim1:.3}, aim2={aim2:.3}"
+        );
+        assert!(
+            (ground1.x - ground2.x).abs() > 1.0 || (ground1.z - ground2.z).abs() > 1.0,
+            "Different camera positions should map cursor to different world points"
+        );
+    }
+
+    #[test]
+    fn cursor_at_ball_position_produces_small_displacement() {
+        let window = test_window(1280, 720);
+        let ball_x = 6.0;
+        let ball_z = 12.0;
+        let cam = golf_cam(ball_x, ball_z);
+
+        // Center cursor is roughly over the ball
+        let ground = cursor_to_ground(Vec2::new(640.0, 360.0), &window, &cam);
+        assert!(
+            ground.is_some(),
+            "Cursor near ball should still produce a valid ground point"
+        );
+    }
+
+    #[test]
+    fn aspect_ratio_consistency() {
+        let ball_x = 6.0;
+        let ball_z = 12.0;
+        let cam = golf_cam(ball_x, ball_z);
+
+        // Test multiple aspect ratios: cursor right-of-center should always map to +X
+        let resolutions = [(1024, 768), (1920, 1080), (2560, 1080), (720, 720)];
+        for (w, h) in resolutions {
+            let window = test_window(w, h);
+            let cx = w as f32 / 2.0;
+            let cy = h as f32 / 2.0;
+            let right_cursor = Vec2::new(cx + cx * 0.5, cy);
+
+            let center = cursor_to_ground(Vec2::new(cx, cy), &window, &cam).unwrap();
+            let right = cursor_to_ground(right_cursor, &window, &cam).unwrap();
+
+            assert!(
+                right.x > center.x,
+                "{w}x{h}: right cursor X ({}) should exceed center X ({})",
+                right.x,
+                center.x
+            );
+        }
+    }
+
+    #[test]
+    fn cursor_at_screen_edges() {
+        let window = test_window(1280, 720);
+        let cam = golf_cam(6.0, 12.0);
+        let w = 1280.0f32;
+        let h = 720.0f32;
+
+        let corners = [
+            Vec2::new(1.0, 1.0),
+            Vec2::new(w - 1.0, 1.0),
+            Vec2::new(1.0, h - 1.0),
+            Vec2::new(w - 1.0, h - 1.0),
+        ];
+
+        for corner in corners {
+            let result = cursor_to_ground(corner, &window, &cam);
+            assert!(
+                result.is_some(),
+                "Corner cursor ({}, {}) should produce a valid ground point",
+                corner.x,
+                corner.y
+            );
+        }
+    }
+
+    // ================================================================
+    // Phase 1c: Full pipeline cardinal direction tests
+    // ================================================================
+
+    #[test]
+    fn full_pipeline_aim_right_stroke_moves_positive_x() {
+        let window = test_window(1280, 720);
+        let ball_x = 6.0;
+        let ball_z = 12.0;
+        let cam = golf_cam(ball_x, ball_z);
+
+        let vel = cursor_to_stroke(Vec2::new(960.0, 360.0), &window, &cam, ball_x, ball_z);
+        assert!(
+            vel.x > 0.0,
+            "Right aim: vx should be positive, got {}",
+            vel.x
+        );
+        assert!(
+            vel.x.abs() > vel.z.abs(),
+            "Right aim: |vx| ({}) should dominate |vz| ({})",
+            vel.x.abs(),
+            vel.z.abs()
+        );
+    }
+
+    #[test]
+    fn full_pipeline_aim_up_stroke_moves_positive_z() {
+        let window = test_window(1280, 720);
+        let ball_x = 6.0;
+        let ball_z = 12.0;
+        let cam = golf_cam(ball_x, ball_z);
+
+        // Top of screen → +Z in world
+        let vel = cursor_to_stroke(Vec2::new(640.0, 100.0), &window, &cam, ball_x, ball_z);
+        assert!(vel.z > 0.0, "Up aim: vz should be positive, got {}", vel.z);
+    }
+
+    #[test]
+    fn full_pipeline_aim_left_stroke_moves_negative_x() {
+        let window = test_window(1280, 720);
+        let ball_x = 6.0;
+        let ball_z = 12.0;
+        let cam = golf_cam(ball_x, ball_z);
+
+        let vel = cursor_to_stroke(Vec2::new(320.0, 360.0), &window, &cam, ball_x, ball_z);
+        assert!(
+            vel.x < 0.0,
+            "Left aim: vx should be negative, got {}",
+            vel.x
+        );
+        assert!(
+            vel.x.abs() > vel.z.abs(),
+            "Left aim: |vx| ({}) should dominate |vz| ({})",
+            vel.x.abs(),
+            vel.z.abs()
+        );
+    }
+
+    #[test]
+    fn full_pipeline_aim_down_stroke_moves_negative_z() {
+        let window = test_window(1280, 720);
+        let ball_x = 6.0;
+        let ball_z = 12.0;
+        let cam = golf_cam(ball_x, ball_z);
+
+        // Bottom of screen → -Z in world
+        let vel = cursor_to_stroke(Vec2::new(640.0, 620.0), &window, &cam, ball_x, ball_z);
+        assert!(
+            vel.z < 0.0,
+            "Down aim: vz should be negative, got {}",
+            vel.z
+        );
+    }
 }

@@ -280,7 +280,13 @@ fn lasertag_input_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window>,
-    cameras: Query<&Transform, (With<crate::camera::GameCamera>, Without<crate::camera::GameLight>)>,
+    cameras: Query<
+        &Transform,
+        (
+            With<crate::camera::GameCamera>,
+            Without<crate::camera::GameLight>,
+        ),
+    >,
     mut local_input: ResMut<LaserTagLocalInput>,
     mut active_game: ResMut<ActiveGame>,
     network_role: Res<NetworkRole>,

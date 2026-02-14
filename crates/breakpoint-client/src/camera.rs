@@ -101,8 +101,7 @@ fn update_camera(
         GameId::Platformer => {
             // Follow the local player (side-view: XY plane at Z=0, camera at Z<0).
             let player_pos = network_role.as_ref().and_then(|role| {
-                let state: Option<breakpoint_platformer::PlatformerState> =
-                    read_game_state(&game);
+                let state: Option<breakpoint_platformer::PlatformerState> = read_game_state(&game);
                 state.and_then(|s| {
                     s.players
                         .get(&role.local_player_id)

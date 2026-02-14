@@ -938,6 +938,129 @@ mod tests {
         );
     }
 
+    // ================================================================
+    // Phase 3d: Game-level edge cases
+    // ================================================================
+
+    #[test]
+    fn duplicate_finish_only_counted_once() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(120));
+
+        // Mark player 1 as finished
+        game.state.players.get_mut(&1).unwrap().finished = true;
+
+        // Tick twice — the finish should only be recorded once
+        game.update(1.0 / 15.0, &empty_inputs());
+        game.update(1.0 / 15.0, &empty_inputs());
+
+        let count = game
+            .state
+            .finish_order
+            .iter()
+            .filter(|&&id| id == 1)
+            .count();
+        assert_eq!(
+            count, 1,
+            "Player should appear in finish_order exactly once"
+        );
+    }
+
+    #[test]
+    fn speed_boost_multiplies_movement() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(120));
+
+        let initial_x = game.state.players[&1].x;
+
+        // Give player SpeedBoost
+        game.state
+            .active_powerups
+            .entry(1)
+            .or_default()
+            .push(powerups::ActivePowerUp::new(
+                powerups::PowerUpKind::SpeedBoost,
+            ));
+
+        // Move right for several ticks with boost
+        for _ in 0..20 {
+            let input = physics::PlatformerInput {
+                move_dir: 1.0,
+                jump: false,
+                use_powerup: false,
+            };
+            let data = rmp_serde::to_vec(&input).unwrap();
+            game.apply_input(1, &data);
+            game.update(1.0 / 15.0, &empty_inputs());
+        }
+        let boosted_dx = game.state.players[&1].x - initial_x;
+
+        // Now test without boost (fresh game)
+        let mut game2 = PlatformRacer::new();
+        let players2 = make_players(1);
+        game2.init(&players2, &default_config(120));
+        let initial_x2 = game2.state.players[&1].x;
+
+        for _ in 0..20 {
+            let input = physics::PlatformerInput {
+                move_dir: 1.0,
+                jump: false,
+                use_powerup: false,
+            };
+            let data = rmp_serde::to_vec(&input).unwrap();
+            game2.apply_input(1, &data);
+            game2.update(1.0 / 15.0, &empty_inputs());
+        }
+        let normal_dx = game2.state.players[&1].x - initial_x2;
+
+        assert!(
+            boosted_dx > normal_dx * 1.2,
+            "Boosted movement ({boosted_dx}) should be notably more than normal ({normal_dx})"
+        );
+    }
+
+    #[test]
+    fn round_complete_when_all_finished_race() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(3);
+        game.init(&players, &default_config(120));
+
+        // Mark all as finished
+        for &pid in &game.player_ids.clone() {
+            game.state.players.get_mut(&pid).unwrap().finished = true;
+        }
+
+        let events = game.update(1.0 / 15.0, &empty_inputs());
+        assert!(
+            game.state.round_complete,
+            "Race should complete when all finish"
+        );
+        assert!(events.iter().any(|e| matches!(e, GameEvent::RoundComplete)));
+    }
+
+    #[test]
+    fn round_complete_when_one_remains_survival() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(3);
+        game.init(&players, &survival_config(120));
+
+        // Eliminate 2 of 3
+        for &pid in &[1u64, 2u64] {
+            game.state.players.get_mut(&pid).unwrap().eliminated = true;
+            game.state.elimination_order.push(pid);
+            game.eliminated_set.insert(pid);
+        }
+
+        let events = game.update(1.0 / 15.0, &empty_inputs());
+        assert!(
+            game.state.round_complete,
+            "Survival should complete when 1 player remains"
+        );
+        assert!(events.iter().any(|e| matches!(e, GameEvent::RoundComplete)));
+    }
+
     #[test]
     fn platformer_jump_input_not_lost_across_overwrites() {
         // This test verifies the Bug 2 fix: transient inputs (jump) must be

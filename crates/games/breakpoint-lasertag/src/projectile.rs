@@ -117,7 +117,7 @@ pub fn raycast_laser(
 
 /// Ray-segment intersection. Returns (t, normal_x, normal_z) if hit.
 #[allow(clippy::too_many_arguments)]
-fn ray_segment_intersection(
+pub(crate) fn ray_segment_intersection(
     ox: f32,
     oz: f32,
     dx: f32,
@@ -159,7 +159,7 @@ fn ray_segment_intersection(
 
 /// Check for player hits along a ray segment. Returns (t, player_id) for nearest hit.
 #[allow(clippy::too_many_arguments)]
-fn check_player_hits(
+pub(crate) fn check_player_hits(
     ox: f32,
     oz: f32,
     dx: f32,
@@ -190,7 +190,7 @@ fn check_player_hits(
 }
 
 /// Ray-circle intersection (2D). Returns nearest t if hit.
-fn ray_circle_intersection(
+pub(crate) fn ray_circle_intersection(
     ox: f32,
     oz: f32,
     dx: f32,
@@ -313,5 +313,374 @@ mod tests {
         let result = raycast_laser(0.0, 0.0, 0.1, &walls, &[], 0, &[], 500.0);
         // Should stop after MAX_BOUNCES + 1 segments
         assert!(result.segments.len() <= (MAX_BOUNCES as usize + 1));
+    }
+
+    // ================================================================
+    // Phase 2b: Ray-segment intersection tests
+    // ================================================================
+
+    #[test]
+    fn ray_segment_near_parallel_returns_none() {
+        // Ray nearly parallel to segment — denom close to 0
+        let result = ray_segment_intersection(
+            0.0, 0.0, // origin
+            1.0, 0.0, // direction: +X
+            0.0, 5.0, // segment start
+            10.0, 5.0, // segment end (horizontal, parallel to ray)
+        );
+        assert!(result.is_none(), "Parallel ray-segment should return None");
+    }
+
+    #[test]
+    fn ray_segment_hits_at_endpoint_start() {
+        // Ray aimed at the start of the segment (u ≈ 0)
+        let result = ray_segment_intersection(
+            0.0, 0.0, // origin
+            0.0, 1.0, // direction: +Z
+            -5.0, 5.0, // segment start
+            5.0, 5.0, // segment end
+        );
+        assert!(result.is_some(), "Ray should hit segment at u=0.5");
+        let (t, _, _) = result.unwrap();
+        assert!((t - 5.0).abs() < 0.1, "t should be ~5.0, got {t}");
+    }
+
+    #[test]
+    fn ray_segment_misses_past_endpoint() {
+        // Ray aimed past the segment endpoint (u > 1)
+        let result = ray_segment_intersection(
+            0.0, 0.0, // origin
+            0.0, 1.0, // direction: +Z
+            5.0, 5.0, // segment from (5,5) to (10,5)
+            10.0, 5.0,
+        );
+        assert!(
+            result.is_none(),
+            "Ray missing segment past endpoint should return None"
+        );
+    }
+
+    #[test]
+    fn ray_segment_degenerate_zero_length() {
+        // Zero-length segment
+        let result = ray_segment_intersection(
+            0.0, 0.0, // origin
+            1.0, 0.0, // direction
+            5.0, 5.0, // degenerate segment (same start/end)
+            5.0, 5.0,
+        );
+        assert!(result.is_none(), "Zero-length segment should return None");
+    }
+
+    #[test]
+    fn ray_segment_normal_faces_ray_origin() {
+        // Ray going +X, hits a vertical segment
+        let result = ray_segment_intersection(
+            0.0, 0.0, // origin
+            1.0, 0.0, // direction: +X
+            5.0, -5.0, // vertical segment at x=5
+            5.0, 5.0,
+        );
+        assert!(result.is_some());
+        let (_, nx, nz) = result.unwrap();
+        // Normal should face back toward origin (negative X direction)
+        let dot = nx * 1.0 + nz * 0.0;
+        assert!(
+            dot < 0.0,
+            "Normal should face ray origin: dot(normal, ray_dir) = {dot}"
+        );
+    }
+
+    #[test]
+    fn ray_segment_perpendicular_hit() {
+        // Simple perpendicular hit: ray +X hitting vertical segment at x=10
+        let result = ray_segment_intersection(
+            0.0, 0.0, // origin
+            1.0, 0.0, // direction: +X
+            10.0, -5.0, // vertical segment at x=10
+            10.0, 5.0,
+        );
+        assert!(result.is_some());
+        let (t, nx, _nz) = result.unwrap();
+        assert!(
+            (t - 10.0).abs() < 0.1,
+            "t should be ~10.0 for perpendicular hit, got {t}"
+        );
+        assert!(
+            nx < 0.0,
+            "Normal x should face -X (toward origin), got {nx}"
+        );
+    }
+
+    // ================================================================
+    // Phase 2c: Ray-circle intersection tests
+    // ================================================================
+
+    #[test]
+    fn ray_circle_direct_center_hit() {
+        // Ray aimed directly at circle center
+        let result = ray_circle_intersection(
+            0.0, 0.0, // origin
+            1.0, 0.0, // direction: +X
+            10.0, 0.0, // circle center
+            1.0, // radius
+        );
+        assert!(result.is_some(), "Direct center hit should return Some");
+        let t = result.unwrap();
+        // Should hit at distance - radius = 10 - 1 = 9
+        assert!(
+            (t - 9.0).abs() < 0.1,
+            "t should be ~9.0 (distance minus radius), got {t}"
+        );
+    }
+
+    #[test]
+    fn ray_circle_tangent_near_miss() {
+        // Ray that just barely misses the circle (passes tangentially outside)
+        let result = ray_circle_intersection(
+            0.0, 0.0, // origin
+            1.0, 0.0, // direction: +X
+            10.0, 1.1, // circle center offset just beyond radius
+            1.0, // radius
+        );
+        assert!(result.is_none(), "Tangent near-miss should return None");
+    }
+
+    #[test]
+    fn ray_circle_clear_miss() {
+        // Ray parallel to circle edge, far away
+        let result = ray_circle_intersection(
+            0.0, 0.0, // origin
+            1.0, 0.0, // direction: +X
+            10.0, 10.0, // circle far away in Z
+            1.0,
+        );
+        assert!(result.is_none(), "Clear miss should return None");
+    }
+
+    #[test]
+    fn ray_circle_starts_inside() {
+        // Origin inside circle — should return exit point (t2)
+        let result = ray_circle_intersection(
+            10.0, 0.0, // origin inside circle centered at (10,0)
+            1.0, 0.0, // direction: +X
+            10.0, 0.0, // circle center
+            5.0, // radius
+        );
+        assert!(
+            result.is_some(),
+            "Ray starting inside should return exit point"
+        );
+        let t = result.unwrap();
+        assert!(t > 0.0, "t should be positive for exit point, got {t}");
+    }
+
+    #[test]
+    fn ray_circle_moving_away() {
+        // Ray moving away from circle (behind origin)
+        let result = ray_circle_intersection(
+            0.0, 0.0, // origin
+            -1.0, 0.0, // direction: -X (away from circle)
+            10.0, 0.0, // circle center at +X
+            1.0,
+        );
+        assert!(
+            result.is_none(),
+            "Ray moving away from circle should return None"
+        );
+    }
+
+    #[test]
+    fn ray_circle_glancing_hit() {
+        // Ray that barely intersects the circle
+        let result = ray_circle_intersection(
+            0.0, 0.0, // origin
+            1.0, 0.0, // direction: +X
+            10.0, 0.95, // circle center offset just within radius
+            1.0,
+        );
+        assert!(result.is_some(), "Glancing hit should return Some");
+    }
+
+    // ================================================================
+    // Phase 2d: Multi-bounce & hit ordering tests
+    // ================================================================
+
+    #[test]
+    fn laser_reflect_then_hit_player() {
+        // Player behind a reflective wall, reachable by bouncing off it
+        let walls = vec![ArenaWall {
+            ax: 10.0,
+            az: -20.0,
+            bx: 10.0,
+            bz: 20.0,
+            wall_type: WallType::Reflective,
+        }];
+        // Player at (-5, 0) — behind the shooter, reachable via reflection
+        let players = vec![(2, -5.0, 0.0)];
+        // Shoot +X, reflect off wall at x=10, then laser goes -X toward player
+        let result = raycast_laser(0.0, 0.0, 0.0, &walls, &players, 1, &[], 200.0);
+        assert_eq!(
+            result.hit_player,
+            Some(2),
+            "Player should be hit via reflection"
+        );
+        assert!(
+            result.segments.len() >= 2,
+            "Should have at least 2 segments (before and after reflection)"
+        );
+    }
+
+    #[test]
+    fn laser_double_bounce_hit() {
+        // Two reflective walls forming a corridor for double bounce
+        let walls = vec![
+            ArenaWall {
+                ax: 5.0,
+                az: -20.0,
+                bx: 5.0,
+                bz: 20.0,
+                wall_type: WallType::Reflective,
+            },
+            ArenaWall {
+                ax: -5.0,
+                az: -20.0,
+                bx: -5.0,
+                bz: 20.0,
+                wall_type: WallType::Reflective,
+            },
+        ];
+        // Shoot at slight angle → bounce off right wall → bounce off left wall → continue
+        let result = raycast_laser(0.0, 0.0, 0.1, &walls, &[], 0, &[], 200.0);
+        assert!(
+            result.segments.len() == 3,
+            "Should have 3 segments for double bounce, got {}",
+            result.segments.len()
+        );
+    }
+
+    #[test]
+    fn laser_hits_nearest_of_two_players() {
+        let walls = vec![];
+        // Two players in line along +X, nearest should be hit
+        let players = vec![(2, 5.0, 0.0), (3, 10.0, 0.0)];
+        let result = raycast_laser(0.0, 0.0, 0.0, &walls, &players, 1, &[], 200.0);
+        assert_eq!(
+            result.hit_player,
+            Some(2),
+            "Nearest player (id=2 at x=5) should be hit, not id=3 at x=10"
+        );
+    }
+
+    #[test]
+    fn laser_grazing_angle_reflection() {
+        // Near-parallel ray to reflective wall
+        let walls = vec![ArenaWall {
+            ax: 10.0,
+            az: -20.0,
+            bx: 10.0,
+            bz: 20.0,
+            wall_type: WallType::Reflective,
+        }];
+        // Very shallow angle (nearly parallel)
+        let result = raycast_laser(0.0, 0.0, 0.05, &walls, &[], 0, &[], 500.0);
+        // Should still reflect (2 segments) or travel past if too shallow to hit
+        assert!(
+            !result.segments.is_empty(),
+            "Grazing angle should produce at least 1 segment"
+        );
+    }
+
+    #[test]
+    fn laser_solid_wall_stops_no_bounce() {
+        // Solid wall should block the laser, not reflect it
+        let walls = vec![ArenaWall {
+            ax: 10.0,
+            az: -20.0,
+            bx: 10.0,
+            bz: 20.0,
+            wall_type: WallType::Solid,
+        }];
+        let result = raycast_laser(0.0, 0.0, 0.0, &walls, &[], 0, &[], 200.0);
+        assert_eq!(
+            result.segments.len(),
+            1,
+            "Solid wall should stop laser (1 segment only), got {}",
+            result.segments.len()
+        );
+    }
+
+    // ================================================================
+    // Phase 4c: Property-based tests (proptest)
+    // ================================================================
+
+    mod proptests {
+        use super::*;
+        use crate::arena::{ArenaSize, generate_arena};
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn raycast_distance_never_exceeds_max(
+                aim_angle in -std::f32::consts::PI..std::f32::consts::PI
+            ) {
+                let arena = generate_arena(ArenaSize::Default);
+                let max_dist = 100.0;
+                let result = raycast_laser(
+                    25.0, 25.0, aim_angle, &arena.walls, &[], 0, &[], max_dist,
+                );
+                prop_assert!(
+                    result.total_distance <= max_dist + 1.0,
+                    "Total distance ({}) should not exceed max ({})",
+                    result.total_distance,
+                    max_dist
+                );
+            }
+
+            #[test]
+            fn raycast_segments_form_continuous_path(
+                aim_angle in -std::f32::consts::PI..std::f32::consts::PI
+            ) {
+                let arena = generate_arena(ArenaSize::Default);
+                let result = raycast_laser(
+                    25.0, 25.0, aim_angle, &arena.walls, &[], 0, &[], 100.0,
+                );
+                for i in 1..result.segments.len() {
+                    let (_, _, prev_ex, prev_ez) = result.segments[i - 1];
+                    let (cur_sx, cur_sz, _, _) = result.segments[i];
+                    let gap = ((prev_ex - cur_sx).powi(2) + (prev_ez - cur_sz).powi(2)).sqrt();
+                    prop_assert!(
+                        gap < 1.0,
+                        "Gap between segment {} end and segment {} start: {gap}",
+                        i - 1,
+                        i
+                    );
+                }
+            }
+
+            #[test]
+            fn ray_aimed_at_center_always_hits(
+                distance in 5.0f32..50.0,
+                radius in 0.5f32..3.0
+            ) {
+                // Ray from origin aimed at circle center should always hit
+                let result = ray_circle_intersection(
+                    0.0, 0.0,
+                    1.0, 0.0,
+                    distance, 0.0,
+                    radius,
+                );
+                prop_assert!(
+                    result.is_some(),
+                    "Ray aimed at center should always hit: distance={distance}, radius={radius}"
+                );
+                let t = result.unwrap();
+                prop_assert!(
+                    (t - (distance - radius)).abs() < 0.1,
+                    "t ({t}) should be ~distance-radius ({})",
+                    distance - radius
+                );
+            }
+        }
     }
 }

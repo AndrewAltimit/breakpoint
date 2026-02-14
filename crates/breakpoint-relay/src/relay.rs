@@ -270,4 +270,94 @@ mod tests {
         assert!(!is_host_to_client(MessageType::PlayerInput));
         assert!(!is_host_to_client(MessageType::JoinRoom));
     }
+
+    // ================================================================
+    // Phase 6: Additional relay unit tests
+    // ================================================================
+
+    #[test]
+    fn client_ids_sequential() {
+        let mut state = RelayState::new(10);
+        let (host_tx, _host_rx) = mpsc::unbounded_channel();
+        state.create_room("ABCD-1234".to_string(), host_tx).unwrap();
+
+        let (tx1, _rx1) = mpsc::unbounded_channel();
+        let id1 = state.join_room("ABCD-1234", tx1).unwrap();
+
+        let (tx2, _rx2) = mpsc::unbounded_channel();
+        let id2 = state.join_room("ABCD-1234", tx2).unwrap();
+
+        let (tx3, _rx3) = mpsc::unbounded_channel();
+        let id3 = state.join_room("ABCD-1234", tx3).unwrap();
+
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
+        assert_eq!(id3, 3);
+    }
+
+    #[test]
+    fn duplicate_room_code_rejected() {
+        let mut state = RelayState::new(10);
+        let (tx1, _rx1) = mpsc::unbounded_channel();
+        state.create_room("DUPE-0001".to_string(), tx1).unwrap();
+
+        let (tx2, _rx2) = mpsc::unbounded_channel();
+        let result = state.create_room("DUPE-0001".to_string(), tx2);
+        assert!(result.is_err(), "Duplicate room code should be rejected");
+    }
+
+    #[test]
+    fn room_count_tracking() {
+        let mut state = RelayState::new(10);
+        assert_eq!(state.room_count(), 0);
+
+        let (tx1, _rx1) = mpsc::unbounded_channel();
+        state.create_room("ROOM-0001".to_string(), tx1).unwrap();
+        assert_eq!(state.room_count(), 1);
+
+        let (tx2, _rx2) = mpsc::unbounded_channel();
+        state.create_room("ROOM-0002".to_string(), tx2).unwrap();
+        assert_eq!(state.room_count(), 2);
+
+        state.destroy_room("ROOM-0001");
+        assert_eq!(state.room_count(), 1);
+    }
+
+    #[test]
+    fn relay_to_nonexistent_room_no_panic() {
+        let state = RelayState::new(10);
+        // Should not panic when relaying to non-existent room
+        state.relay_to_host("NOPE-0000", &[0x01, 0x02]);
+        state.relay_to_clients("NOPE-0000", &[0x03, 0x04]);
+    }
+
+    #[test]
+    fn leave_nonexistent_room_returns_false() {
+        let mut state = RelayState::new(10);
+        let destroyed = state.leave_room("NOPE-0000", 1);
+        assert!(!destroyed, "Leaving non-existent room should return false");
+    }
+
+    #[test]
+    fn multiple_clients_independent_channels() {
+        let mut state = RelayState::new(10);
+        let (host_tx, _host_rx) = mpsc::unbounded_channel();
+        state.create_room("MULTI-001".to_string(), host_tx).unwrap();
+
+        let (tx1, mut rx1) = mpsc::unbounded_channel();
+        let _id1 = state.join_room("MULTI-001", tx1).unwrap();
+        let (tx2, mut rx2) = mpsc::unbounded_channel();
+        let _id2 = state.join_room("MULTI-001", tx2).unwrap();
+
+        // Broadcast to all clients
+        state.relay_to_clients("MULTI-001", &[0xAA]);
+
+        // Both should receive
+        assert_eq!(rx1.try_recv().unwrap(), vec![0xAA]);
+        assert_eq!(rx2.try_recv().unwrap(), vec![0xAA]);
+
+        // No extra messages
+        assert!(rx1.try_recv().is_err());
+        assert!(rx2.try_recv().is_err());
+    }
 }

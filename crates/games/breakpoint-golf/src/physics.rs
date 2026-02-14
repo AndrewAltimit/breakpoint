@@ -454,4 +454,181 @@ mod tests {
             "Z displacement ({dz}) should dominate over X displacement ({dx})"
         );
     }
+
+    // ================================================================
+    // Phase 1a: Power-to-velocity unit tests
+    // ================================================================
+
+    #[test]
+    fn stroke_zero_power_no_movement() {
+        let mut ball = BallState::new(Vec3::new(5.0, 0.0, 5.0));
+        ball.stroke(0.0, 0.0);
+        assert_eq!(ball.velocity.x, 0.0, "Zero power should not move ball");
+        assert_eq!(ball.velocity.z, 0.0, "Zero power should not move ball");
+    }
+
+    #[test]
+    fn stroke_half_power_half_speed() {
+        let mut ball = BallState::new(Vec3::new(5.0, 0.0, 5.0));
+        let half = MAX_POWER * 0.5;
+        ball.stroke(0.0, half);
+        let speed = velocity_magnitude(&ball.velocity);
+        assert!(
+            (speed - half).abs() < 0.01,
+            "Half power should give half speed, got {speed}"
+        );
+    }
+
+    #[test]
+    fn stroke_full_power_max_speed() {
+        let mut ball = BallState::new(Vec3::new(5.0, 0.0, 5.0));
+        ball.stroke(0.0, MAX_POWER);
+        let speed = velocity_magnitude(&ball.velocity);
+        assert!(
+            (speed - MAX_POWER).abs() < 0.01,
+            "Full power should give MAX_POWER speed, got {speed}"
+        );
+    }
+
+    #[test]
+    fn stroke_minimum_power_moves() {
+        // Client minimum power is 0.15 * MAX_POWER
+        let min_power = 0.15 * MAX_POWER;
+        let mut ball = BallState::new(Vec3::new(5.0, 0.0, 5.0));
+        ball.stroke(0.0, min_power);
+        let speed = velocity_magnitude(&ball.velocity);
+        assert!(
+            speed > MIN_VELOCITY,
+            "Minimum client power ({min_power}) should produce movement above MIN_VELOCITY, \
+             got {speed}"
+        );
+    }
+
+    #[test]
+    fn velocity_magnitude_equals_power_across_angles() {
+        let power = 10.0;
+        let angles = [
+            -std::f32::consts::PI,
+            -std::f32::consts::FRAC_PI_2,
+            0.0,
+            std::f32::consts::FRAC_PI_4,
+            std::f32::consts::FRAC_PI_2,
+            std::f32::consts::PI,
+        ];
+
+        for angle in angles {
+            let mut ball = BallState::new(Vec3::new(5.0, 0.0, 5.0));
+            ball.stroke(angle, power);
+            let speed = velocity_magnitude(&ball.velocity);
+            assert!(
+                (speed - power).abs() < 0.01,
+                "angle={angle:.3}: |velocity| should equal power ({power}), got {speed}"
+            );
+        }
+    }
+
+    // ================================================================
+    // Phase 4b: Property-based tests (proptest)
+    // ================================================================
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn stroke_velocity_magnitude_equals_power(
+                angle in -std::f32::consts::PI..std::f32::consts::PI,
+                power in 0.0f32..MAX_POWER
+            ) {
+                let mut ball = BallState::new(Vec3::new(5.0, 0.0, 5.0));
+                ball.stroke(angle, power);
+                let speed = velocity_magnitude(&ball.velocity);
+                let clamped = power.clamp(0.0, MAX_POWER);
+                prop_assert!(
+                    (speed - clamped).abs() < 0.01,
+                    "|velocity| ({speed}) should equal clamped power ({clamped})"
+                );
+            }
+
+            #[test]
+            fn friction_always_stops_ball(
+                vx in -MAX_POWER..MAX_POWER,
+                vz in -MAX_POWER..MAX_POWER
+            ) {
+                let course = default_course();
+                let mut ball = BallState::new(Vec3::new(
+                    course.width / 2.0,
+                    0.0,
+                    course.depth / 2.0,
+                ));
+                ball.velocity = Vec3::new(vx, 0.0, vz);
+
+                for _ in 0..500 {
+                    ball.tick(&course);
+                    if ball.is_stopped() {
+                        break;
+                    }
+                }
+
+                prop_assert!(
+                    ball.is_stopped(),
+                    "Ball should stop within 500 ticks: vel=({}, {})",
+                    ball.velocity.x,
+                    ball.velocity.z
+                );
+            }
+
+            #[test]
+            fn ball_stays_in_bounds_after_stroke(
+                angle in -std::f32::consts::PI..std::f32::consts::PI,
+                power_frac in 0.1f32..1.0
+            ) {
+                let course = default_course();
+                let mut ball = BallState::new(course.spawn_point);
+                ball.stroke(angle, power_frac * MAX_POWER);
+
+                for _ in 0..200 {
+                    ball.tick(&course);
+                    if ball.is_stopped() {
+                        break;
+                    }
+                }
+
+                prop_assert!(
+                    ball.position.x >= 0.0 && ball.position.x <= course.width,
+                    "Ball x={} out of bounds [0, {}]",
+                    ball.position.x,
+                    course.width
+                );
+                prop_assert!(
+                    ball.position.z >= 0.0 && ball.position.z <= course.depth,
+                    "Ball z={} out of bounds [0, {}]",
+                    ball.position.z,
+                    course.depth
+                );
+            }
+
+            #[test]
+            fn stroke_direction_matches_angle(
+                angle in -std::f32::consts::PI..std::f32::consts::PI,
+                power in 1.0f32..MAX_POWER
+            ) {
+                let mut ball = BallState::new(Vec3::new(5.0, 0.0, 5.0));
+                ball.stroke(angle, power);
+                let actual_angle = ball.velocity.z.atan2(ball.velocity.x);
+                // atan2 angles should match within a small tolerance
+                let diff = (actual_angle - angle).abs();
+                let diff = if diff > std::f32::consts::PI {
+                    2.0 * std::f32::consts::PI - diff
+                } else {
+                    diff
+                };
+                prop_assert!(
+                    diff < 0.01,
+                    "Stroke angle mismatch: input={angle:.4}, actual={actual_angle:.4}"
+                );
+            }
+        }
+    }
 }

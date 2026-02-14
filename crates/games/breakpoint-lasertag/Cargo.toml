@@ -16,6 +16,7 @@ rand.workspace = true
 
 [dev-dependencies]
 breakpoint-core = { path = "../../breakpoint-core", features = ["test-helpers"] }
+proptest.workspace = true
 
 [lints]
 workspace = true
