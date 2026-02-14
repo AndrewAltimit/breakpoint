@@ -438,4 +438,287 @@ mod tests {
         let game = PlatformRacer::new();
         assert_eq!(game.tick_rate(), 15.0);
     }
+
+    /// Helper: build a GameConfig with survival mode enabled.
+    fn survival_config(round_duration_secs: u64) -> GameConfig {
+        let mut config = default_config(round_duration_secs);
+        config.custom.insert(
+            "mode".to_string(),
+            serde_json::Value::String("survival".to_string()),
+        );
+        config
+    }
+
+    /// Helper: build empty PlayerInputs.
+    fn empty_inputs() -> PlayerInputs {
+        PlayerInputs {
+            inputs: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn hazard_elimination_with_shield() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(2);
+        game.init(&players, &survival_config(120));
+
+        let pid = 1u64;
+
+        // Give player 1 a Shield power-up
+        game.state
+            .active_powerups
+            .entry(pid)
+            .or_default()
+            .push(ActivePowerUp::new(PowerUpKind::Shield));
+
+        // Raise hazard_y above the player's current position so the hazard check
+        // triggers without the -5.0 floor respawn interfering.
+        let player_y = game.state.players[&pid].y;
+        game.state.hazard_y = player_y + 10.0;
+
+        // Record checkpoint position before the tick
+        let checkpoint_x = game.state.players[&pid].last_checkpoint_x;
+        let checkpoint_y = game.state.players[&pid].last_checkpoint_y;
+
+        // Tick the game — shield should save the player
+        game.update(1.0 / 15.0, &empty_inputs());
+
+        let player = &game.state.players[&pid];
+        // Player should NOT be eliminated
+        assert!(!player.eliminated, "Shield should prevent elimination");
+        // Player should be respawned near checkpoint (physics substeps may slightly adjust)
+        let expected_y = checkpoint_y + 1.0;
+        assert!(
+            (player.x - checkpoint_x).abs() < 1.0,
+            "Player should respawn near checkpoint x"
+        );
+        assert!(
+            (player.y - expected_y).abs() < 1.0,
+            "Player should respawn near checkpoint y + 1.0, got {} expected {}",
+            player.y,
+            expected_y
+        );
+        // Shield should have been consumed
+        let shields: Vec<_> = game.state.active_powerups[&pid]
+            .iter()
+            .filter(|p| p.kind == PowerUpKind::Shield)
+            .collect();
+        assert!(
+            shields.is_empty(),
+            "Shield should be consumed after saving player"
+        );
+        // Player should NOT be in elimination order
+        assert!(
+            !game.state.elimination_order.contains(&pid),
+            "Shielded player should not appear in elimination_order"
+        );
+    }
+
+    #[test]
+    fn hazard_elimination_without_shield() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(3);
+        game.init(&players, &survival_config(120));
+
+        let pid = 2u64;
+
+        // Raise hazard_y well above the player's position so the check triggers
+        // after physics runs. This avoids the -5.0 floor respawn interfering.
+        let player_y = game.state.players[&pid].y;
+        game.state.hazard_y = player_y + 10.0;
+
+        game.update(1.0 / 15.0, &empty_inputs());
+
+        let player = &game.state.players[&pid];
+        assert!(
+            player.eliminated,
+            "Player below hazard_y without shield should be eliminated"
+        );
+        assert!(
+            game.state.elimination_order.contains(&pid),
+            "Eliminated player should appear in elimination_order"
+        );
+    }
+
+    #[test]
+    fn double_jump_physics() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(120));
+
+        let pid = 1u64;
+
+        // Verify player starts without double jump
+        assert!(
+            !game.state.players[&pid].has_double_jump,
+            "Player should not start with double jump"
+        );
+
+        // Directly grant DoubleJump power-up (simulating collection)
+        game.state
+            .active_powerups
+            .entry(pid)
+            .or_default()
+            .push(ActivePowerUp::new(PowerUpKind::DoubleJump));
+        game.state.players.get_mut(&pid).unwrap().has_double_jump = true;
+
+        assert!(
+            game.state.players[&pid].has_double_jump,
+            "Player should have double jump after collecting DoubleJump power-up"
+        );
+    }
+
+    #[test]
+    fn powerup_expiration() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(120));
+
+        let pid = 1u64;
+
+        // Give player a SpeedBoost (duration = 3.0s) and a Shield (infinite)
+        game.state
+            .active_powerups
+            .entry(pid)
+            .or_default()
+            .push(ActivePowerUp::new(PowerUpKind::SpeedBoost));
+        game.state
+            .active_powerups
+            .entry(pid)
+            .or_default()
+            .push(ActivePowerUp::new(PowerUpKind::Shield));
+
+        assert_eq!(
+            game.state.active_powerups[&pid].len(),
+            2,
+            "Player should have 2 active power-ups"
+        );
+
+        // Tick enough time for SpeedBoost to expire (3.0s), but not Shield (infinite)
+        // Each tick at 15 Hz = 1/15s, so 45 ticks = 3s. Use a few extra to be safe.
+        for _ in 0..50 {
+            game.update(1.0 / 15.0, &empty_inputs());
+        }
+
+        let pus = &game.state.active_powerups[&pid];
+        assert_eq!(
+            pus.len(),
+            1,
+            "SpeedBoost should have expired, leaving only Shield"
+        );
+        assert_eq!(
+            pus[0].kind,
+            PowerUpKind::Shield,
+            "Remaining power-up should be Shield"
+        );
+    }
+
+    #[test]
+    fn course_generation_reproducibility() {
+        let seed = 12345u64;
+        let course_a = course_gen::generate_course(seed);
+        let course_b = course_gen::generate_course(seed);
+
+        assert_eq!(
+            course_a.width, course_b.width,
+            "Width should match for same seed"
+        );
+        assert_eq!(
+            course_a.height, course_b.height,
+            "Height should match for same seed"
+        );
+        assert_eq!(
+            course_a.tiles, course_b.tiles,
+            "Tiles should match for same seed"
+        );
+        assert_eq!(
+            course_a.spawn_x, course_b.spawn_x,
+            "Spawn X should match for same seed"
+        );
+        assert_eq!(
+            course_a.spawn_y, course_b.spawn_y,
+            "Spawn Y should match for same seed"
+        );
+
+        // Different seed should produce different tiles
+        let course_c = course_gen::generate_course(seed + 1);
+        assert_ne!(
+            course_a.tiles, course_c.tiles,
+            "Different seeds should produce different courses"
+        );
+    }
+
+    #[test]
+    fn race_round_completion() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(3);
+        game.init(&players, &default_config(120));
+
+        // Mark all players as finished
+        for &pid in &game.player_ids.clone() {
+            if let Some(player) = game.state.players.get_mut(&pid) {
+                player.finished = true;
+            }
+        }
+
+        let events = game.update(1.0 / 15.0, &empty_inputs());
+
+        assert!(
+            game.state.round_complete,
+            "Round should be complete when all players finish in Race mode"
+        );
+        assert!(
+            events.iter().any(|e| matches!(e, GameEvent::RoundComplete)),
+            "RoundComplete event should be emitted"
+        );
+    }
+
+    #[test]
+    fn survival_round_completion() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(3);
+        game.init(&players, &survival_config(120));
+
+        // Eliminate 2 of 3 players, leaving only 1 active
+        for &pid in &[1u64, 2u64] {
+            if let Some(player) = game.state.players.get_mut(&pid) {
+                player.eliminated = true;
+            }
+            game.state.elimination_order.push(pid);
+            game.eliminated_set.insert(pid);
+        }
+
+        let events = game.update(1.0 / 15.0, &empty_inputs());
+
+        assert!(
+            game.state.round_complete,
+            "Round should be complete when only 1 player remains in Survival mode"
+        );
+        assert!(
+            events.iter().any(|e| matches!(e, GameEvent::RoundComplete)),
+            "RoundComplete event should be emitted"
+        );
+    }
+
+    #[test]
+    fn timer_expiry_completes_round() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(2);
+        // Set a very short round duration (1 second)
+        game.init(&players, &default_config(1));
+
+        // Tick past the round duration
+        // round_duration is 1.0s, each tick adds dt to round_timer
+        // Use a large dt to push past it in one call
+        let events = game.update(2.0, &empty_inputs());
+
+        assert!(
+            game.state.round_complete,
+            "Round should be complete when timer exceeds round duration"
+        );
+        assert!(
+            events.iter().any(|e| matches!(e, GameEvent::RoundComplete)),
+            "RoundComplete event should be emitted on timer expiry"
+        );
+    }
 }

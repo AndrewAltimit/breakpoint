@@ -787,4 +787,146 @@ mod tests {
             "Player 2's ball should now be moving"
         );
     }
+
+    // ================================================================
+    // Edge case tests
+    // ================================================================
+
+    #[test]
+    fn multi_player_simultaneous_sunk() {
+        let mut game = MiniGolf::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(90));
+
+        // Place both balls at the hole position with tiny velocity so they sink on the
+        // same update tick.
+        let hole_pos = game.course().hole_position;
+        for ball in game.state.balls.values_mut() {
+            ball.position = hole_pos;
+            ball.velocity = course::Vec3::new(0.01, 0.0, 0.0);
+            ball.is_sunk = false;
+        }
+        // Give each player 1 stroke so scoring is meaningful
+        for strokes in game.state.strokes.values_mut() {
+            *strokes = 1;
+        }
+
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        let events = game.update(0.1, &inputs);
+
+        // Both players should be in the sunk_order
+        assert_eq!(
+            game.state.sunk_order.len(),
+            2,
+            "Both players should be recorded in sunk_order"
+        );
+
+        // The first player in sunk_order gets the first-sink bonus (+3)
+        let first_sunk_id = game.state.sunk_order[0];
+        let second_sunk_id = game.state.sunk_order[1];
+        assert_ne!(first_sunk_id, second_sunk_id);
+
+        // Both should have ScoreUpdate events
+        let score_events: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                GameEvent::ScoreUpdate { player_id, score } => Some((*player_id, *score)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(score_events.len(), 2, "Should have 2 ScoreUpdate events");
+
+        // First-sunk player gets the first-sink bonus; second does not
+        let first_score = score_events
+            .iter()
+            .find(|(pid, _)| *pid == first_sunk_id)
+            .unwrap()
+            .1;
+        let second_score = score_events
+            .iter()
+            .find(|(pid, _)| *pid == second_sunk_id)
+            .unwrap()
+            .1;
+        assert!(
+            first_score > second_score,
+            "First to sink should get bonus: first={first_score}, second={second_score}"
+        );
+
+        // Round should be complete (all sunk)
+        assert!(game.is_round_complete());
+        assert!(events.iter().any(|e| matches!(e, GameEvent::RoundComplete)));
+    }
+
+    #[test]
+    fn dnf_timeout_scoring() {
+        let mut game = MiniGolf::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(90));
+
+        // Player 1 sinks manually
+        game.state.sunk_order.push(1);
+        game.sunk_set.insert(1);
+        game.state.strokes.insert(1, 2);
+        game.state.balls.get_mut(&1).unwrap().is_sunk = true;
+
+        // Player 2 never sinks — advance the timer past the round duration
+        game.state.round_timer = MiniGolf::ROUND_DURATION - 0.01;
+
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        let events = game.update(0.1, &inputs);
+
+        // Round should complete due to timer expiry
+        assert!(game.is_round_complete());
+        assert!(events.iter().any(|e| matches!(e, GameEvent::RoundComplete)));
+
+        // Check round results: player 2 (DNF) should score -1
+        let results = game.round_results();
+        let p2_result = results.iter().find(|r| r.player_id == 2).unwrap();
+        assert_eq!(p2_result.score, -1, "DNF player should score -1");
+
+        // Player 1 (finished, first sink, under par) should have a positive score
+        let p1_result = results.iter().find(|r| r.player_id == 1).unwrap();
+        assert!(
+            p1_result.score > 0,
+            "Finished player should have positive score, got {}",
+            p1_result.score
+        );
+    }
+
+    #[test]
+    fn power_clamping() {
+        let mut game = MiniGolf::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(90));
+
+        // Send a stroke with power > 1.0 (which gets multiplied by MAX_POWER in apply_input).
+        // Power 1.5 * MAX_POWER = 37.5, but stroke() internally clamps to MAX_POWER.
+        let input = GolfInput {
+            aim_angle: 0.0,
+            power: 1.5,
+            stroke: true,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        // Ball should be moving (stroke accepted)
+        assert!(
+            !game.state.balls[&1].is_stopped(),
+            "Ball should be moving after stroke with clamped power"
+        );
+        assert_eq!(game.state.strokes[&1], 1, "Stroke should be counted");
+
+        // Velocity magnitude should be clamped to MAX_POWER
+        let vel = &game.state.balls[&1].velocity;
+        let speed = (vel.x * vel.x + vel.z * vel.z).sqrt();
+        assert!(
+            speed <= physics::MAX_POWER + 0.01,
+            "Speed should be clamped to MAX_POWER ({:.2}), got {speed:.2}",
+            physics::MAX_POWER
+        );
+    }
 }

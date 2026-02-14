@@ -2,8 +2,8 @@
 mod common;
 
 use breakpoint_core::net::messages::{
-    ChatMessageMsg, ClientMessage, GameEndMsg, GameStartMsg, GameStateMsg, PlayerInputMsg,
-    PlayerScoreEntry, RoundEndMsg, ServerMessage,
+    ChatMessageMsg, ClientMessage, GameEndMsg, GameStartMsg, GameStateMsg, JoinRoomMsg,
+    PlayerInputMsg, PlayerScoreEntry, RoundEndMsg, ServerMessage,
 };
 use breakpoint_core::net::protocol::{decode_client_message, encode_client_message};
 use breakpoint_core::player::PlayerColor;
@@ -562,5 +562,222 @@ async fn player_input_with_real_golf_data() {
             assert!(recovered.stroke);
         },
         other => panic!("Expected PlayerInput, got: {other:?}"),
+    }
+}
+
+// ============================================================================
+// Error path tests
+// ============================================================================
+
+#[tokio::test]
+async fn join_empty_player_name_rejected() {
+    let server = TestServer::new().await;
+    let mut stream = ws_connect(&server.ws_url()).await;
+
+    let resp = ws_join_room_with_name(&mut stream, "").await;
+    assert!(!resp.success);
+    let err = resp.error.as_deref().expect("Should have error message");
+    assert!(
+        err.contains("Invalid player name"),
+        "Expected 'Invalid player name' error, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn join_control_chars_in_name_rejected() {
+    let server = TestServer::new().await;
+
+    // Test newline in name
+    let mut stream1 = ws_connect(&server.ws_url()).await;
+    let resp = ws_join_room_with_name(&mut stream1, "Alice\nBob").await;
+    assert!(!resp.success);
+    let err = resp.error.as_deref().expect("Should have error message");
+    assert!(
+        err.contains("Invalid player name"),
+        "Newline in name should be rejected, got: {err}"
+    );
+
+    // Test null byte in name
+    let mut stream2 = ws_connect(&server.ws_url()).await;
+    let resp = ws_join_room_with_name(&mut stream2, "Alice\0Bob").await;
+    assert!(!resp.success);
+    let err = resp.error.as_deref().expect("Should have error message");
+    assert!(
+        err.contains("Invalid player name"),
+        "Null byte in name should be rejected, got: {err}"
+    );
+
+    // Test tab character in name
+    let mut stream3 = ws_connect(&server.ws_url()).await;
+    let resp = ws_join_room_with_name(&mut stream3, "Alice\tBob").await;
+    assert!(!resp.success);
+    let err = resp.error.as_deref().expect("Should have error message");
+    assert!(
+        err.contains("Invalid player name"),
+        "Tab in name should be rejected, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn join_too_long_name_rejected() {
+    let server = TestServer::new().await;
+    let mut stream = ws_connect(&server.ws_url()).await;
+
+    // Exactly 33 characters (one over the 32-char limit)
+    let long_name = "A".repeat(33);
+    let resp = ws_join_room_with_name(&mut stream, &long_name).await;
+    assert!(!resp.success);
+    let err = resp.error.as_deref().expect("Should have error message");
+    assert!(
+        err.contains("Invalid player name"),
+        "Name > 32 chars should be rejected, got: {err}"
+    );
+
+    // Exactly 32 characters should be accepted
+    let mut stream2 = ws_connect(&server.ws_url()).await;
+    let ok_name = "B".repeat(32);
+    let resp2 = ws_join_room_with_name(&mut stream2, &ok_name).await;
+    assert!(resp2.success, "Name of exactly 32 chars should be accepted");
+}
+
+#[tokio::test]
+async fn oversized_message_dropped() {
+    let server = TestServer::new().await;
+
+    // Set up a two-player room
+    let (mut host, mut client, _host_id, client_id, _room_code) =
+        setup_two_player_room(&server).await;
+
+    // Construct oversized raw binary data (> 64 KiB) bypassing the protocol
+    // encoder which also enforces MAX_MESSAGE_SIZE. We craft a valid
+    // PlayerInput type prefix (0x01) followed by enough junk bytes to exceed
+    // the limit. The server's read_loop checks data.len() > MAX_MESSAGE_SIZE
+    // and silently drops such messages.
+    let mut oversized = Vec::with_capacity(65 * 1024 + 1);
+    oversized.push(0x01); // PlayerInput message type byte
+    oversized.resize(65 * 1024 + 1, 0xAA); // fill to > 64 KiB
+    assert!(
+        oversized.len() > breakpoint_core::net::protocol::MAX_MESSAGE_SIZE,
+        "Test message should exceed MAX_MESSAGE_SIZE"
+    );
+    client
+        .send(Message::Binary(oversized.into()))
+        .await
+        .unwrap();
+
+    // Host should NOT receive the oversized message (silently dropped)
+    let maybe = ws_try_read_raw(&mut host, 500).await;
+    assert!(
+        maybe.is_none(),
+        "Oversized message should be silently dropped"
+    );
+
+    // Verify the connection is still alive by sending a normal-sized message
+    let normal_input = ClientMessage::PlayerInput(PlayerInputMsg {
+        player_id: client_id,
+        tick: 2,
+        input_data: vec![0xBB, 0xCC],
+    });
+    ws_send_client_msg(&mut client, &normal_input).await;
+
+    let data = ws_read_raw(&mut host).await;
+    let decoded = decode_client_message(&data).unwrap();
+    match decoded {
+        ClientMessage::PlayerInput(pi) => {
+            assert_eq!(pi.player_id, client_id);
+            assert_eq!(pi.tick, 2);
+            assert_eq!(pi.input_data, vec![0xBB, 0xCC]);
+        },
+        other => panic!("Expected PlayerInput after oversized drop, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn lifecycle_from_non_host_rejected() {
+    let server = TestServer::new().await;
+    let (mut host, mut client, host_id, client_id, _room_code) =
+        setup_two_player_room(&server).await;
+
+    // Non-host sends GameStart — should be silently dropped
+    let game_start = ServerMessage::GameStart(GameStartMsg {
+        game_name: "mini-golf".to_string(),
+        players: vec![],
+        host_id: client_id,
+    });
+    ws_send_server_msg(&mut client, &game_start).await;
+
+    // Host should NOT receive it
+    let maybe = ws_try_read_raw(&mut host, 500).await;
+    assert!(
+        maybe.is_none(),
+        "Non-host GameStart should be silently dropped"
+    );
+
+    // Non-host sends RoundEnd — should also be silently dropped
+    let round_end = ServerMessage::RoundEnd(RoundEndMsg {
+        round: 1,
+        scores: vec![],
+    });
+    ws_send_server_msg(&mut client, &round_end).await;
+
+    let maybe = ws_try_read_raw(&mut host, 500).await;
+    assert!(
+        maybe.is_none(),
+        "Non-host RoundEnd should be silently dropped"
+    );
+
+    // Non-host sends GameEnd — should also be silently dropped
+    let game_end = ServerMessage::GameEnd(GameEndMsg {
+        final_scores: vec![],
+    });
+    ws_send_server_msg(&mut client, &game_end).await;
+
+    let maybe = ws_try_read_raw(&mut host, 500).await;
+    assert!(
+        maybe.is_none(),
+        "Non-host GameEnd should be silently dropped"
+    );
+
+    // Verify the host can still send lifecycle messages normally
+    let real_start = ServerMessage::GameStart(GameStartMsg {
+        game_name: "mini-golf".to_string(),
+        players: vec![],
+        host_id,
+    });
+    ws_send_server_msg(&mut host, &real_start).await;
+
+    let msg = ws_read_server_msg(&mut client).await;
+    assert!(
+        matches!(msg, ServerMessage::GameStart(_)),
+        "Host GameStart should still work after non-host attempts"
+    );
+}
+
+#[tokio::test]
+async fn protocol_version_mismatch_rejected() {
+    let server = TestServer::new().await;
+    let mut stream = ws_connect(&server.ws_url()).await;
+
+    // Send JoinRoom with a mismatched protocol version (99)
+    let msg = ClientMessage::JoinRoom(JoinRoomMsg {
+        room_code: String::new(),
+        player_name: "Alice".to_string(),
+        player_color: PlayerColor::default(),
+        protocol_version: 99,
+    });
+    let encoded = encode_client_message(&msg).unwrap();
+    stream.send(Message::Binary(encoded.into())).await.unwrap();
+
+    let resp = ws_read_server_msg(&mut stream).await;
+    match resp {
+        ServerMessage::JoinRoomResponse(join) => {
+            assert!(!join.success, "Mismatched protocol version should fail");
+            let err = join.error.as_deref().expect("Should have error message");
+            assert!(
+                err.contains("version mismatch") || err.contains("Protocol version mismatch"),
+                "Error should mention version mismatch, got: {err}"
+            );
+        },
+        other => panic!("Expected JoinRoomResponse error, got: {other:?}"),
     }
 }

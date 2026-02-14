@@ -587,4 +587,307 @@ mod tests {
         assert_eq!(game.state.team_mode, TeamMode::Teams { team_count: 2 });
         assert_eq!(game.state.teams.len(), 4);
     }
+
+    // ================================================================
+    // Edge case tests
+    // ================================================================
+
+    /// Helper: create a 2-team config with 4 players.
+    fn teams_config() -> GameConfig {
+        let mut config = default_config(180);
+        config.custom.insert(
+            "team_mode".to_string(),
+            serde_json::Value::String("teams_2".to_string()),
+        );
+        config
+    }
+
+    #[test]
+    fn team_mode_friendly_fire() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(4);
+        game.init(&players, &teams_config());
+
+        // With teams_2 and round-robin assignment:
+        //   Player 1 (idx 0) → team 0
+        //   Player 2 (idx 1) → team 1
+        //   Player 3 (idx 2) → team 0
+        //   Player 4 (idx 3) → team 1
+        assert_eq!(game.state.teams[&1], 0);
+        assert_eq!(game.state.teams[&3], 0);
+
+        // Position player 1 and teammate player 3 so player 1's laser would hit player 3
+        game.state.players.get_mut(&1).unwrap().x = 5.0;
+        game.state.players.get_mut(&1).unwrap().z = 10.0;
+        game.state.players.get_mut(&1).unwrap().aim_angle = 0.0; // aiming +X
+        game.state.players.get_mut(&1).unwrap().fire_cooldown = 0.0;
+        game.state.players.get_mut(&1).unwrap().stun_remaining = 0.0;
+
+        // Place teammate directly in the line of fire
+        game.state.players.get_mut(&3).unwrap().x = 10.0;
+        game.state.players.get_mut(&3).unwrap().z = 10.0;
+        game.state.players.get_mut(&3).unwrap().stun_remaining = 0.0;
+
+        // Move other players far away so they can't be hit
+        game.state.players.get_mut(&2).unwrap().x = 5.0;
+        game.state.players.get_mut(&2).unwrap().z = 45.0;
+        game.state.players.get_mut(&4).unwrap().x = 5.0;
+        game.state.players.get_mut(&4).unwrap().z = 45.0;
+
+        // Player 1 fires
+        let input = LaserTagInput {
+            move_x: 0.0,
+            move_z: 0.0,
+            aim_angle: 0.0,
+            fire: true,
+            use_powerup: false,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        let events = game.update(0.05, &inputs);
+
+        // Teammate should NOT be stunned (friendly fire blocked)
+        assert!(
+            !game.state.players[&3].is_stunned(),
+            "Teammate should not be stunned by friendly fire"
+        );
+
+        // Player 1 should not get a tag scored
+        assert_eq!(
+            game.state.tags_scored[&1], 0,
+            "No tag should be scored for hitting a teammate"
+        );
+
+        // No ScoreUpdate events for player 1
+        let score_events: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, GameEvent::ScoreUpdate { player_id: 1, .. }))
+            .collect();
+        assert!(
+            score_events.is_empty(),
+            "No score event should be emitted for friendly fire"
+        );
+    }
+
+    #[test]
+    fn ffa_scoring() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(180));
+
+        // Position player 1 to fire at player 2
+        game.state.players.get_mut(&1).unwrap().x = 5.0;
+        game.state.players.get_mut(&1).unwrap().z = 10.0;
+        game.state.players.get_mut(&1).unwrap().aim_angle = 0.0; // aiming +X
+        game.state.players.get_mut(&1).unwrap().fire_cooldown = 0.0;
+        game.state.players.get_mut(&1).unwrap().stun_remaining = 0.0;
+
+        // Place player 2 directly in line of fire
+        game.state.players.get_mut(&2).unwrap().x = 10.0;
+        game.state.players.get_mut(&2).unwrap().z = 10.0;
+        game.state.players.get_mut(&2).unwrap().stun_remaining = 0.0;
+
+        // Player 1 fires
+        let input = LaserTagInput {
+            move_x: 0.0,
+            move_z: 0.0,
+            aim_angle: 0.0,
+            fire: true,
+            use_powerup: false,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        let events = game.update(0.05, &inputs);
+
+        // Player 2 should be stunned
+        assert!(
+            game.state.players[&2].is_stunned(),
+            "Target should be stunned after being hit"
+        );
+
+        // Player 1 should have 1 tag scored
+        assert_eq!(
+            game.state.tags_scored[&1], 1,
+            "Shooter should get 1 tag scored"
+        );
+
+        // ScoreUpdate event should be emitted
+        let has_score_event = events.iter().any(|e| {
+            matches!(e, GameEvent::ScoreUpdate { player_id: 1, score: 1 })
+        });
+        assert!(has_score_event, "ScoreUpdate event should be emitted for tag");
+    }
+
+    #[test]
+    fn powerup_duration_expiry() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(180));
+
+        // Give player 1 a RapidFire power-up (duration = 5.0s)
+        game.state
+            .active_powerups
+            .entry(1)
+            .or_default()
+            .push(ActiveLaserPowerUp::new(LaserPowerUpKind::RapidFire));
+
+        assert_eq!(
+            game.state.active_powerups[&1].len(),
+            1,
+            "Player should have 1 active power-up"
+        );
+
+        // Advance time but not past the duration
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(2.0, &inputs);
+        assert_eq!(
+            game.state.active_powerups[&1].len(),
+            1,
+            "Power-up should still be active at 2.0s"
+        );
+
+        // Advance past the 5.0s duration (total > 5.0s)
+        game.update(4.0, &inputs);
+        assert_eq!(
+            game.state.active_powerups[&1].len(),
+            0,
+            "Power-up should have expired after 6.0s total (duration is 5.0s)"
+        );
+    }
+
+    #[test]
+    fn arena_boundary_clamping() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(180));
+
+        let arena_width = game.arena.width;
+        let arena_depth = game.arena.depth;
+
+        // Place player near the right edge and push them beyond the boundary
+        game.state.players.get_mut(&1).unwrap().x = arena_width - 1.0;
+        game.state.players.get_mut(&1).unwrap().z = arena_depth - 1.0;
+        game.state.players.get_mut(&1).unwrap().stun_remaining = 0.0;
+
+        // Send large positive movement to push beyond bounds
+        let input = LaserTagInput {
+            move_x: 1.0,
+            move_z: 1.0,
+            aim_angle: 0.0,
+            fire: false,
+            use_powerup: false,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        // Run several ticks with large dt to push well beyond bounds
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(2.0, &inputs);
+
+        let player = &game.state.players[&1];
+        assert!(
+            player.x <= arena_width - projectile::PLAYER_RADIUS,
+            "X should be clamped to arena bounds: x={}, max={}",
+            player.x,
+            arena_width - projectile::PLAYER_RADIUS
+        );
+        assert!(
+            player.z <= arena_depth - projectile::PLAYER_RADIUS,
+            "Z should be clamped to arena bounds: z={}, max={}",
+            player.z,
+            arena_depth - projectile::PLAYER_RADIUS
+        );
+
+        // Also test clamping at the lower boundary
+        game.state.players.get_mut(&1).unwrap().x = 1.0;
+        game.state.players.get_mut(&1).unwrap().z = 1.0;
+
+        let input_neg = LaserTagInput {
+            move_x: -1.0,
+            move_z: -1.0,
+            aim_angle: 0.0,
+            fire: false,
+            use_powerup: false,
+        };
+        let data_neg = rmp_serde::to_vec(&input_neg).unwrap();
+        game.apply_input(1, &data_neg);
+
+        game.update(2.0, &inputs);
+
+        let player = &game.state.players[&1];
+        assert!(
+            player.x >= projectile::PLAYER_RADIUS,
+            "X should be clamped to lower bound: x={}, min={}",
+            player.x,
+            projectile::PLAYER_RADIUS
+        );
+        assert!(
+            player.z >= projectile::PLAYER_RADIUS,
+            "Z should be clamped to lower bound: z={}, min={}",
+            player.z,
+            projectile::PLAYER_RADIUS
+        );
+    }
+
+    #[test]
+    fn stun_prevents_movement() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(180));
+
+        // Place player at a known position and stun them
+        game.state.players.get_mut(&1).unwrap().x = 20.0;
+        game.state.players.get_mut(&1).unwrap().z = 20.0;
+        game.state.players.get_mut(&1).unwrap().stun_remaining = 5.0;
+
+        let pos_before_x = game.state.players[&1].x;
+        let pos_before_z = game.state.players[&1].z;
+
+        // Send movement input
+        let input = LaserTagInput {
+            move_x: 1.0,
+            move_z: 1.0,
+            aim_angle: 0.0,
+            fire: false,
+            use_powerup: false,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(0.05, &inputs);
+
+        let player = &game.state.players[&1];
+        assert_eq!(
+            player.x, pos_before_x,
+            "Stunned player X should not change: was {pos_before_x}, now {}",
+            player.x
+        );
+        assert_eq!(
+            player.z, pos_before_z,
+            "Stunned player Z should not change: was {pos_before_z}, now {}",
+            player.z
+        );
+
+        // Verify stun is still active (only decreased by dt=0.05 from 5.0)
+        assert!(
+            player.is_stunned(),
+            "Player should still be stunned, remaining={}",
+            player.stun_remaining
+        );
+    }
 }
