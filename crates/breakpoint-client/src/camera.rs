@@ -2,6 +2,7 @@ use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::prelude::*;
 
 use crate::app::AppState;
+use crate::effects::screen_shake::ScreenShake;
 use crate::game::ActiveGame;
 
 #[cfg(feature = "golf")]
@@ -82,6 +83,7 @@ fn setup_camera(mut commands: Commands) {
 fn update_camera(
     game: Option<Res<ActiveGame>>,
     mut camera_query: Query<&mut Transform, (With<GameCamera>, Without<GameLight>)>,
+    screen_shake: Option<Res<ScreenShake>>,
     #[cfg(feature = "golf")] course_info: Option<Res<GolfCourseInfo>>,
     #[cfg(feature = "golf")] network_role: Option<Res<NetworkRole>>,
     #[cfg(feature = "golf")] time: Res<Time>,
@@ -139,6 +141,15 @@ fn update_camera(
             }
         },
         _ => {},
+    }
+
+    // Apply screen shake offset after all camera positioning
+    if let Some(ref shake) = screen_shake
+        && shake.timer > 0.0
+    {
+        for mut transform in &mut camera_query {
+            transform.translation += shake.offset;
+        }
     }
 }
 

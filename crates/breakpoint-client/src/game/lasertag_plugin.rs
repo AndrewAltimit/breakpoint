@@ -8,6 +8,7 @@ use breakpoint_lasertag::{LaserTagArena, LaserTagInput, LaserTagState};
 
 use crate::app::AppState;
 use crate::net_client::WsClient;
+use crate::shaders::glow_material::GlowMaterial;
 
 use super::{
     ActiveGame, ControlsHint, GameEntity, GameRegistry, HudPosition, NetworkRole,
@@ -27,6 +28,7 @@ impl Plugin for LaserTagPlugin {
                     (
                         lasertag_input_system,
                         lasertag_render_sync,
+                        laser_trail_render_system,
                         lasertag_hud_system,
                     ),
                 )
@@ -73,6 +75,10 @@ struct LaserTagScoreText;
 /// Marker for HUD timer text.
 #[derive(Component)]
 struct LaserTagTimerText;
+
+/// Marker for ephemeral laser trail mesh entities.
+#[derive(Component)]
+struct LaserTrailEntity;
 
 #[allow(clippy::too_many_arguments)]
 fn setup_lasertag(
@@ -373,6 +379,59 @@ fn lasertag_hud_system(
     if let Ok(mut text) = timer_text.single_mut() {
         let remaining = (180.0 - state.round_timer).max(0.0);
         **text = format!("Time: {:.0}s", remaining);
+    }
+}
+
+/// Render laser trail segments from game state as glowing beams.
+/// Trails are ephemeral (max 0.3s) so we despawn+respawn each frame.
+fn laser_trail_render_system(
+    mut commands: Commands,
+    active_game: Res<ActiveGame>,
+    trail_query: Query<Entity, With<LaserTrailEntity>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut glow_materials: ResMut<Assets<GlowMaterial>>,
+) {
+    // Despawn previous frame's trail entities
+    for entity in &trail_query {
+        commands.entity(entity).despawn();
+    }
+
+    let state: Option<LaserTagState> = read_game_state(&active_game);
+    let Some(state) = state else {
+        return;
+    };
+
+    for trail in &state.laser_trails {
+        let alpha = (1.0 - trail.age / 0.3).clamp(0.0, 1.0);
+        if alpha < 0.01 {
+            continue;
+        }
+
+        for &(sx, sz, ex, ez) in &trail.segments {
+            let dx = ex - sx;
+            let dz = ez - sz;
+            let length = (dx * dx + dz * dz).sqrt();
+            if length < 0.01 {
+                continue;
+            }
+            let cx = (sx + ex) / 2.0;
+            let cz = (sz + ez) / 2.0;
+            let angle = dz.atan2(dx);
+            let beam_height = 0.08;
+            let beam_width = 0.06;
+
+            commands.spawn((
+                GameEntity,
+                LaserTrailEntity,
+                Mesh3d(meshes.add(Cuboid::new(length, beam_height, beam_width))),
+                MeshMaterial3d(glow_materials.add(GlowMaterial::new(
+                    LinearRgba::new(0.3, 0.9, 2.0, 1.0),
+                    1.5,
+                    alpha,
+                ))),
+                Transform::from_xyz(cx, 1.0, cz).with_rotation(Quat::from_rotation_y(-angle)),
+            ));
+        }
     }
 }
 

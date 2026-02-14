@@ -10,7 +10,13 @@ use breakpoint_golf::{GolfInput, GolfState, MiniGolf};
 
 use crate::app::AppState;
 use crate::camera::GameCamera;
+use crate::effects::particles::{sink_particle_update_system, spawn_sink_particles};
+use crate::effects::squash_stretch::{
+    BallVelocityTracker, bounce_detect_system, squash_stretch_animate_system,
+};
 use crate::net_client::WsClient;
+use crate::shaders::gradient_material::GradientMaterial;
+use crate::shaders::ripple_material::RippleMaterial;
 
 use super::{
     ActiveGame, ControlsHint, GameEntity, GameRegistry, HudPosition, NetworkRole,
@@ -37,12 +43,16 @@ impl Plugin for GolfPlugin {
                         golf_input_system,
                         golf_apply_input_system,
                         golf_render_sync,
+                        bounce_detect_system,
+                        squash_stretch_animate_system,
                         aim_line_system,
                         power_bar_system,
                         stroke_counter_system,
                         hole_info_system,
                         scoreboard_system,
                         sink_flash_system,
+                        sink_particle_update_system,
+                        update_ripple_time_system,
                     ),
                 )
                     .chain()
@@ -94,7 +104,7 @@ struct SunkTracker {
 
 /// Marker for ball mesh entities, keyed by player id.
 #[derive(Component)]
-struct BallEntity(PlayerId);
+pub struct BallEntity(pub PlayerId);
 
 /// Marker for aim line dot meshes.
 #[derive(Component)]
@@ -130,17 +140,24 @@ struct SinkFlash {
     timer: f32,
 }
 
+/// Marker for the animated ripple overlay on the golf hole.
+#[derive(Component)]
+struct HoleRipple;
+
 #[allow(clippy::too_many_arguments)]
 fn setup_golf(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut gradient_materials: ResMut<Assets<GradientMaterial>>,
+    mut ripple_materials: ResMut<Assets<RippleMaterial>>,
     lobby: Res<crate::lobby::LobbyState>,
     network_role: Res<NetworkRole>,
     active_game: Res<ActiveGame>,
 ) {
     commands.insert_resource(GolfLocalInput::default());
     commands.insert_resource(SunkTracker::default());
+    commands.insert_resource(BallVelocityTracker::default());
 
     // Get course info from the active game's serialized state
     let state: Option<GolfState> = read_game_state(&active_game);
@@ -172,18 +189,17 @@ fn setup_golf(
         Transform::from_xyz(course_data.width / 2.0, -0.01, course_data.depth / 2.0),
     ));
 
-    // Course floor (grass)
+    // Course floor (gradient grass — darker at spawn, lighter near hole)
     commands.spawn((
         GameEntity,
         Mesh3d(meshes.add(Plane3d::new(
             Vec3::Y,
             Vec2::new(course_data.width / 2.0, course_data.depth / 2.0),
         ))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.18, 0.65, 0.18),
-            perceptual_roughness: 0.9,
-            ..default()
-        })),
+        MeshMaterial3d(gradient_materials.add(GradientMaterial::new(
+            LinearRgba::new(0.12, 0.50, 0.12, 1.0),
+            LinearRgba::new(0.22, 0.75, 0.22, 1.0),
+        ))),
         Transform::from_xyz(course_data.width / 2.0, 0.0, course_data.depth / 2.0),
     ));
 
@@ -307,6 +323,23 @@ fn setup_golf(
         Transform::from_xyz(
             course_data.hole_position.x,
             0.01,
+            course_data.hole_position.z,
+        ),
+    ));
+
+    // Animated ripple overlay on hole (slightly larger, on top)
+    commands.spawn((
+        GameEntity,
+        HoleRipple,
+        Mesh3d(meshes.add(Cylinder::new(HOLE_RADIUS * 2.0, 0.01))),
+        MeshMaterial3d(ripple_materials.add(RippleMaterial::new(
+            LinearRgba::new(0.3, 0.8, 1.0, 0.5),
+            8.0,
+            3.0,
+        ))),
+        Transform::from_xyz(
+            course_data.hole_position.x,
+            0.02,
             course_data.hole_position.z,
         ),
     ));
@@ -634,6 +667,7 @@ fn golf_apply_input_system(
     network_role: Res<NetworkRole>,
     ws_client: NonSend<WsClient>,
     mut audio_queue: ResMut<crate::audio::AudioEventQueue>,
+    mut screen_shake: ResMut<crate::effects::screen_shake::ScreenShake>,
 ) {
     if !local_input.stroke_requested || network_role.is_spectator {
         return;
@@ -662,6 +696,11 @@ fn golf_apply_input_system(
     };
 
     audio_queue.push(crate::audio::AudioEvent::GolfStroke);
+
+    // Trigger screen shake proportional to stroke power
+    screen_shake.intensity = local_input.power * 0.3;
+    screen_shake.timer = 0.25;
+    screen_shake.duration = 0.25;
 
     send_player_input(&input, &mut active_game, &network_role, &ws_client);
 
@@ -845,6 +884,7 @@ fn sink_flash_system(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut flash_query: Query<(Entity, &mut SinkFlash, &mut Transform)>,
+    lobby: Res<crate::lobby::LobbyState>,
 ) {
     // Update existing flashes
     for (entity, mut flash, mut transform) in &mut flash_query {
@@ -871,6 +911,8 @@ fn sink_flash_system(
 
     for &pid in &state.sunk_order {
         if sunk_tracker.seen_sunk.insert(pid) {
+            let hole_pos = Vec3::new(course.hole_position.x, 0.3, course.hole_position.z);
+
             // New sink — spawn flash
             commands.spawn((
                 GameEntity,
@@ -882,8 +924,31 @@ fn sink_flash_system(
                     unlit: true,
                     ..default()
                 })),
-                Transform::from_xyz(course.hole_position.x, 0.3, course.hole_position.z),
+                Transform::from_translation(hole_pos),
             ));
+
+            // Spawn celebration particles in the player's color
+            let color = lobby
+                .players
+                .iter()
+                .find(|p| p.id == pid)
+                .map(|p| player_color_to_bevy(&p.color))
+                .unwrap_or(Color::WHITE);
+            spawn_sink_particles(&mut commands, &mut meshes, &mut materials, hole_pos, color);
+        }
+    }
+}
+
+/// Update the ripple material's time uniform from elapsed game time.
+fn update_ripple_time_system(
+    time: Res<Time>,
+    ripple_query: Query<&MeshMaterial3d<RippleMaterial>, With<HoleRipple>>,
+    mut ripple_materials: ResMut<Assets<RippleMaterial>>,
+) {
+    let elapsed = time.elapsed_secs();
+    for mat_handle in &ripple_query {
+        if let Some(mat) = ripple_materials.get_mut(mat_handle) {
+            mat.params.x = elapsed;
         }
     }
 }
@@ -891,6 +956,7 @@ fn sink_flash_system(
 fn cleanup_golf(mut commands: Commands) {
     commands.remove_resource::<GolfLocalInput>();
     commands.remove_resource::<SunkTracker>();
+    commands.remove_resource::<BallVelocityTracker>();
     // Note: GolfCourseInfo is preserved for BetweenRounds UI.
     // It's cleaned up in full_cleanup when returning to Lobby.
 }

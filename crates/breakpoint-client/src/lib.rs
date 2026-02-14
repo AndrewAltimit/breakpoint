@@ -2,12 +2,14 @@ mod app;
 mod audio;
 mod between_rounds;
 mod camera;
+mod effects;
 pub mod game;
 mod game_over;
 pub mod lobby;
 pub mod net_client;
 pub mod overlay;
 mod settings;
+mod shaders;
 mod storage;
 
 use bevy::prelude::*;
@@ -17,12 +19,14 @@ use app::AppState;
 use audio::AudioPlugin;
 use between_rounds::BetweenRoundsPlugin;
 use camera::GameCameraPlugin;
+use effects::EffectsPlugin;
 use game::GamePlugin;
 use game_over::GameOverPlugin;
 use lobby::LobbyPlugin;
 use net_client::WsClient;
 use overlay::OverlayPlugin;
 use settings::SettingsPlugin;
+use shaders::ShadersPlugin;
 
 /// WASM entry point.
 #[wasm_bindgen(start)]
@@ -46,6 +50,8 @@ pub fn start() {
             LobbyPlugin,
             GamePlugin,
             GameCameraPlugin,
+            EffectsPlugin,
+            ShadersPlugin,
             BetweenRoundsPlugin,
             GameOverPlugin,
             OverlayPlugin,
