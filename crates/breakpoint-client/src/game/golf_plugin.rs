@@ -17,6 +17,7 @@ use crate::effects::squash_stretch::{
 use crate::net_client::WsClient;
 use crate::shaders::gradient_material::GradientMaterial;
 use crate::shaders::ripple_material::RippleMaterial;
+use crate::theme::{Theme, rgb, rgba};
 
 use super::{
     ActiveGame, ControlsHint, GameEntity, GameRegistry, HudPosition, NetworkRole, cursor_to_ground,
@@ -154,6 +155,7 @@ fn setup_golf(
     lobby: Res<crate::lobby::LobbyState>,
     network_role: Res<NetworkRole>,
     active_game: Res<ActiveGame>,
+    theme: Res<Theme>,
 ) {
     commands.insert_resource(GolfLocalInput::default());
     commands.insert_resource(SunkTracker::default());
@@ -182,7 +184,7 @@ fn setup_golf(
         GameEntity,
         Mesh3d(meshes.add(Plane3d::new(Vec3::Y, Vec2::new(50.0, 50.0)))),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.08, 0.35, 0.08),
+            base_color: rgb(&theme.golf.ground_color),
             perceptual_roughness: 1.0,
             ..default()
         })),
@@ -207,7 +209,7 @@ fn setup_golf(
     let border_thickness = 0.15;
     let border_height = 0.12;
     let border_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.3, 0.2, 0.1),
+        base_color: rgb(&theme.golf.dirt_color),
         perceptual_roughness: 0.8,
         ..default()
     });
@@ -274,7 +276,7 @@ fn setup_golf(
 
     // Walls (wood tone)
     let wall_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.35, 0.2, 0.1),
+        base_color: rgb(&theme.golf.wall_color),
         perceptual_roughness: 0.85,
         ..default()
     });
@@ -298,7 +300,7 @@ fn setup_golf(
 
     // Bumpers (metallic silver-blue, distinct from player ball colors)
     let bumper_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.55, 0.55, 0.65),
+        base_color: rgb(&theme.golf.bumper_color),
         metallic: 0.9,
         perceptual_roughness: 0.2,
         ..default()
@@ -317,7 +319,7 @@ fn setup_golf(
         GameEntity,
         Mesh3d(meshes.add(Cylinder::new(HOLE_RADIUS, 0.05))),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.03, 0.03, 0.03),
+            base_color: rgb(&theme.golf.hole_color),
             ..default()
         })),
         Transform::from_xyz(
@@ -350,7 +352,7 @@ fn setup_golf(
         GameEntity,
         Mesh3d(meshes.add(Cylinder::new(0.04, pole_height))),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.7, 0.7, 0.7),
+            base_color: rgb(&theme.golf.ball_color),
             metallic: 0.6,
             ..default()
         })),
@@ -366,7 +368,7 @@ fn setup_golf(
         GameEntity,
         Mesh3d(meshes.add(Plane3d::new(Vec3::X, Vec2::new(0.3, 0.2)))),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(1.0, 0.2, 0.2),
+            base_color: rgb(&theme.golf.flag_color),
             unlit: true,
             double_sided: true,
             cull_mode: None,
@@ -424,7 +426,7 @@ fn setup_golf(
         BallMarker,
         Mesh3d(meshes.add(Cylinder::new(0.6, 0.01))),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgba(1.0, 1.0, 1.0, 0.5),
+            base_color: rgba(&theme.golf.aim_line_color),
             alpha_mode: AlphaMode::Blend,
             unlit: true,
             ..default()
@@ -434,7 +436,7 @@ fn setup_golf(
 
     // Aim dots (5 small spheres along aim direction)
     let dot_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 1.0, 0.3),
+        base_color: rgb(&theme.golf.power_indicator_color),
         unlit: true,
         ..default()
     });
@@ -464,7 +466,7 @@ fn setup_golf(
             course_data.par
         ),
         18.0,
-        Color::srgb(0.9, 0.9, 0.9),
+        rgb(&theme.golf.hud_text),
         HudPosition::TopLeft,
     );
 
@@ -491,7 +493,7 @@ fn setup_golf(
                     font_size: 12.0,
                     ..default()
                 },
-                TextColor(Color::srgb(0.8, 0.8, 0.8)),
+                TextColor(rgb(&theme.golf.hud_text)),
             ));
             parent
                 .spawn((

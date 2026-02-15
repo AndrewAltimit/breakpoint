@@ -9,6 +9,7 @@ use breakpoint_lasertag::{LaserTagArena, LaserTagInput, LaserTagState};
 use crate::app::AppState;
 use crate::net_client::WsClient;
 use crate::shaders::glow_material::GlowMaterial;
+use crate::theme::{Theme, rgb, rgba};
 
 use super::{
     ActiveGame, ControlsHint, GameEntity, GameRegistry, HudPosition, NetworkRole, cursor_to_ground,
@@ -88,6 +89,7 @@ fn setup_lasertag(
     lobby: Res<crate::lobby::LobbyState>,
     network_role: Res<NetworkRole>,
     active_game: Res<ActiveGame>,
+    theme: Res<Theme>,
 ) {
     commands.insert_resource(LaserTagLocalInput::default());
 
@@ -103,7 +105,7 @@ fn setup_lasertag(
             Vec2::new(arena.width / 2.0, arena.depth / 2.0),
         ))),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.08, 0.08, 0.12),
+            base_color: rgb(&theme.lasertag.arena_floor),
             ..default()
         })),
         Transform::from_xyz(arena.width / 2.0, 0.0, arena.depth / 2.0),
@@ -111,11 +113,11 @@ fn setup_lasertag(
 
     // Render walls
     let solid_wall_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.3, 0.3, 0.4),
+        base_color: rgb(&theme.lasertag.wall_solid),
         ..default()
     });
     let reflective_wall_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.5, 0.7, 0.9),
+        base_color: rgb(&theme.lasertag.wall_reflective),
         emissive: LinearRgba::new(0.5, 0.7, 1.5, 1.0),
         ..default()
     });
@@ -145,7 +147,7 @@ fn setup_lasertag(
 
     // Smoke zones as semi-transparent circles
     let smoke_mat = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.4, 0.4, 0.4, 0.3),
+        base_color: rgba(&theme.lasertag.smoke_zone),
         alpha_mode: AlphaMode::Blend,
         unlit: true,
         ..default()
@@ -265,7 +267,7 @@ fn setup_lasertag(
             font_size: 16.0,
             ..default()
         },
-        TextColor(Color::srgba(0.9, 0.9, 0.9, 0.85)),
+        TextColor(rgba(&theme.lasertag.hud_text)),
         Node {
             position_type: PositionType::Absolute,
             bottom: Val::Px(60.0),

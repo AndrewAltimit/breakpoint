@@ -44,6 +44,37 @@ pub enum ArenaSize {
     Large,
 }
 
+/// Load an arena from a JSON file, returning `None` if the file is missing or invalid.
+pub fn load_arena_from_file(path: &str) -> Option<Arena> {
+    match std::fs::read_to_string(path) {
+        Ok(content) => match serde_json::from_str::<Arena>(&content) {
+            Ok(arena) => Some(arena),
+            Err(e) => {
+                tracing::warn!("Failed to parse {path}: {e}");
+                None
+            },
+        },
+        Err(_) => None,
+    }
+}
+
+/// Load an arena for the given size, preferring a JSON file from the arenas directory.
+///
+/// Checks env var `BREAKPOINT_ARENAS_DIR` (default `config/arenas`) for a file named
+/// `{size}.json` (e.g. `small.json`, `default.json`, `large.json`).
+/// Falls back to `generate_arena(size)` if the file is missing or unparseable.
+pub fn load_arena(size: ArenaSize) -> Arena {
+    let dir =
+        std::env::var("BREAKPOINT_ARENAS_DIR").unwrap_or_else(|_| "config/arenas".to_string());
+    let size_name = match size {
+        ArenaSize::Small => "small",
+        ArenaSize::Default => "default",
+        ArenaSize::Large => "large",
+    };
+    let path = format!("{dir}/{size_name}.json");
+    load_arena_from_file(&path).unwrap_or_else(|| generate_arena(size))
+}
+
 /// Generate an arena based on size preset.
 pub fn generate_arena(size: ArenaSize) -> Arena {
     let (width, depth) = match size {
@@ -213,6 +244,42 @@ mod tests {
                 assert!(sp.x > 0.0 && sp.x < arena.width);
                 assert!(sp.z > 0.0 && sp.z < arena.depth);
             }
+        }
+    }
+
+    #[test]
+    fn load_from_missing_file_returns_none() {
+        assert!(load_arena_from_file("/nonexistent/path/arena.json").is_none());
+    }
+
+    #[test]
+    fn json_roundtrip_preserves_arena() {
+        for size in [ArenaSize::Small, ArenaSize::Default, ArenaSize::Large] {
+            let arena = generate_arena(size);
+            let json = serde_json::to_string(&arena).unwrap();
+            let loaded: Arena = serde_json::from_str(&json).unwrap();
+            assert_eq!(arena.name, loaded.name);
+            assert_eq!(arena.walls.len(), loaded.walls.len());
+            assert_eq!(arena.spawn_points.len(), loaded.spawn_points.len());
+            assert_eq!(arena.smoke_zones.len(), loaded.smoke_zones.len());
+            assert!((arena.width - loaded.width).abs() < f32::EPSILON);
+            assert!((arena.depth - loaded.depth).abs() < f32::EPSILON);
+        }
+    }
+
+    #[test]
+    fn load_arena_falls_back_to_generated() {
+        // Point at a nonexistent directory so no JSON files are found.
+        unsafe {
+            std::env::set_var("BREAKPOINT_ARENAS_DIR", "/nonexistent/arenas/dir");
+        }
+        let arena = load_arena(ArenaSize::Default);
+        let generated = generate_arena(ArenaSize::Default);
+        assert_eq!(arena.name, generated.name);
+        assert_eq!(arena.walls.len(), generated.walls.len());
+        // Restore to avoid affecting other tests
+        unsafe {
+            std::env::remove_var("BREAKPOINT_ARENAS_DIR");
         }
     }
 }

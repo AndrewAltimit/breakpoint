@@ -11,6 +11,7 @@ use breakpoint_core::overlay::ticker::TickerAggregator;
 use breakpoint_core::overlay::toast::ToastQueue;
 
 use crate::net_client::WsClient;
+use crate::theme::{Theme, rgb, rgba};
 
 pub struct OverlayPlugin;
 
@@ -131,7 +132,7 @@ struct DashboardFilterButton(DashboardFilter);
 
 // --- Setup ---
 
-fn setup_overlay_ui(mut commands: Commands) {
+fn setup_overlay_ui(mut commands: Commands, theme: Res<Theme>) {
     // Bottom ticker bar
     commands
         .spawn((
@@ -147,7 +148,7 @@ fn setup_overlay_ui(mut commands: Commands) {
                 align_items: AlignItems::Center,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+            BackgroundColor(rgba(&theme.overlay.ticker_bg)),
         ))
         .with_children(|parent| {
             parent.spawn((
@@ -157,7 +158,7 @@ fn setup_overlay_ui(mut commands: Commands) {
                     font_size: 13.0,
                     ..default()
                 },
-                TextColor(Color::srgba(0.8, 0.8, 0.8, 0.9)),
+                TextColor(rgba(&theme.overlay.ticker_text)),
             ));
         });
 
@@ -191,7 +192,7 @@ fn setup_overlay_ui(mut commands: Commands) {
                 align_items: AlignItems::Center,
                 ..default()
             },
-            BackgroundColor(Color::srgb(0.8, 0.2, 0.2)),
+            BackgroundColor(rgb(&theme.overlay.alert_badge)),
             Visibility::Hidden,
         ))
         .with_children(|parent| {
@@ -288,6 +289,7 @@ fn toast_tick(time: Res<Time>, mut overlay: ResMut<OverlayState>) {
 fn toast_render(
     mut commands: Commands,
     overlay: Res<OverlayState>,
+    theme: Res<Theme>,
     container_query: Query<Entity, With<ToastContainer>>,
     existing_toasts: Query<(Entity, &ToastNode)>,
 ) {
@@ -318,10 +320,10 @@ fn toast_render(
         }
 
         let bg_color = match toast.event.priority {
-            Priority::Critical => Color::srgba(0.7, 0.1, 0.1, 0.9),
-            Priority::Urgent => Color::srgba(0.7, 0.4, 0.1, 0.9),
-            Priority::Notice => Color::srgba(0.15, 0.3, 0.6, 0.9),
-            Priority::Ambient => Color::srgba(0.2, 0.2, 0.2, 0.9),
+            Priority::Critical => rgba(&theme.overlay.toast_critical),
+            Priority::Urgent => rgba(&theme.overlay.toast_urgent),
+            Priority::Notice => rgba(&theme.overlay.toast_notice),
+            Priority::Ambient => rgba(&theme.overlay.toast_ambient),
         };
 
         let event_id = toast.event.id.clone();
@@ -367,7 +369,7 @@ fn toast_render(
                         font_size: 11.0,
                         ..default()
                     },
-                    TextColor(Color::srgba(0.7, 0.7, 0.7, 0.9)),
+                    TextColor(rgba(&theme.overlay.toast_source)),
                 ));
 
                 // Claimed indicator or Handle button
@@ -378,7 +380,7 @@ fn toast_render(
                             font_size: 11.0,
                             ..default()
                         },
-                        TextColor(Color::srgb(0.3, 0.8, 0.3)),
+                        TextColor(rgb(&theme.overlay.toast_claim)),
                     ));
                 } else {
                     parent
@@ -391,7 +393,7 @@ fn toast_render(
                                 padding: UiRect::axes(Val::Px(12.0), Val::Px(4.0)),
                                 ..default()
                             },
-                            BackgroundColor(Color::srgb(0.2, 0.5, 0.2)),
+                            BackgroundColor(rgb(&theme.overlay.claim_button)),
                         ))
                         .with_child((
                             Text::new("Handle"),
@@ -413,6 +415,7 @@ fn toast_render(
 fn dashboard_toggle(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut overlay: ResMut<OverlayState>,
+    theme: Res<Theme>,
     mut commands: Commands,
     dashboard_query: Query<Entity, With<DashboardPanel>>,
 ) {
@@ -426,6 +429,7 @@ fn dashboard_toggle(
                 commands.entity(entity).despawn();
             }
         } else {
+            let tab_color = rgb(&theme.overlay.dashboard_tab);
             // Spawn dashboard
             commands
                 .spawn((
@@ -442,7 +446,7 @@ fn dashboard_toggle(
                         row_gap: Val::Px(8.0),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.08, 0.08, 0.15, 0.95)),
+                    BackgroundColor(rgba(&theme.overlay.dashboard_bg)),
                 ))
                 .with_children(|parent| {
                     parent.spawn((
@@ -451,7 +455,7 @@ fn dashboard_toggle(
                             font_size: 18.0,
                             ..default()
                         },
-                        TextColor(Color::srgb(0.3, 0.7, 1.0)),
+                        TextColor(rgb(&theme.overlay.dashboard_title)),
                     ));
 
                     // Filter buttons row
@@ -462,9 +466,9 @@ fn dashboard_toggle(
                             ..default()
                         })
                         .with_children(|row| {
-                            spawn_filter_btn(row, "All", DashboardFilter::All);
-                            spawn_filter_btn(row, "Agent", DashboardFilter::AgentOnly);
-                            spawn_filter_btn(row, "Human", DashboardFilter::HumanOnly);
+                            spawn_filter_btn(row, "All", DashboardFilter::All, tab_color);
+                            spawn_filter_btn(row, "Agent", DashboardFilter::AgentOnly, tab_color);
+                            spawn_filter_btn(row, "Human", DashboardFilter::HumanOnly, tab_color);
                         });
 
                     parent.spawn((
@@ -474,14 +478,19 @@ fn dashboard_toggle(
                             font_size: 12.0,
                             ..default()
                         },
-                        TextColor(Color::srgb(0.8, 0.8, 0.8)),
+                        TextColor(rgb(&theme.overlay.dashboard_text)),
                     ));
                 });
         }
     }
 }
 
-fn spawn_filter_btn(parent: &mut ChildSpawnerCommands, label: &str, filter: DashboardFilter) {
+fn spawn_filter_btn(
+    parent: &mut ChildSpawnerCommands,
+    label: &str,
+    filter: DashboardFilter,
+    tab_color: Color,
+) {
     parent
         .spawn((
             DashboardFilterButton(filter),
@@ -490,7 +499,7 @@ fn spawn_filter_btn(parent: &mut ChildSpawnerCommands, label: &str, filter: Dash
                 padding: UiRect::axes(Val::Px(10.0), Val::Px(4.0)),
                 ..default()
             },
-            BackgroundColor(Color::srgb(0.25, 0.25, 0.35)),
+            BackgroundColor(tab_color),
         ))
         .with_child((
             Text::new(label),

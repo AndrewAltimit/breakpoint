@@ -11,6 +11,7 @@ pub mod overlay;
 mod settings;
 mod shaders;
 mod storage;
+pub mod theme;
 
 use bevy::prelude::*;
 use wasm_bindgen::prelude::*;
@@ -27,6 +28,7 @@ use net_client::{ConnectionStatusPlugin, WsClient};
 use overlay::OverlayPlugin;
 use settings::SettingsPlugin;
 use shaders::ShadersPlugin;
+use theme::ThemePlugin;
 
 /// WASM entry point.
 #[wasm_bindgen(start)]
@@ -47,6 +49,7 @@ pub fn start() {
         .init_state::<AppState>()
         .insert_non_send_resource(WsClient::new())
         .add_plugins((
+            ThemePlugin,
             LobbyPlugin,
             GamePlugin,
             GameCameraPlugin,

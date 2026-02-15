@@ -14,7 +14,7 @@ use breakpoint_core::game_trait::{
 };
 use breakpoint_core::player::Player;
 
-use arena::{Arena, ArenaSize, generate_arena};
+use arena::{Arena, ArenaSize, load_arena};
 use powerups::{ActiveLaserPowerUp, LaserPowerUpKind, SpawnedLaserPowerUp};
 use projectile::{
     FIRE_COOLDOWN, LaserTagConfig, PLAYER_RADIUS, RAPIDFIRE_COOLDOWN_MULT, STUN_DURATION,
@@ -120,7 +120,7 @@ impl LaserTagArena {
     pub fn with_config(config: LaserTagConfig) -> Self {
         let round_duration = config.round_duration_secs;
         Self {
-            arena: generate_arena(ArenaSize::Default),
+            arena: load_arena(ArenaSize::Default),
             state: LaserTagState {
                 players: HashMap::new(),
                 powerups: Vec::new(),
@@ -216,7 +216,7 @@ impl BreakpointGame for LaserTagArena {
             })
             .unwrap_or(ArenaSize::Default);
 
-        self.arena = generate_arena(arena_size);
+        self.arena = load_arena(arena_size);
         self.round_duration = config
             .custom
             .get("round_duration")

@@ -5,6 +5,7 @@ use breakpoint_core::game_trait::PlayerId;
 use crate::app::AppState;
 use crate::game::RoundTracker;
 use crate::lobby::LobbyState;
+use crate::theme::{Theme, rgb, rgba};
 
 pub struct GameOverPlugin;
 
@@ -28,9 +29,10 @@ fn setup_game_over(
     mut commands: Commands,
     round_tracker: Res<RoundTracker>,
     lobby: Res<LobbyState>,
+    theme: Res<Theme>,
 ) {
-    let bg_color = Color::srgba(0.05, 0.05, 0.12, 0.95);
-    let text_color = Color::srgb(0.9, 0.9, 0.9);
+    let bg_color = rgba(&theme.ui.panel_bg);
+    let text_color = rgb(&theme.ui.text_primary);
 
     // Build final standings sorted by cumulative score (descending)
     let mut scores: Vec<(PlayerId, i32)> = round_tracker
@@ -69,7 +71,7 @@ fn setup_game_over(
                     font_size: 48.0,
                     ..default()
                 },
-                TextColor(Color::srgb(1.0, 0.8, 0.2)),
+                TextColor(rgb(&theme.ui.score_gold)),
             ));
 
             if let Some(name) = &winner_name {
@@ -79,7 +81,7 @@ fn setup_game_over(
                         font_size: 28.0,
                         ..default()
                     },
-                    TextColor(Color::srgb(0.3, 1.0, 0.3)),
+                    TextColor(rgb(&theme.ui.score_positive)),
                 ));
             }
 
@@ -114,7 +116,7 @@ fn setup_game_over(
                         ..default()
                     },
                     TextColor(if i == 0 {
-                        Color::srgb(1.0, 0.85, 0.2)
+                        rgb(&theme.ui.score_gold)
                     } else {
                         text_color
                     }),
@@ -131,7 +133,7 @@ fn setup_game_over(
                         margin: UiRect::top(Val::Px(20.0)),
                         ..default()
                     },
-                    BackgroundColor(Color::srgb(0.2, 0.4, 0.8)),
+                    BackgroundColor(rgb(&theme.ui.return_button)),
                 ))
                 .with_child((
                     Text::new("Return to Lobby"),

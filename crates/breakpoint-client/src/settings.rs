@@ -4,6 +4,7 @@ use breakpoint_core::overlay::config::{NotificationDensity, OverlayPlayerPrefs, 
 
 use crate::app::AppState;
 use crate::audio::AudioSettings;
+use crate::theme::{Theme, rgb, rgba};
 
 pub struct SettingsPlugin;
 
@@ -54,6 +55,7 @@ fn settings_toggle(
     mut settings: ResMut<SettingsState>,
     mut commands: Commands,
     panel_query: Query<Entity, With<SettingsPanel>>,
+    theme: Res<Theme>,
 ) {
     if keyboard.just_pressed(KeyCode::Escape) {
         settings.visible = !settings.visible;
@@ -63,14 +65,14 @@ fn settings_toggle(
                 commands.entity(entity).despawn();
             }
         } else {
-            spawn_settings_panel(&mut commands);
+            spawn_settings_panel(&mut commands, &theme);
         }
     }
 }
 
-fn spawn_settings_panel(commands: &mut Commands) {
-    let bg_color = Color::srgba(0.05, 0.05, 0.12, 0.95);
-    let btn_color = Color::srgb(0.25, 0.25, 0.4);
+fn spawn_settings_panel(commands: &mut Commands, theme: &Theme) {
+    let bg_color = rgba(&theme.ui.panel_bg);
+    let btn_color = rgb(&theme.ui.settings_button);
 
     commands
         .spawn((
@@ -96,7 +98,7 @@ fn spawn_settings_panel(commands: &mut Commands) {
                     font_size: 24.0,
                     ..default()
                 },
-                TextColor(Color::srgb(0.3, 0.7, 1.0)),
+                TextColor(rgb(&theme.ui.text_title)),
             ));
 
             // Audio section
@@ -106,7 +108,7 @@ fn spawn_settings_panel(commands: &mut Commands) {
                     font_size: 16.0,
                     ..default()
                 },
-                TextColor(Color::srgb(0.8, 0.8, 0.8)),
+                TextColor(rgb(&theme.ui.text_secondary)),
             ));
 
             parent
@@ -128,7 +130,7 @@ fn spawn_settings_panel(commands: &mut Commands) {
                     font_size: 16.0,
                     ..default()
                 },
-                TextColor(Color::srgb(0.8, 0.8, 0.8)),
+                TextColor(rgb(&theme.ui.text_secondary)),
             ));
 
             parent
@@ -155,7 +157,7 @@ fn spawn_settings_panel(commands: &mut Commands) {
                     font_size: 14.0,
                     ..default()
                 },
-                TextColor(Color::srgb(0.6, 0.8, 0.6)),
+                TextColor(rgb(&theme.ui.text_accent)),
             ));
 
             // Save flash text (hidden initially)
@@ -166,7 +168,7 @@ fn spawn_settings_panel(commands: &mut Commands) {
                     font_size: 14.0,
                     ..default()
                 },
-                TextColor(Color::srgb(0.3, 1.0, 0.3)),
+                TextColor(rgb(&theme.ui.save_flash)),
             ));
 
             // Close button
@@ -174,7 +176,7 @@ fn spawn_settings_panel(commands: &mut Commands) {
                 parent,
                 "Close (Esc)",
                 SettingsButton::Close,
-                Color::srgb(0.5, 0.2, 0.2),
+                rgb(&theme.ui.settings_close),
             );
         });
 }

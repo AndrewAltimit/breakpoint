@@ -8,6 +8,7 @@ use crate::game::{NetworkRole, RoundTracker};
 use crate::lobby::LobbyState;
 use crate::net_client::WsClient;
 use crate::overlay::OverlayState;
+use crate::theme::{Theme, rgb, rgba};
 
 pub struct BetweenRoundsPlugin;
 
@@ -43,14 +44,15 @@ fn setup_between_rounds(
     lobby: Res<LobbyState>,
     mut overlay_state: ResMut<OverlayState>,
     course_info: Option<Res<crate::game::golf_plugin::GolfCourseInfo>>,
+    theme: Res<Theme>,
 ) {
     // Auto-expand dashboard overlay during between-rounds
     overlay_state.dashboard_visible = true;
 
     commands.insert_resource(BetweenRoundTimer { remaining: 30.0 });
 
-    let bg_color = Color::srgba(0.05, 0.05, 0.12, 0.9);
-    let text_color = Color::srgb(0.9, 0.9, 0.9);
+    let bg_color = rgba(&theme.ui.panel_bg);
+    let text_color = rgb(&theme.ui.text_primary);
 
     // Build scoreboard entries sorted by cumulative score (descending)
     let mut scores: Vec<(PlayerId, i32)> = round_tracker
@@ -95,7 +97,7 @@ fn setup_between_rounds(
                     font_size: 36.0,
                     ..default()
                 },
-                TextColor(Color::srgb(0.3, 0.7, 1.0)),
+                TextColor(rgb(&theme.ui.score_header)),
             ));
 
             parent.spawn((
@@ -137,7 +139,7 @@ fn setup_between_rounds(
                             font_size: 20.0,
                             ..default()
                         },
-                        TextColor(Color::srgb(0.3, 0.9, 0.3)),
+                        TextColor(rgb(&theme.ui.score_positive)),
                     ));
                 }
             }
@@ -150,7 +152,7 @@ fn setup_between_rounds(
                     font_size: 20.0,
                     ..default()
                 },
-                TextColor(Color::srgb(1.0, 0.9, 0.3)),
+                TextColor(rgb(&theme.ui.score_gold)),
             ));
         });
 }

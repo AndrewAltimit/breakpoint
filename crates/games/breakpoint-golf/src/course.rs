@@ -518,14 +518,20 @@ pub fn load_courses_from_dir(dir: &str) -> Vec<Course> {
             Ok(content) => match serde_json::from_str::<Course>(&content) {
                 Ok(course) => courses.push(course),
                 Err(e) => {
-                    tracing::warn!("Failed to parse {}: {e}, falling back to defaults", file.display());
+                    tracing::warn!(
+                        "Failed to parse {}: {e}, falling back to defaults",
+                        file.display()
+                    );
                     return all_courses();
-                }
+                },
             },
             Err(e) => {
-                tracing::warn!("Failed to read {}: {e}, falling back to defaults", file.display());
+                tracing::warn!(
+                    "Failed to read {}: {e}, falling back to defaults",
+                    file.display()
+                );
                 return all_courses();
-            }
+            },
         }
     }
 

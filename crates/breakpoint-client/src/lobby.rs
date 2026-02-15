@@ -14,6 +14,7 @@ use breakpoint_core::player::{Player, PlayerColor};
 
 use crate::app::AppState;
 use crate::net_client::WsClient;
+use crate::theme::{Theme, rgb, rgba};
 
 pub struct LobbyPlugin;
 
@@ -113,7 +114,7 @@ struct GameSelectButton(GameId);
 #[derive(Component)]
 struct GameSelectionText;
 
-fn setup_lobby(mut commands: Commands, mut lobby: ResMut<LobbyState>) {
+fn setup_lobby(mut commands: Commands, mut lobby: ResMut<LobbyState>, theme: Res<Theme>) {
     // Spawn a 2D camera for UI rendering.
     // Msaa::Off is required for WebGL2 compatibility.
     commands.spawn((LobbyCamera, Camera2d, Msaa::Off));
@@ -168,9 +169,9 @@ fn setup_lobby(mut commands: Commands, mut lobby: ResMut<LobbyState>) {
         }
     }
 
-    let bg_color = Color::srgba(0.1, 0.1, 0.18, 0.95);
-    let btn_color = Color::srgb(0.2, 0.4, 0.8);
-    let text_color = Color::srgb(0.9, 0.9, 0.9);
+    let bg_color = rgba(&theme.ui.lobby_bg);
+    let btn_color = rgb(&theme.ui.button_primary);
+    let text_color = rgb(&theme.ui.text_primary);
 
     commands
         .spawn((
@@ -194,7 +195,7 @@ fn setup_lobby(mut commands: Commands, mut lobby: ResMut<LobbyState>) {
                     font_size: 48.0,
                     ..default()
                 },
-                TextColor(Color::srgb(0.3, 0.7, 1.0)),
+                TextColor(rgb(&theme.ui.text_title)),
             ));
 
             parent.spawn((
@@ -311,7 +312,7 @@ fn setup_lobby(mut commands: Commands, mut lobby: ResMut<LobbyState>) {
                         padding: UiRect::axes(Val::Px(24.0), Val::Px(12.0)),
                         ..default()
                     },
-                    BackgroundColor(Color::srgb(0.1, 0.6, 0.2)),
+                    BackgroundColor(rgb(&theme.ui.button_start)),
                     Visibility::Hidden,
                 ))
                 .with_child((

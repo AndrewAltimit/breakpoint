@@ -264,8 +264,7 @@ impl BreakpointGame for MiniGolf {
                 let strokes = self.state.strokes.get(&pid).copied().unwrap_or(0);
                 let finished = self.sunk_set.contains(&pid);
                 let was_first = self.state.sunk_order.first() == Some(&pid);
-                let score =
-                    calculate_score_with_config(strokes, par, was_first, finished, scoring);
+                let score = calculate_score_with_config(strokes, par, was_first, finished, scoring);
                 PlayerScore {
                     player_id: pid,
                     score,

@@ -1,0 +1,14 @@
+# Player color palette for Breakpoint.
+# Each entry is an [R, G, B] triple (0-255).
+# Order determines assignment priority.
+
+colors = [
+    [255, 87, 87],    # Red
+    [78, 205, 196],   # Teal
+    [255, 195, 18],   # Yellow
+    [130, 88, 255],   # Purple
+    [46, 213, 115],   # Green
+    [255, 148, 77],   # Orange
+    [83, 152, 255],   # Blue
+    [255, 107, 175],  # Pink
+]

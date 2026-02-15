@@ -8,6 +8,7 @@ use breakpoint_platformer::{PlatformRacer, PlatformerState};
 
 use crate::app::AppState;
 use crate::net_client::WsClient;
+use crate::theme::{Theme, rgb, rgba};
 
 use super::{
     ActiveGame, ControlsHint, GameEntity, GameRegistry, HudPosition, NetworkRole,
@@ -82,6 +83,7 @@ fn setup_platformer(
     lobby: Res<crate::lobby::LobbyState>,
     network_role: Res<NetworkRole>,
     active_game: Res<ActiveGame>,
+    theme: Res<Theme>,
 ) {
     commands.insert_resource(PlatformerLocalInput::default());
 
@@ -94,25 +96,25 @@ fn setup_platformer(
 
     // Render course tiles as colored cubes
     let solid_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.4, 0.4, 0.5),
+        base_color: rgb(&theme.platformer.solid_tile),
         ..default()
     });
     let platform_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.3, 0.6, 0.3),
+        base_color: rgb(&theme.platformer.grass_tile),
         ..default()
     });
     let hazard_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.9, 0.2, 0.1),
+        base_color: rgb(&theme.platformer.hazard_tile),
         emissive: LinearRgba::new(2.0, 0.2, 0.1, 1.0),
         ..default()
     });
     let checkpoint_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.2, 0.5, 0.9),
+        base_color: rgb(&theme.platformer.platform_tile),
         emissive: LinearRgba::new(0.2, 0.5, 2.0, 1.0),
         ..default()
     });
     let finish_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.85, 0.1),
+        base_color: rgb(&theme.platformer.finish_tile),
         emissive: LinearRgba::new(2.0, 1.7, 0.2, 1.0),
         ..default()
     });
@@ -221,7 +223,7 @@ fn setup_platformer(
             font_size: 16.0,
             ..default()
         },
-        TextColor(Color::srgba(0.9, 0.9, 0.9, 0.85)),
+        TextColor(rgba(&theme.platformer.hud_text)),
         Node {
             position_type: PositionType::Absolute,
             bottom: Val::Px(60.0),

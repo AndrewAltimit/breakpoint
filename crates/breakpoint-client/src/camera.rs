@@ -6,6 +6,7 @@ use breakpoint_core::game_trait::GameId;
 use crate::app::AppState;
 use crate::effects::screen_shake::ScreenShake;
 use crate::game::ActiveGame;
+use crate::theme::{Theme, rgb};
 
 #[cfg(feature = "golf")]
 use crate::game::golf_plugin::GolfCourseInfo;
@@ -44,7 +45,7 @@ pub struct GameLight;
 #[derive(Resource)]
 struct CameraPendingCleanup;
 
-fn setup_camera(mut commands: Commands) {
+fn setup_camera(mut commands: Commands, theme: Res<Theme>) {
     // Sky-blue clear color
     // Tonemapping::None is required for WebGL2 — the default TonyMcMapface
     // uses a 3D LUT texture that fails silently, causing a magenta screen.
@@ -54,7 +55,7 @@ fn setup_camera(mut commands: Commands) {
         Msaa::Off,
         Tonemapping::None,
         Camera {
-            clear_color: ClearColorConfig::Custom(Color::srgb(0.53, 0.81, 0.98)),
+            clear_color: ClearColorConfig::Custom(rgb(&theme.camera.clear_color)),
             ..default()
         },
         // Default position; will be overridden by update_camera for golf
@@ -65,7 +66,7 @@ fn setup_camera(mut commands: Commands) {
     commands.spawn((
         GameCamera,
         AmbientLight {
-            brightness: 300.0,
+            brightness: theme.camera.ambient_brightness,
             ..default()
         },
     ));
@@ -75,7 +76,7 @@ fn setup_camera(mut commands: Commands) {
         GameCamera,
         GameLight,
         DirectionalLight {
-            illuminance: 8000.0,
+            illuminance: theme.camera.directional_illuminance,
             shadows_enabled: false,
             ..default()
         },

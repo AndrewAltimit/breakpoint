@@ -1491,6 +1491,8 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde_json",
+ "toml",
+ "tracing",
  "uuid",
 ]
 
