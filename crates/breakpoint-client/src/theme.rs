@@ -1,9 +1,9 @@
-use bevy::prelude::*;
+use glam::Vec4;
 use serde::{Deserialize, Serialize};
 
 /// Client visual theme, loaded from JSON at compile time.
 /// All colors are stored as `[f32; 4]` (RGBA) or `[f32; 3]` (RGB).
-#[derive(Debug, Clone, Default, Serialize, Deserialize, Resource)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Theme {
     pub ui: UiTheme,
@@ -117,7 +117,7 @@ pub struct AudioTheme {
     pub overlay_volume: f32,
 }
 
-// --- Default implementations matching current hardcoded values ---
+// --- Default implementations ---
 
 impl Default for UiTheme {
     fn default() -> Self {
@@ -236,7 +236,7 @@ impl Default for AudioTheme {
     }
 }
 
-// --- Helper methods to convert theme colors to Bevy Color ---
+// --- Helpers ---
 
 impl Theme {
     /// Load theme from embedded JSON, falling back to defaults.
@@ -246,22 +246,24 @@ impl Theme {
     }
 }
 
-/// Convert an RGB [f32; 3] array to a Bevy Color.
-pub fn rgb(c: &[f32; 3]) -> Color {
-    Color::srgb(c[0], c[1], c[2])
+/// Convert an RGB [f32; 3] array to a Vec4 (with alpha=1.0).
+pub fn rgb_vec4(c: &[f32; 3]) -> Vec4 {
+    Vec4::new(c[0], c[1], c[2], 1.0)
 }
 
-/// Convert an RGBA [f32; 4] array to a Bevy Color.
-pub fn rgba(c: &[f32; 4]) -> Color {
-    Color::srgba(c[0], c[1], c[2], c[3])
+/// Convert an RGBA [f32; 4] array to a Vec4.
+pub fn rgba_vec4(c: &[f32; 4]) -> Vec4 {
+    Vec4::new(c[0], c[1], c[2], c[3])
 }
 
-pub struct ThemePlugin;
-
-impl Plugin for ThemePlugin {
-    fn build(&self, app: &mut App) {
-        app.insert_resource(Theme::load());
-    }
+/// Convert a PlayerColor (u8 RGB) to a Vec4.
+pub fn player_color_to_vec4(color: &breakpoint_core::player::PlayerColor) -> Vec4 {
+    Vec4::new(
+        color.r as f32 / 255.0,
+        color.g as f32 / 255.0,
+        color.b as f32 / 255.0,
+        1.0,
+    )
 }
 
 #[cfg(test)]
@@ -285,8 +287,28 @@ mod tests {
         let json = r#"{"camera": {"ambient_brightness": 500.0}}"#;
         let theme: Theme = serde_json::from_str(json).unwrap();
         assert_eq!(theme.camera.ambient_brightness, 500.0);
-        // Other fields should be defaults
         assert_eq!(theme.camera.directional_illuminance, 8000.0);
         assert_eq!(theme.ui.lobby_bg, [0.1, 0.1, 0.18, 0.95]);
+    }
+
+    #[test]
+    fn rgb_vec4_converts() {
+        let v = rgb_vec4(&[0.5, 0.6, 0.7]);
+        assert!((v.x - 0.5).abs() < 1e-6);
+        assert!((v.w - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn player_color_conversion() {
+        use breakpoint_core::player::PlayerColor;
+        let c = PlayerColor {
+            r: 255,
+            g: 128,
+            b: 0,
+        };
+        let v = player_color_to_vec4(&c);
+        assert!((v.x - 1.0).abs() < 0.01);
+        assert!((v.y - 0.502).abs() < 0.01);
+        assert!((v.z - 0.0).abs() < 0.01);
     }
 }

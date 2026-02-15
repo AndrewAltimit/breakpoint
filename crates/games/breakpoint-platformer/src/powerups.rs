@@ -8,7 +8,7 @@ pub enum PowerUpKind {
     SpeedBoost,
     DoubleJump,
     Shield,
-    /// Stub: spawns and can be collected, but has no gameplay effect yet.
+    /// Auto-collects nearby pickups within a 3.0-unit radius while active.
     Magnet,
 }
 

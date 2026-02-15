@@ -1,50 +1,21 @@
-use bevy::prelude::*;
-
-use crate::app::AppState;
-
-pub struct AudioPlugin;
-
-impl Plugin for AudioPlugin {
-    fn build(&self, app: &mut App) {
-        app.init_resource::<AudioEventQueue>()
-            .init_resource::<AudioSettings>()
-            .insert_non_send_resource(AudioManager::new())
-            .add_systems(
-                Update,
-                process_audio_events.run_if(not(resource_equals(AudioSettings {
-                    muted: true,
-                    ..AudioSettings::default()
-                }))),
-            )
-            .add_systems(OnEnter(AppState::Lobby), load_audio_settings);
-    }
-}
-
 /// Audio events that game systems can emit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum AudioEvent {
-    // Overlay
     NoticeChime,
     UrgentAttention,
     CriticalAlert,
-
-    // Golf
     GolfStroke,
     GolfBallSink,
-
-    // Platformer
     PlatformerJump,
     PlatformerPowerUp,
     PlatformerFinish,
-
-    // Laser Tag
     LaserFire,
     LaserHit,
 }
 
 /// Queue of audio events to be processed each frame.
-#[derive(Resource, Default)]
+#[derive(Default)]
 pub struct AudioEventQueue {
     events: Vec<AudioEvent>,
 }
@@ -53,10 +24,45 @@ impl AudioEventQueue {
     pub fn push(&mut self, event: AudioEvent) {
         self.events.push(event);
     }
+
+    pub fn clear(&mut self) {
+        self.events.clear();
+    }
+
+    pub fn process(&mut self, manager: &AudioManager, settings: &AudioSettings) {
+        for event in self.events.drain(..) {
+            let (freq, dur, wave, vol_category) = match event {
+                AudioEvent::NoticeChime => (880.0, 0.15, WaveType::Sine, SoundCategory::Overlay),
+                AudioEvent::UrgentAttention => {
+                    (660.0, 0.25, WaveType::Triangle, SoundCategory::Overlay)
+                },
+                AudioEvent::CriticalAlert => (440.0, 0.4, WaveType::Square, SoundCategory::Overlay),
+                AudioEvent::GolfStroke => (350.0, 0.1, WaveType::Sine, SoundCategory::Game),
+                AudioEvent::GolfBallSink => (1200.0, 0.3, WaveType::Sine, SoundCategory::Game),
+                AudioEvent::PlatformerJump => (500.0, 0.08, WaveType::Square, SoundCategory::Game),
+                AudioEvent::PlatformerPowerUp => (900.0, 0.2, WaveType::Sine, SoundCategory::Game),
+                AudioEvent::PlatformerFinish => {
+                    (1000.0, 0.5, WaveType::Triangle, SoundCategory::Game)
+                },
+                AudioEvent::LaserFire => (1800.0, 0.06, WaveType::Sawtooth, SoundCategory::Game),
+                AudioEvent::LaserHit => (200.0, 0.15, WaveType::Square, SoundCategory::Game),
+            };
+
+            let category_vol = match vol_category {
+                SoundCategory::Game => settings.game_volume,
+                SoundCategory::Overlay => settings.overlay_volume,
+            };
+            let final_vol = settings.master_volume * category_vol;
+
+            if final_vol > 0.001 {
+                manager.play_tone(freq, dur, final_vol, wave);
+            }
+        }
+    }
 }
 
-/// Audio settings resource.
-#[derive(Resource, Clone, PartialEq)]
+/// Audio settings.
+#[derive(Clone, PartialEq)]
 pub struct AudioSettings {
     pub master_volume: f32,
     pub game_volume: f32,
@@ -75,7 +81,7 @@ impl Default for AudioSettings {
     }
 }
 
-/// Non-Send resource wrapping the Web Audio API context.
+/// Wrapping the Web Audio API context.
 pub struct AudioManager {
     #[cfg(target_family = "wasm")]
     ctx: Option<web_sys::AudioContext>,
@@ -93,7 +99,6 @@ impl AudioManager {
         }
     }
 
-    /// Play a procedurally generated tone.
     #[allow(unused_variables)]
     pub fn play_tone(&self, frequency: f32, duration: f32, volume: f32, wave_type: WaveType) {
         #[cfg(target_family = "wasm")]
@@ -119,7 +124,6 @@ impl AudioManager {
             let _ = gain_node.gain().set_value(volume);
 
             let now = ctx.current_time();
-            // Envelope: quick attack, sustain, then release
             let _ = gain_node
                 .gain()
                 .linear_ramp_to_value_at_time(volume, now + 0.01);
@@ -135,7 +139,12 @@ impl AudioManager {
     }
 }
 
-/// Oscillator wave types.
+impl Default for AudioManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum WaveType {
     Sine,
@@ -144,66 +153,7 @@ pub enum WaveType {
     Sawtooth,
 }
 
-fn process_audio_events(
-    mut queue: ResMut<AudioEventQueue>,
-    settings: Res<AudioSettings>,
-    audio: NonSend<AudioManager>,
-) {
-    if settings.muted {
-        queue.events.clear();
-        return;
-    }
-
-    for event in queue.events.drain(..) {
-        let (freq, dur, wave, vol_category) = match event {
-            // Overlay sounds
-            AudioEvent::NoticeChime => (880.0, 0.15, WaveType::Sine, SoundCategory::Overlay),
-            AudioEvent::UrgentAttention => {
-                (660.0, 0.25, WaveType::Triangle, SoundCategory::Overlay)
-            },
-            AudioEvent::CriticalAlert => (440.0, 0.4, WaveType::Square, SoundCategory::Overlay),
-
-            // Golf sounds
-            AudioEvent::GolfStroke => (350.0, 0.1, WaveType::Sine, SoundCategory::Game),
-            AudioEvent::GolfBallSink => (1200.0, 0.3, WaveType::Sine, SoundCategory::Game),
-
-            // Platformer sounds
-            AudioEvent::PlatformerJump => (500.0, 0.08, WaveType::Square, SoundCategory::Game),
-            AudioEvent::PlatformerPowerUp => (900.0, 0.2, WaveType::Sine, SoundCategory::Game),
-            AudioEvent::PlatformerFinish => (1000.0, 0.5, WaveType::Triangle, SoundCategory::Game),
-
-            // Laser tag sounds
-            AudioEvent::LaserFire => (1800.0, 0.06, WaveType::Sawtooth, SoundCategory::Game),
-            AudioEvent::LaserHit => (200.0, 0.15, WaveType::Square, SoundCategory::Game),
-        };
-
-        let category_vol = match vol_category {
-            SoundCategory::Game => settings.game_volume,
-            SoundCategory::Overlay => settings.overlay_volume,
-        };
-        let final_vol = settings.master_volume * category_vol;
-
-        if final_vol > 0.001 {
-            audio.play_tone(freq, dur, final_vol, wave);
-        }
-    }
-}
-
 enum SoundCategory {
     Game,
     Overlay,
-}
-
-/// Load audio settings from localStorage on entering lobby.
-fn load_audio_settings(mut settings: ResMut<AudioSettings>) {
-    crate::storage::with_local_storage(|storage| {
-        if let Ok(Some(val)) = storage.get_item("audio_muted") {
-            settings.muted = val == "true";
-        }
-        if let Ok(Some(val)) = storage.get_item("audio_master_volume")
-            && let Ok(v) = val.parse::<f32>()
-        {
-            settings.master_volume = v.clamp(0.0, 1.0);
-        }
-    });
 }

@@ -305,6 +305,45 @@ impl BreakpointGame for PlatformRacer {
             }
         }
 
+        // Magnet auto-collection: players with active Magnet collect nearby powerups
+        const MAGNET_RADIUS_SQ: f32 = 3.0 * 3.0;
+        for &pid in &self.player_ids {
+            let has_magnet = self
+                .state
+                .active_powerups
+                .get(&pid)
+                .is_some_and(|pus| pus.iter().any(|p| p.kind == PowerUpKind::Magnet));
+            if !has_magnet {
+                continue;
+            }
+            let Some(player) = self.state.players.get(&pid) else {
+                continue;
+            };
+            let px = player.x;
+            let py = player.y;
+            for pu in &mut self.state.powerups {
+                if pu.collected {
+                    continue;
+                }
+                let dx = px - pu.x;
+                let dy = py - pu.y;
+                if dx * dx + dy * dy < MAGNET_RADIUS_SQ {
+                    pu.collected = true;
+                    let active_pu = ActivePowerUp::new(pu.kind);
+                    if pu.kind == PowerUpKind::DoubleJump
+                        && let Some(p) = self.state.players.get_mut(&pid)
+                    {
+                        p.has_double_jump = true;
+                    }
+                    self.state
+                        .active_powerups
+                        .entry(pid)
+                        .or_default()
+                        .push(active_pu);
+                }
+            }
+        }
+
         // Tick active power-ups
         for pus in self.state.active_powerups.values_mut() {
             for pu in pus.iter_mut() {
@@ -1294,31 +1333,90 @@ mod tests {
         );
     }
 
-    // REGRESSION: Magnet powerup should not crash (it's a stub)
     #[test]
-    fn magnet_powerup_stub_no_crash() {
+    fn magnet_powerup_auto_collects_nearby() {
         let mut game = PlatformRacer::new();
         let players = make_players(1);
         game.init(&players, &default_config(120));
 
+        let pid = 1u64;
+        let player = &game.state.players[&pid];
+        let px = player.x;
+        let py = player.y;
+
+        // Clear any existing powerups from course gen
+        game.state.powerups.clear();
+
+        // Place a SpeedBoost within magnet radius (3.0)
+        game.state.powerups.push(SpawnedPowerUp {
+            x: px + 2.0,
+            y: py,
+            kind: PowerUpKind::SpeedBoost,
+            collected: false,
+        });
+
+        // Place a Shield outside magnet radius
+        game.state.powerups.push(SpawnedPowerUp {
+            x: px + 5.0,
+            y: py,
+            kind: PowerUpKind::Shield,
+            collected: false,
+        });
+
         // Give player a Magnet powerup
         game.state
             .active_powerups
-            .entry(1)
+            .entry(pid)
             .or_default()
             .push(ActivePowerUp::new(PowerUpKind::Magnet));
 
-        // Use powerup input
-        let input = PlatformerInput {
-            move_dir: 1.0,
-            jump: false,
-            use_powerup: true,
-        };
-        let data = rmp_serde::to_vec(&input).unwrap();
-        game.apply_input(1, &data);
-
-        // Should not panic
         game.update(1.0 / 15.0, &empty_inputs());
+
+        // Nearby SpeedBoost should be collected
+        assert!(
+            game.state.powerups[0].collected,
+            "SpeedBoost within magnet radius should be auto-collected"
+        );
+        // Far Shield should NOT be collected
+        assert!(
+            !game.state.powerups[1].collected,
+            "Shield outside magnet radius should not be collected"
+        );
+        // Player should now have Magnet + SpeedBoost active
+        let active = &game.state.active_powerups[&pid];
+        assert!(
+            active.iter().any(|p| p.kind == PowerUpKind::SpeedBoost),
+            "SpeedBoost should be in active powerups after magnet collection"
+        );
+    }
+
+    #[test]
+    fn magnet_powerup_no_effect_without_magnet() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(1);
+        game.init(&players, &default_config(120));
+
+        let pid = 1u64;
+        let player = &game.state.players[&pid];
+        let px = player.x;
+        let py = player.y;
+
+        // Clear and place a powerup within magnet radius
+        game.state.powerups.clear();
+        game.state.powerups.push(SpawnedPowerUp {
+            x: px + 2.0,
+            y: py,
+            kind: PowerUpKind::SpeedBoost,
+            collected: false,
+        });
+
+        // No magnet — normal collection radius is 1.0, and this is at 2.0
+        game.update(1.0 / 15.0, &empty_inputs());
+
+        assert!(
+            !game.state.powerups[0].collected,
+            "Powerup at distance 2.0 should not be collected without magnet"
+        );
     }
 
     // REGRESSION: Simultaneous finish should produce valid scores for both

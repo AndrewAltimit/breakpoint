@@ -36,7 +36,7 @@ tokio = { version = "1", features = ["full"] }
 rmp-serde = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 rand = "0.9"
-bevy = { version = "0.18", default-features = false }
+glam = "0.29"
 hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
@@ -55,9 +55,3 @@ strip = true
 
 [profile.release.package.breakpoint-client]
 opt-level = "z"
-
-[workspace.metadata.patch]
-crates = ["winit"]
-
-[patch.crates-io]
-winit = { path = "target/patch/winit-0.30.12" }
