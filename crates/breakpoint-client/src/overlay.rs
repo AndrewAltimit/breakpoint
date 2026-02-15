@@ -118,8 +118,13 @@ impl OverlayState {
             player_id,
             event_id: event_id.to_string(),
         });
-        if let Ok(data) = encode_client_message(&msg) {
-            let _ = ws.send(&data);
+        match encode_client_message(&msg) {
+            Ok(data) => {
+                if let Err(e) = ws.send(&data) {
+                    crate::diag::console_warn!("Failed to send ClaimAlert: {e}");
+                }
+            },
+            Err(e) => crate::diag::console_warn!("Failed to encode ClaimAlert: {e}"),
         }
     }
 }

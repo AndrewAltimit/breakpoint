@@ -51,6 +51,10 @@ impl WsClient {
                     let array = js_sys::Uint8Array::new(&buf);
                     let data = array.to_vec();
                     buffer.borrow_mut().messages.push(data);
+                } else {
+                    web_sys::console::warn_1(
+                        &"WebSocket received non-binary message, ignoring".into(),
+                    );
                 }
             });
         ws.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
@@ -63,8 +67,21 @@ impl WsClient {
             *connected.borrow_mut() = true;
             web_sys::console::log_1(&"WebSocket connected".into());
             let queued: Vec<Vec<u8>> = queue.borrow_mut().drain(..).collect();
+            if !queued.is_empty() {
+                web_sys::console::log_1(
+                    &format!("Flushing {} queued messages", queued.len()).into(),
+                );
+            }
             for data in queued {
-                let _ = ws_clone.send_with_u8_array(&data);
+                if let Err(e) = ws_clone.send_with_u8_array(&data) {
+                    web_sys::console::warn_1(
+                        &format!(
+                            "Failed to flush queued message ({} bytes): {e:?}",
+                            data.len()
+                        )
+                        .into(),
+                    );
+                }
             }
         });
         ws.set_onopen(Some(onopen.as_ref().unchecked_ref()));
@@ -72,18 +89,25 @@ impl WsClient {
 
         let connected_err = Rc::clone(&self.connected);
         let onerror =
-            Closure::<dyn FnMut(web_sys::ErrorEvent)>::new(move |_: web_sys::ErrorEvent| {
+            Closure::<dyn FnMut(web_sys::ErrorEvent)>::new(move |evt: web_sys::ErrorEvent| {
                 *connected_err.borrow_mut() = false;
-                web_sys::console::log_1(&"WebSocket error".into());
+                web_sys::console::error_1(&format!("WebSocket error: {}", evt.message()).into());
             });
         ws.set_onerror(Some(onerror.as_ref().unchecked_ref()));
         onerror.forget();
 
         let connected_close = Rc::clone(&self.connected);
         let onclose =
-            Closure::<dyn FnMut(web_sys::CloseEvent)>::new(move |_: web_sys::CloseEvent| {
+            Closure::<dyn FnMut(web_sys::CloseEvent)>::new(move |evt: web_sys::CloseEvent| {
                 *connected_close.borrow_mut() = false;
-                web_sys::console::log_1(&"WebSocket closed".into());
+                web_sys::console::warn_1(
+                    &format!(
+                        "WebSocket closed: code={}, reason='{}'",
+                        evt.code(),
+                        evt.reason()
+                    )
+                    .into(),
+                );
             });
         ws.set_onclose(Some(onclose.as_ref().unchecked_ref()));
         onclose.forget();

@@ -2,6 +2,7 @@ pub mod app;
 mod audio;
 mod bridge;
 mod camera_gl;
+mod diag;
 mod effects;
 pub mod game;
 mod input;

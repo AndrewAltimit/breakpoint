@@ -156,10 +156,7 @@ async fn cache_control_middleware(
     let cache_value = if path.ends_with(".png") || path.ends_with(".svg") {
         // Image assets: cache for 1 day
         HeaderValue::from_static("public, max-age=86400")
-    } else if path.ends_with(".wasm")
-        || path.ends_with(".js")
-        || path.ends_with(".css")
-    {
+    } else if path.ends_with(".wasm") || path.ends_with(".js") || path.ends_with(".css") {
         // Code assets: always revalidate (uses Last-Modified/ETag)
         HeaderValue::from_static("no-cache")
     } else {

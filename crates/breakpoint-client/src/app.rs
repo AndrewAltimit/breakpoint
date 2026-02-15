@@ -286,7 +286,13 @@ impl App {
         for data in messages {
             let msg_type = match decode_message_type(&data) {
                 Ok(t) => t,
-                Err(_) => continue,
+                Err(e) => {
+                    crate::diag::console_warn!(
+                        "Failed to decode message type ({} bytes): {e}",
+                        data.len()
+                    );
+                    continue;
+                },
             };
 
             match self.state {
@@ -300,12 +306,18 @@ impl App {
         }
     }
 
-    fn process_lobby_message(&mut self, data: &[u8], _msg_type: MessageType) {
+    fn process_lobby_message(&mut self, data: &[u8], msg_type: MessageType) {
         use breakpoint_core::net::messages::ServerMessage;
 
         let msg = match decode_server_message(data) {
             Ok(m) => m,
-            Err(_) => return,
+            Err(e) => {
+                crate::diag::console_warn!(
+                    "Failed to decode lobby message ({msg_type:?}, {} bytes): {e}",
+                    data.len()
+                );
+                return;
+            },
         };
 
         match msg {
@@ -374,19 +386,26 @@ impl App {
         use breakpoint_core::net::messages::ServerMessage;
 
         match msg_type {
-            MessageType::GameState => {
-                if let Ok(ServerMessage::GameState(gs)) = decode_server_message(data)
-                    && let Some(ref mut active) = self.game
-                {
-                    active.prev_state = Some(active.game.serialize_state());
-                    active.game.apply_state(&gs.state_data);
-                    active.cached_state_bytes = Some(gs.state_data);
-                    active.tick = gs.tick;
-                    active.interp_alpha = 0.0;
-                }
+            MessageType::GameState => match decode_server_message(data) {
+                Ok(ServerMessage::GameState(gs)) => {
+                    if let Some(ref mut active) = self.game {
+                        active.prev_state = Some(active.game.serialize_state());
+                        active.game.apply_state(&gs.state_data);
+                        active.cached_state_bytes = Some(gs.state_data);
+                        active.tick = gs.tick;
+                        active.interp_alpha = 0.0;
+                    }
+                },
+                Err(e) => {
+                    crate::diag::console_warn!(
+                        "Failed to decode GameState ({} bytes): {e}",
+                        data.len()
+                    );
+                },
+                _ => {},
             },
-            MessageType::RoundEnd => {
-                if let Ok(ServerMessage::RoundEnd(re)) = decode_server_message(data) {
+            MessageType::RoundEnd => match decode_server_message(data) {
+                Ok(ServerMessage::RoundEnd(re)) => {
                     let scores: Vec<PlayerScore> = re
                         .scores
                         .iter()
@@ -399,10 +418,17 @@ impl App {
                         tracker.record_round(&scores);
                     }
                     self.transition_to(AppState::BetweenRounds);
-                }
+                },
+                Err(e) => {
+                    crate::diag::console_warn!(
+                        "Failed to decode RoundEnd ({} bytes): {e}",
+                        data.len()
+                    );
+                },
+                _ => {},
             },
-            MessageType::GameEnd => {
-                if let Ok(ServerMessage::GameEnd(ge)) = decode_server_message(data) {
+            MessageType::GameEnd => match decode_server_message(data) {
+                Ok(ServerMessage::GameEnd(ge)) => {
                     let scores: Vec<PlayerScore> = ge
                         .final_scores
                         .iter()
@@ -415,7 +441,14 @@ impl App {
                         tracker.record_round(&scores);
                     }
                     self.transition_to(AppState::GameOver);
-                }
+                },
+                Err(e) => {
+                    crate::diag::console_warn!(
+                        "Failed to decode GameEnd ({} bytes): {e}",
+                        data.len()
+                    );
+                },
+                _ => {},
             },
             MessageType::AlertEvent | MessageType::AlertClaimed | MessageType::AlertDismissed => {
                 self.process_alert_message(data, msg_type);
@@ -428,26 +461,47 @@ impl App {
         use breakpoint_core::net::messages::ServerMessage;
 
         match msg_type {
-            MessageType::AlertEvent => {
-                if let Ok(ServerMessage::AlertEvent(ae)) = decode_server_message(data) {
+            MessageType::AlertEvent => match decode_server_message(data) {
+                Ok(ServerMessage::AlertEvent(ae)) => {
                     self.overlay_queue
                         .push(OverlayNetEvent::AlertReceived(Box::new(ae.event)));
-                }
+                },
+                Err(e) => {
+                    crate::diag::console_warn!(
+                        "Failed to decode AlertEvent ({} bytes): {e}",
+                        data.len()
+                    );
+                },
+                _ => {},
             },
-            MessageType::AlertClaimed => {
-                if let Ok(ServerMessage::AlertClaimed(ac)) = decode_server_message(data) {
+            MessageType::AlertClaimed => match decode_server_message(data) {
+                Ok(ServerMessage::AlertClaimed(ac)) => {
                     self.overlay_queue.push(OverlayNetEvent::AlertClaimed {
                         event_id: ac.event_id,
                         claimed_by: ac.claimed_by.to_string(),
                     });
-                }
+                },
+                Err(e) => {
+                    crate::diag::console_warn!(
+                        "Failed to decode AlertClaimed ({} bytes): {e}",
+                        data.len()
+                    );
+                },
+                _ => {},
             },
-            MessageType::AlertDismissed => {
-                if let Ok(ServerMessage::AlertDismissed(ad)) = decode_server_message(data) {
+            MessageType::AlertDismissed => match decode_server_message(data) {
+                Ok(ServerMessage::AlertDismissed(ad)) => {
                     self.overlay_queue.push(OverlayNetEvent::AlertDismissed {
                         event_id: ad.event_id,
                     });
-                }
+                },
+                Err(e) => {
+                    crate::diag::console_warn!(
+                        "Failed to decode AlertDismissed ({} bytes): {e}",
+                        data.len()
+                    );
+                },
+                _ => {},
             },
             _ => {},
         }

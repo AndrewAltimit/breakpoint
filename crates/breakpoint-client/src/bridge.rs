@@ -57,11 +57,18 @@ pub fn push_ui_state(app: &App) {
             "muted": app.audio_settings.muted,
         });
 
-        if let Ok(json_str) = serde_json::to_string(&state) {
-            let _ = js_sys::eval(&format!(
-                "window._breakpointUpdate && window._breakpointUpdate({})",
-                json_str
-            ));
+        match serde_json::to_string(&state) {
+            Ok(json_str) => {
+                if let Err(e) = js_sys::eval(&format!(
+                    "window._breakpointUpdate && window._breakpointUpdate({})",
+                    json_str
+                )) {
+                    crate::diag::console_warn!("JS bridge _breakpointUpdate failed: {e:?}");
+                }
+            },
+            Err(e) => {
+                crate::diag::console_warn!("Failed to serialize UI state: {e}");
+            },
         }
     }
     #[cfg(not(target_family = "wasm"))]
@@ -72,7 +79,11 @@ pub fn push_ui_state(app: &App) {
 pub fn show_disconnect_banner() {
     #[cfg(target_family = "wasm")]
     {
-        let _ = js_sys::eval("window._breakpointDisconnect && window._breakpointDisconnect()");
+        if let Err(e) =
+            js_sys::eval("window._breakpointDisconnect && window._breakpointDisconnect()")
+        {
+            crate::diag::console_warn!("JS bridge _breakpointDisconnect failed: {e:?}");
+        }
     }
 }
 
@@ -80,7 +91,10 @@ pub fn show_disconnect_banner() {
 pub fn hide_disconnect_banner() {
     #[cfg(target_family = "wasm")]
     {
-        let _ = js_sys::eval("window._breakpointReconnect && window._breakpointReconnect()");
+        if let Err(e) = js_sys::eval("window._breakpointReconnect && window._breakpointReconnect()")
+        {
+            crate::diag::console_warn!("JS bridge _breakpointReconnect failed: {e:?}");
+        }
     }
 }
 
@@ -270,8 +284,13 @@ pub fn attach_ui_callbacks(app: &std::rc::Rc<std::cell::RefCell<App>>) {
                 player_color: color,
                 protocol_version: PROTOCOL_VERSION,
             });
-            if let Ok(data) = encode_client_message(&msg) {
-                let _ = app.ws.send(&data);
+            match encode_client_message(&msg) {
+                Ok(data) => {
+                    if let Err(e) = app.ws.send(&data) {
+                        crate::diag::console_warn!("Failed to send JoinRoom (create): {e}");
+                    }
+                },
+                Err(e) => crate::diag::console_warn!("Failed to encode JoinRoom (create): {e}"),
             }
             app.lobby.status_message = Some("Creating room...".to_string());
         });
@@ -314,8 +333,13 @@ pub fn attach_ui_callbacks(app: &std::rc::Rc<std::cell::RefCell<App>>) {
                 player_color: color,
                 protocol_version: PROTOCOL_VERSION,
             });
-            if let Ok(data) = encode_client_message(&msg) {
-                let _ = app.ws.send(&data);
+            match encode_client_message(&msg) {
+                Ok(data) => {
+                    if let Err(e) = app.ws.send(&data) {
+                        crate::diag::console_warn!("Failed to send JoinRoom (join): {e}");
+                    }
+                },
+                Err(e) => crate::diag::console_warn!("Failed to encode JoinRoom (join): {e}"),
             }
             app.lobby.status_message = Some(format!("Joining room {code}..."));
         });
@@ -336,8 +360,13 @@ pub fn attach_ui_callbacks(app: &std::rc::Rc<std::cell::RefCell<App>>) {
                 let msg = ClientMessage::RequestGameStart(RequestGameStartMsg {
                     game_name: app.lobby.selected_game.to_string(),
                 });
-                if let Ok(data) = encode_client_message(&msg) {
-                    let _ = app.ws.send(&data);
+                match encode_client_message(&msg) {
+                    Ok(data) => {
+                        if let Err(e) = app.ws.send(&data) {
+                            crate::diag::console_warn!("Failed to send RequestGameStart: {e}");
+                        }
+                    },
+                    Err(e) => crate::diag::console_warn!("Failed to encode RequestGameStart: {e}"),
                 }
             }
         });
