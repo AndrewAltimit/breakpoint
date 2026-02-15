@@ -227,6 +227,24 @@ pub fn attach_ui_callbacks(app: &std::rc::Rc<std::cell::RefCell<App>>) {
         None => return,
     };
 
+    // ui_set_player_name(name)
+    {
+        let app = Rc::clone(app);
+        let closure = Closure::<dyn FnMut(String)>::new(move |name: String| {
+            let mut app = app.borrow_mut();
+            let name = name.trim().to_string();
+            if !name.is_empty() {
+                app.lobby.player_name = name;
+            }
+        });
+        let _ = js_sys::Reflect::set(
+            &window,
+            &"_bpSetPlayerName".into(),
+            closure.as_ref().unchecked_ref(),
+        );
+        closure.forget();
+    }
+
     // ui_create_room
     {
         let app = Rc::clone(app);
