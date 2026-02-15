@@ -233,36 +233,54 @@ async fn read_loop(
             Err(_) => continue,
         };
 
-        // Lifecycle messages need a write lock — handle before acquiring any lock
-        // to avoid the read→drop→write race condition.
-        let is_lifecycle = matches!(
+        // Server-authoritative: reject lifecycle messages from clients.
+        // GameState, GameStart, RoundEnd, GameEnd are server-only.
+        if matches!(
             msg_type,
-            MessageType::GameStart | MessageType::RoundEnd | MessageType::GameEnd
-        );
-
-        if is_lifecycle {
-            let mut rooms = state.rooms.write().await;
-            // Only the host may send lifecycle messages
-            if rooms.get_host_id(room_code) != Some(player_id) {
-                continue;
-            }
-            match msg_type {
-                MessageType::GameStart => {
-                    rooms.set_room_state(room_code, RoomState::InGame);
-                },
-                MessageType::RoundEnd => {
-                    rooms.set_room_state(room_code, RoomState::BetweenRounds);
-                },
-                MessageType::GameEnd => {
-                    rooms.set_room_state(room_code, RoomState::Lobby);
-                },
-                _ => {},
-            }
-            rooms.broadcast_to_room_except(room_code, player_id, &data);
+            MessageType::GameState
+                | MessageType::GameStart
+                | MessageType::RoundEnd
+                | MessageType::GameEnd
+        ) {
+            tracing::warn!(
+                player_id,
+                room_code,
+                ?msg_type,
+                "Rejected server-only message from client"
+            );
             continue;
         }
 
-        // ClaimAlert also needs special lock handling (read→drop→write→read)
+        // RequestGameStart: client asks the server to start a game
+        if msg_type == MessageType::RequestGameStart {
+            if let Ok(breakpoint_core::net::messages::ClientMessage::RequestGameStart(req)) =
+                decode_client_message(&data)
+            {
+                let mut rooms = state.rooms.write().await;
+                match rooms.start_game(room_code, &req.game_name, player_id, &state.game_registry) {
+                    Ok(()) => {
+                        tracing::info!(
+                            player_id,
+                            room_code,
+                            game = %req.game_name,
+                            "Game started"
+                        );
+                    },
+                    Err(e) => {
+                        tracing::warn!(
+                            player_id,
+                            room_code,
+                            game = %req.game_name,
+                            error = %e,
+                            "Failed to start game"
+                        );
+                    },
+                }
+            }
+            continue;
+        }
+
+        // ClaimAlert needs special lock handling (read→drop→write→read)
         if msg_type == MessageType::ClaimAlert {
             if let Ok(breakpoint_core::net::messages::ClientMessage::ClaimAlert(claim)) =
                 decode_client_message(&data)
@@ -303,19 +321,12 @@ async fn read_loop(
         let rooms = state.rooms.read().await;
 
         match msg_type {
-            // Player inputs get relayed to the host
+            // Player inputs routed to the server game session
             MessageType::PlayerInput => {
-                if let Some(host_id) = rooms.get_host_id(room_code)
-                    && player_id != host_id
+                if let Ok(breakpoint_core::net::messages::ClientMessage::PlayerInput(pi)) =
+                    decode_client_message(&data)
                 {
-                    rooms.send_to_player(room_code, host_id, data.to_vec());
-                }
-            },
-
-            // Game state from host gets broadcast to all non-host players (host-only)
-            MessageType::GameState => {
-                if rooms.get_host_id(room_code) == Some(player_id) {
-                    rooms.broadcast_to_room_except(room_code, player_id, &data);
+                    rooms.route_player_input(room_code, player_id, pi.tick, pi.input_data);
                 }
             },
 
@@ -331,12 +342,12 @@ async fn read_loop(
                 rooms.broadcast_to_room(room_code, &data);
             },
 
-            // Player list updates from host broadcast to all
+            // Player list updates broadcast to all
             MessageType::PlayerList | MessageType::RoomConfigMsg => {
                 rooms.broadcast_to_room(room_code, &data);
             },
 
-            // Overlay config from host broadcast to all
+            // Overlay config broadcast to all
             MessageType::OverlayConfig => {
                 rooms.broadcast_to_room(room_code, &data);
             },

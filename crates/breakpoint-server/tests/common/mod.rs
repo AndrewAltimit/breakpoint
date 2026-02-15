@@ -9,7 +9,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use breakpoint_core::events::{Event, EventType, Priority};
 use breakpoint_core::net::messages::{
-    ClientMessage, JoinRoomMsg, JoinRoomResponseMsg, ServerMessage,
+    ClientMessage, JoinRoomMsg, JoinRoomResponseMsg, RequestGameStartMsg, ServerMessage,
 };
 use breakpoint_core::net::protocol::{
     decode_server_message, encode_client_message, encode_server_message,
@@ -244,6 +244,14 @@ pub async fn ws_send_server_msg(stream: &mut WsStream, msg: &ServerMessage) {
 pub async fn ws_send_client_msg(stream: &mut WsStream, msg: &ClientMessage) {
     let encoded = encode_client_message(msg).unwrap();
     stream.send(Message::Binary(encoded.into())).await.unwrap();
+}
+
+/// Send a RequestGameStart from a client (leader) to start a server-authoritative game.
+pub async fn ws_request_game_start(stream: &mut WsStream, game_name: &str) {
+    let msg = ClientMessage::RequestGameStart(RequestGameStartMsg {
+        game_name: game_name.to_string(),
+    });
+    ws_send_client_msg(stream, &msg).await;
 }
 
 /// Construct a test event with the given id.

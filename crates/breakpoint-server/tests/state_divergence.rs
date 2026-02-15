@@ -1,77 +1,70 @@
-//! P2-2: Network fidelity tests — verify host and clients receive consistent state,
-//! reconnection preserves rooms, and malformed messages are handled gracefully.
+//! Network fidelity tests — verify all clients receive consistent state from
+//! the server-authoritative game loop, reconnection preserves rooms, and
+//! malformed messages are handled gracefully.
 
 #[allow(dead_code)]
 mod common;
 
-use breakpoint_core::net::messages::{GameStateMsg, ServerMessage};
-use common::{
-    TestServer, ws_connect, ws_join_room, ws_read_server_msg, ws_send_server_msg, ws_try_read_raw,
-};
+use breakpoint_core::net::messages::ServerMessage;
+use common::{TestServer, ws_connect, ws_join_room, ws_read_server_msg, ws_request_game_start};
 use futures::SinkExt;
 use tokio_tungstenite::tungstenite::Message;
 
-/// Helper: create a 2-player room, returning (host, client, host_id, client_id, room_code).
+/// Helper: create a 2-player room, returning (leader, client, leader_id, client_id, room_code).
 async fn setup_two_player_room(
     server: &TestServer,
-) -> (
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
-    u64,
-    u64,
-    String,
-) {
-    let mut host = ws_connect(&server.ws_url()).await;
-    let (join_resp, room_code) = common::ws_create_room(&mut host, "Host").await;
-    let host_id = join_resp.player_id.unwrap();
-    let _ = ws_read_server_msg(&mut host).await; // PlayerList(1)
+) -> (common::WsStream, common::WsStream, u64, u64, String) {
+    let mut leader = ws_connect(&server.ws_url()).await;
+    let (join_resp, room_code) = common::ws_create_room(&mut leader, "Leader").await;
+    let leader_id = join_resp.player_id.unwrap();
+    let _ = ws_read_server_msg(&mut leader).await; // PlayerList(1)
 
     let mut client = ws_connect(&server.ws_url()).await;
     let join_resp2 = ws_join_room(&mut client, &room_code, "Client").await;
     let client_id = join_resp2.player_id.unwrap();
     let _ = ws_read_server_msg(&mut client).await; // PlayerList(2)
-    let _ = ws_read_server_msg(&mut host).await; // PlayerList(2)
+    let _ = ws_read_server_msg(&mut leader).await; // PlayerList(2)
 
-    (host, client, host_id, client_id, room_code)
+    (leader, client, leader_id, client_id, room_code)
 }
 
-// REGRESSION: Both host and client should receive identical game state bytes
+// Both leader and client should receive identical game state bytes from the server
 #[tokio::test]
-async fn host_and_client_receive_same_game_state() {
+async fn leader_and_client_receive_same_game_state() {
     let server = TestServer::new().await;
-    let (mut host, mut client, _, _, _) = setup_two_player_room(&server).await;
+    let (mut leader, mut client, _, _, _) = setup_two_player_room(&server).await;
 
-    // Host sends GameState
-    let state_data = vec![1, 2, 3, 4, 5, 6, 7, 8];
-    let gs_msg = ServerMessage::GameState(GameStateMsg {
-        tick: 100,
-        state_data: state_data.clone(),
-    });
-    ws_send_server_msg(&mut host, &gs_msg).await;
+    // Start a game on the server
+    ws_request_game_start(&mut leader, "mini-golf").await;
 
-    // Client receives the state
+    // Both receive GameStart
+    let _ = ws_read_server_msg(&mut leader).await;
+    let _ = ws_read_server_msg(&mut client).await;
+
+    // Both should receive the same GameState from the server's game loop
+    let leader_msg = ws_read_server_msg(&mut leader).await;
     let client_msg = ws_read_server_msg(&mut client).await;
-    match client_msg {
-        ServerMessage::GameState(gs) => {
-            assert_eq!(gs.tick, 100, "Client should receive tick 100");
+
+    match (&leader_msg, &client_msg) {
+        (ServerMessage::GameState(leader_gs), ServerMessage::GameState(client_gs)) => {
             assert_eq!(
-                gs.state_data, state_data,
-                "Client should receive identical state bytes"
+                leader_gs.tick, client_gs.tick,
+                "Both clients should receive the same tick"
+            );
+            assert_eq!(
+                leader_gs.state_data, client_gs.state_data,
+                "Both clients should receive identical state bytes"
             );
         },
-        other => panic!("Expected GameState, got: {other:?}"),
+        _ => panic!("Expected GameState for both, got leader={leader_msg:?} client={client_msg:?}"),
     }
-
-    // Host should NOT receive its own GameState back
-    let maybe = ws_try_read_raw(&mut host, 200).await;
-    assert!(maybe.is_none(), "Host should not receive its own GameState");
 }
 
-// REGRESSION: Rapid disconnect/reconnect should preserve room for remaining players
+// Rapid disconnect/reconnect should preserve room for remaining players
 #[tokio::test]
 async fn rapid_disconnect_reconnect_preserves_room() {
     let server = TestServer::new().await;
-    let (mut host, client, _, _, room_code) = setup_two_player_room(&server).await;
+    let (mut leader, client, _, _, room_code) = setup_two_player_room(&server).await;
 
     // Client disconnects abruptly
     drop(client);
@@ -79,8 +72,8 @@ async fn rapid_disconnect_reconnect_preserves_room() {
     // Small delay to let server process disconnect
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-    // Host should receive updated PlayerList (1 player)
-    let msg = ws_read_server_msg(&mut host).await;
+    // Leader should receive updated PlayerList (1 player)
+    let msg = ws_read_server_msg(&mut leader).await;
     match msg {
         ServerMessage::PlayerList(pl) => {
             assert_eq!(
@@ -102,7 +95,7 @@ async fn rapid_disconnect_reconnect_preserves_room() {
 
     // Both should get updated player list
     let _ = ws_read_server_msg(&mut client2).await; // PlayerList(2)
-    let msg2 = ws_read_server_msg(&mut host).await;
+    let msg2 = ws_read_server_msg(&mut leader).await;
     match msg2 {
         ServerMessage::PlayerList(pl) => {
             assert_eq!(
@@ -115,11 +108,11 @@ async fn rapid_disconnect_reconnect_preserves_room() {
     }
 }
 
-// REGRESSION: Malformed WS messages should not crash server or affect other clients
+// Malformed WS messages should not crash server or affect other clients
 #[tokio::test]
 async fn malformed_ws_message_does_not_crash_server() {
     let server = TestServer::new().await;
-    let (mut host, mut _client, _, _, _room_code) = setup_two_player_room(&server).await;
+    let (mut leader, mut client, _, _, _room_code) = setup_two_player_room(&server).await;
 
     // Send garbage binary data through a new connection
     let mut garbage_conn = ws_connect(&server.ws_url()).await;
@@ -132,22 +125,18 @@ async fn malformed_ws_message_does_not_crash_server() {
     // Small delay
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-    // Server should still be functional — host can send game state
-    let gs_msg = ServerMessage::GameState(GameStateMsg {
-        tick: 42,
-        state_data: vec![1, 2, 3],
-    });
-    ws_send_server_msg(&mut host, &gs_msg).await;
+    // Server should still be functional — leader can start a game
+    ws_request_game_start(&mut leader, "mini-golf").await;
 
-    // Client in the room should still receive it
-    let msg = ws_read_server_msg(&mut _client).await;
-    match msg {
-        ServerMessage::GameState(gs) => {
-            assert_eq!(
-                gs.tick, 42,
-                "Client should still receive state after garbage"
-            );
-        },
-        other => panic!("Expected GameState after garbage, got: {other:?}"),
-    }
+    // Both should receive GameStart
+    let msg = ws_read_server_msg(&mut leader).await;
+    assert!(
+        matches!(msg, ServerMessage::GameStart(_)),
+        "Leader should receive GameStart after garbage"
+    );
+    let msg = ws_read_server_msg(&mut client).await;
+    assert!(
+        matches!(msg, ServerMessage::GameStart(_)),
+        "Client should receive GameStart after garbage"
+    );
 }

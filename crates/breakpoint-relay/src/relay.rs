@@ -151,7 +151,7 @@ pub fn peek_message_type(data: &[u8]) -> Option<MessageType> {
 }
 
 /// Determine if a message type should be forwarded from host to clients.
-pub fn is_host_to_client(msg_type: MessageType) -> bool {
+pub fn is_server_to_client(msg_type: MessageType) -> bool {
     matches!(
         msg_type,
         MessageType::JoinRoomResponse
@@ -265,10 +265,10 @@ mod tests {
 
     #[test]
     fn host_to_client_routing() {
-        assert!(is_host_to_client(MessageType::GameState));
-        assert!(is_host_to_client(MessageType::PlayerList));
-        assert!(!is_host_to_client(MessageType::PlayerInput));
-        assert!(!is_host_to_client(MessageType::JoinRoom));
+        assert!(is_server_to_client(MessageType::GameState));
+        assert!(is_server_to_client(MessageType::PlayerList));
+        assert!(!is_server_to_client(MessageType::PlayerInput));
+        assert!(!is_server_to_client(MessageType::JoinRoom));
     }
 
     // ================================================================

@@ -1,90 +1,73 @@
 //! Game flow smoke tests: verify real game inputs survive the full
-//! network relay pipeline (encode -> WS -> relay -> WS -> decode -> apply).
+//! server-authoritative pipeline (encode -> WS -> server game loop -> WS -> decode).
 
 #[allow(dead_code)]
 mod common;
 
 use std::collections::HashMap;
 
-use futures::SinkExt;
-use tokio_tungstenite::tungstenite::Message;
-
 use breakpoint_core::game_trait::{BreakpointGame, PlayerInputs};
-use breakpoint_core::net::messages::{ClientMessage, GameStartMsg, PlayerInputMsg, ServerMessage};
-use breakpoint_core::net::protocol::{decode_client_message, encode_client_message};
+use breakpoint_core::net::messages::{ClientMessage, PlayerInputMsg, ServerMessage};
 use breakpoint_core::test_helpers::{default_config, make_players};
 
 use common::{
-    TestServer, ws_connect, ws_create_room, ws_join_room, ws_read_raw, ws_read_server_msg,
-    ws_send_server_msg,
+    TestServer, ws_connect, ws_create_room, ws_join_room, ws_read_server_msg,
+    ws_request_game_start, ws_send_client_msg,
 };
 
-/// Start a game: host creates room, client joins, host sends GameStart.
-/// Returns (host_stream, client_stream, host_player_id, client_player_id).
-async fn setup_two_player_room(
+/// Start a server-authoritative game: leader creates room, client joins,
+/// leader sends RequestGameStart, both receive GameStart from server.
+/// Returns (leader_stream, client_stream, leader_player_id, client_player_id).
+async fn setup_two_player_game(
     server: &TestServer,
+    game_name: &str,
 ) -> (common::WsStream, common::WsStream, u64, u64) {
-    let mut host = ws_connect(&server.ws_url()).await;
-    let (host_resp, room_code) = ws_create_room(&mut host, "Host").await;
-    let host_id = host_resp.player_id.unwrap();
+    let mut leader = ws_connect(&server.ws_url()).await;
+    let (leader_resp, room_code) = ws_create_room(&mut leader, "Leader").await;
+    let leader_id = leader_resp.player_id.unwrap();
 
     // Drain PlayerList that comes after JoinRoomResponse
-    let _ = ws_read_server_msg(&mut host).await;
+    let _ = ws_read_server_msg(&mut leader).await;
 
     let mut client = ws_connect(&server.ws_url()).await;
     let client_resp = ws_join_room(&mut client, &room_code, "Client").await;
     let client_id = client_resp.player_id.unwrap();
 
     // Drain PlayerList updates for both
-    let _ = ws_read_server_msg(&mut host).await;
+    let _ = ws_read_server_msg(&mut leader).await;
     let _ = ws_read_server_msg(&mut client).await;
 
-    // Host sends GameStart
-    let players = vec![
-        breakpoint_core::player::Player {
-            id: host_id,
-            display_name: "Host".to_string(),
-            color: breakpoint_core::player::PlayerColor::default(),
-            is_host: true,
-            is_spectator: false,
-        },
-        breakpoint_core::player::Player {
-            id: client_id,
-            display_name: "Client".to_string(),
-            color: breakpoint_core::player::PlayerColor::PALETTE[1],
-            is_host: false,
-            is_spectator: false,
-        },
-    ];
+    // Leader requests game start from server
+    ws_request_game_start(&mut leader, game_name).await;
 
-    let game_start = ServerMessage::GameStart(GameStartMsg {
-        game_name: "mini-golf".to_string(),
-        players,
-        host_id,
-    });
-    ws_send_server_msg(&mut host, &game_start).await;
-
-    // Client receives GameStart
+    // Both receive GameStart broadcast from server
+    let msg = ws_read_server_msg(&mut leader).await;
+    assert!(
+        matches!(msg, ServerMessage::GameStart(_)),
+        "Leader should receive GameStart"
+    );
     let msg = ws_read_server_msg(&mut client).await;
     assert!(
         matches!(msg, ServerMessage::GameStart(_)),
         "Client should receive GameStart"
     );
 
-    (host, client, host_id, client_id)
+    (leader, client, leader_id, client_id)
 }
 
 #[tokio::test]
-async fn golf_input_relayed_and_applied() {
+async fn golf_input_processed_by_server() {
     let server = TestServer::new().await;
-    let (mut host, mut client, _host_id, client_id) = setup_two_player_room(&server).await;
+    let (_leader, mut client, _leader_id, client_id) =
+        setup_two_player_game(&server, "mini-golf").await;
 
-    // Initialize a real MiniGolf game on the "host" side
-    let mut game = breakpoint_golf::MiniGolf::new();
-    let players = make_players(2);
-    game.init(&players, &default_config(90));
-
-    let before = game.serialize_state();
+    // Collect initial GameState from server's game loop
+    let initial_state = loop {
+        let msg = ws_read_server_msg(&mut client).await;
+        if let ServerMessage::GameState(gs) = msg {
+            break gs.state_data;
+        }
+    };
 
     // Client sends a PlayerInput with real GolfInput data
     let golf_input = breakpoint_golf::GolfInput {
@@ -96,45 +79,41 @@ async fn golf_input_relayed_and_applied() {
     let msg = ClientMessage::PlayerInput(PlayerInputMsg {
         player_id: client_id,
         tick: 1,
-        input_data: input_data.clone(),
+        input_data,
     });
-    let encoded = encode_client_message(&msg).unwrap();
-    client.send(Message::Binary(encoded.into())).await.unwrap();
+    ws_send_client_msg(&mut client, &msg).await;
 
-    // Host receives the relayed PlayerInput (raw ClientMessage bytes)
-    let raw = ws_read_raw(&mut host).await;
-    let client_msg = decode_client_message(&raw).expect("Host should decode relayed PlayerInput");
-    match client_msg {
-        ClientMessage::PlayerInput(pi) => {
-            // Apply the relayed input to our game instance (simulating host logic)
-            game.apply_input(1, &pi.input_data);
-            let empty = PlayerInputs {
-                inputs: HashMap::new(),
-            };
-            game.update(0.1, &empty);
-
-            let after = game.serialize_state();
-            assert_ne!(
-                before, after,
-                "Game state should change after applying relayed golf input"
+    // Wait for a GameState where state has changed (input was processed)
+    for _ in 0..50 {
+        let msg = ws_read_server_msg(&mut client).await;
+        if let ServerMessage::GameState(gs) = msg
+            && gs.state_data != initial_state
+        {
+            // Verify we can deserialize and that the stroke was applied
+            let state: breakpoint_golf::GolfState = rmp_serde::from_slice(&gs.state_data).unwrap();
+            assert_eq!(
+                state.strokes[&client_id], 1,
+                "Stroke count should increment after server processes input"
             );
-            assert_eq!(game.state().strokes[&1], 1, "Stroke count should increment");
-        },
-        other => panic!("Expected PlayerInput, got: {other:?}"),
+            return;
+        }
     }
+    panic!("GameState never reflected the golf input after 50 ticks");
 }
 
 #[tokio::test]
-async fn platformer_input_relayed_and_applied() {
+async fn platformer_input_processed_by_server() {
     let server = TestServer::new().await;
-    let (_host, mut client, _host_id, client_id) = setup_two_player_room(&server).await;
+    let (_leader, mut client, _leader_id, client_id) =
+        setup_two_player_game(&server, "platform-racer").await;
 
-    // Initialize a real PlatformRacer game
-    let mut game = breakpoint_platformer::PlatformRacer::new();
-    let players = make_players(2);
-    game.init(&players, &default_config(120));
-
-    let before = game.serialize_state();
+    // Collect initial GameState from server's game loop
+    let initial_state = loop {
+        let msg = ws_read_server_msg(&mut client).await;
+        if let ServerMessage::GameState(gs) = msg {
+            break gs.state_data;
+        }
+    };
 
     // Client sends PlatformerInput
     let plat_input = breakpoint_platformer::physics::PlatformerInput {
@@ -146,36 +125,35 @@ async fn platformer_input_relayed_and_applied() {
     let msg = ClientMessage::PlayerInput(PlayerInputMsg {
         player_id: client_id,
         tick: 1,
-        input_data: input_data.clone(),
+        input_data,
     });
-    let encoded = encode_client_message(&msg).unwrap();
-    client.send(Message::Binary(encoded.into())).await.unwrap();
+    ws_send_client_msg(&mut client, &msg).await;
 
-    // Apply directly to game (simulating host logic)
-    game.apply_input(1, &input_data);
-    let empty = PlayerInputs {
-        inputs: HashMap::new(),
-    };
-    game.update(1.0 / 15.0, &empty);
-
-    let after = game.serialize_state();
-    assert_ne!(
-        before, after,
-        "Game state should change after applying relayed platformer input"
-    );
+    // Wait for GameState reflecting the input
+    for _ in 0..50 {
+        let msg = ws_read_server_msg(&mut client).await;
+        if let ServerMessage::GameState(gs) = msg
+            && gs.state_data != initial_state
+        {
+            return; // State changed — input was processed
+        }
+    }
+    panic!("GameState never reflected the platformer input after 50 ticks");
 }
 
 #[tokio::test]
-async fn lasertag_input_relayed_and_applied() {
+async fn lasertag_input_processed_by_server() {
     let server = TestServer::new().await;
-    let (_host, mut client, _host_id, client_id) = setup_two_player_room(&server).await;
+    let (_leader, mut client, _leader_id, client_id) =
+        setup_two_player_game(&server, "laser-tag").await;
 
-    // Initialize a real LaserTagArena game
-    let mut game = breakpoint_lasertag::LaserTagArena::new();
-    let players = make_players(2);
-    game.init(&players, &default_config(180));
-
-    let before = game.serialize_state();
+    // Collect initial GameState from server's game loop
+    let initial_state = loop {
+        let msg = ws_read_server_msg(&mut client).await;
+        if let ServerMessage::GameState(gs) = msg {
+            break gs.state_data;
+        }
+    };
 
     // Client sends LaserTagInput
     let lt_input = breakpoint_lasertag::LaserTagInput {
@@ -189,23 +167,20 @@ async fn lasertag_input_relayed_and_applied() {
     let msg = ClientMessage::PlayerInput(PlayerInputMsg {
         player_id: client_id,
         tick: 1,
-        input_data: input_data.clone(),
+        input_data,
     });
-    let encoded = encode_client_message(&msg).unwrap();
-    client.send(Message::Binary(encoded.into())).await.unwrap();
+    ws_send_client_msg(&mut client, &msg).await;
 
-    // Apply directly to game (simulating host logic)
-    game.apply_input(1, &input_data);
-    let empty = PlayerInputs {
-        inputs: HashMap::new(),
-    };
-    game.update(0.05, &empty);
-
-    let after = game.serialize_state();
-    assert_ne!(
-        before, after,
-        "Game state should change after applying relayed laser tag input"
-    );
+    // Wait for GameState reflecting the input
+    for _ in 0..50 {
+        let msg = ws_read_server_msg(&mut client).await;
+        if let ServerMessage::GameState(gs) = msg
+            && gs.state_data != initial_state
+        {
+            return; // State changed — input was processed
+        }
+    }
+    panic!("GameState never reflected the laser tag input after 50 ticks");
 }
 
 #[tokio::test]

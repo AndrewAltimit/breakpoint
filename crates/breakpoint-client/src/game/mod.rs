@@ -10,15 +10,10 @@ use std::collections::HashMap;
 use bevy::ecs::system::NonSend;
 use bevy::prelude::*;
 
-use breakpoint_core::game_trait::{
-    BreakpointGame, GameConfig, GameId, PlayerId, PlayerInputs, PlayerScore,
-};
-use breakpoint_core::net::messages::{
-    GameEndMsg, GameStateMsg, PlayerInputMsg, PlayerScoreEntry, RoundEndMsg,
-};
+use breakpoint_core::game_trait::{BreakpointGame, GameConfig, GameId, PlayerId, PlayerScore};
+use breakpoint_core::net::messages::PlayerInputMsg;
 use breakpoint_core::net::protocol::{
-    decode_client_message, decode_message_type, decode_server_message, encode_client_message,
-    encode_server_message,
+    decode_message_type, decode_server_message, encode_client_message,
 };
 
 use breakpoint_core::player::PlayerColor;
@@ -36,7 +31,8 @@ pub fn player_color_to_bevy(color: &PlayerColor) -> Color {
     )
 }
 
-/// Serialize and route player input: host applies directly, non-host sends via WebSocket.
+/// Serialize and send player input to the server via WebSocket.
+/// In the server-authoritative model, all clients send inputs the same way.
 pub fn send_player_input(
     input: &impl serde::Serialize,
     active_game: &mut ActiveGame,
@@ -46,14 +42,9 @@ pub fn send_player_input(
     if let Ok(data) = rmp_serde::to_vec(input) {
         #[cfg(target_arch = "wasm32")]
         if active_game.tick <= 10 {
-            let path = if network_role.is_host {
-                "host-direct"
-            } else {
-                "ws-send"
-            };
             web_sys::console::log_1(
                 &format!(
-                    "BREAKPOINT:INPUT tick={} path={path} bytes={}",
+                    "BREAKPOINT:INPUT tick={} bytes={}",
                     active_game.tick,
                     data.len()
                 )
@@ -61,19 +52,13 @@ pub fn send_player_input(
             );
         }
 
-        if network_role.is_host {
-            active_game
-                .game
-                .apply_input(network_role.local_player_id, &data);
-        } else {
-            let msg = breakpoint_core::net::messages::ClientMessage::PlayerInput(PlayerInputMsg {
-                player_id: network_role.local_player_id,
-                tick: active_game.tick,
-                input_data: data,
-            });
-            if let Ok(encoded) = encode_client_message(&msg) {
-                let _ = ws_client.send(&encoded);
-            }
+        let msg = breakpoint_core::net::messages::ClientMessage::PlayerInput(PlayerInputMsg {
+            player_id: network_role.local_player_id,
+            tick: active_game.tick,
+            input_data: data,
+        });
+        if let Ok(encoded) = encode_client_message(&msg) {
+            let _ = ws_client.send(&encoded);
         }
     }
 }
@@ -159,8 +144,6 @@ impl Plugin for GamePlugin {
             .add_systems(
                 Update,
                 (
-                    game_tick_system,
-                    host_broadcast_system,
                     client_receive_system,
                     controls_hint_spawn_log,
                     controls_hint_dismiss_system,
@@ -208,7 +191,7 @@ pub struct ActiveGame {
 /// Network role for this client.
 #[derive(Resource)]
 pub struct NetworkRole {
-    pub is_host: bool,
+    pub is_leader: bool,
     pub local_player_id: PlayerId,
     pub is_spectator: bool,
 }
@@ -297,13 +280,13 @@ fn setup_game(
     };
     game.init(&lobby.players, &config);
 
-    let is_host = lobby.is_host;
+    let is_leader = lobby.is_leader;
     let local_player_id = lobby.local_player_id.unwrap_or(0);
 
     #[cfg(target_arch = "wasm32")]
     web_sys::console::log_1(
         &format!(
-            "BREAKPOINT:SETUP_GAME game={game_id} is_host={is_host} local_pid={local_player_id} \
+            "BREAKPOINT:SETUP_GAME game={game_id} is_leader={is_leader} local_pid={local_player_id} \
              players={} spectator={}",
             lobby.players.len(),
             lobby.is_spectator
@@ -320,116 +303,16 @@ fn setup_game(
         interp_alpha: 0.0,
     });
     commands.insert_resource(NetworkRole {
-        is_host,
+        is_leader,
         local_player_id,
         is_spectator: lobby.is_spectator,
     });
     commands.insert_resource(RoundTracker::new(round_count));
 }
 
-fn game_tick_system(
-    time: Res<Time>,
-    mut active_game: ResMut<ActiveGame>,
-    network_role: Res<NetworkRole>,
-    mut next_state: ResMut<NextState<AppState>>,
-    mut round_tracker: ResMut<RoundTracker>,
-    ws_client: NonSend<WsClient>,
-) {
-    if !network_role.is_host || network_role.is_spectator {
-        return;
-    }
-
-    let tick_rate = active_game.game.tick_rate();
-    let tick_interval = 1.0 / tick_rate;
-
-    active_game.tick_accumulator += time.delta_secs();
-    while active_game.tick_accumulator >= tick_interval {
-        active_game.tick_accumulator -= tick_interval;
-        active_game.tick += 1;
-        let inputs = PlayerInputs {
-            inputs: HashMap::new(),
-        };
-        active_game.game.update(tick_interval, &inputs);
-
-        #[cfg(target_arch = "wasm32")]
-        if active_game.tick <= 5 {
-            web_sys::console::log_1(
-                &format!(
-                    "BREAKPOINT:TICK #{} dt={tick_interval:.4}",
-                    active_game.tick
-                )
-                .into(),
-            );
-        }
-    }
-    active_game.interp_alpha = active_game.tick_accumulator / tick_interval;
-
-    // Check round completion
-    if active_game.game.is_round_complete() {
-        let results = active_game.game.round_results();
-        round_tracker.record_round(&results);
-
-        let scores: Vec<PlayerScoreEntry> = results
-            .iter()
-            .map(|s| PlayerScoreEntry {
-                player_id: s.player_id,
-                score: s.score,
-            })
-            .collect();
-
-        if round_tracker.is_final_round() {
-            // Final round: send GameEnd, go to GameOver
-            let final_scores: Vec<PlayerScoreEntry> = round_tracker
-                .cumulative_scores
-                .iter()
-                .map(|(&pid, &score)| PlayerScoreEntry {
-                    player_id: pid,
-                    score,
-                })
-                .collect();
-            let msg =
-                breakpoint_core::net::messages::ServerMessage::GameEnd(GameEndMsg { final_scores });
-            if let Ok(data) = encode_server_message(&msg) {
-                let _ = ws_client.send(&data);
-            }
-            next_state.set(AppState::GameOver);
-        } else {
-            // More rounds: send RoundEnd, go to BetweenRounds
-            let msg = breakpoint_core::net::messages::ServerMessage::RoundEnd(RoundEndMsg {
-                round: round_tracker.current_round,
-                scores,
-            });
-            if let Ok(data) = encode_server_message(&msg) {
-                let _ = ws_client.send(&data);
-            }
-            next_state.set(AppState::BetweenRounds);
-        }
-    }
-}
-
-fn host_broadcast_system(
-    active_game: Res<ActiveGame>,
-    network_role: Res<NetworkRole>,
-    ws_client: NonSend<WsClient>,
-) {
-    if !network_role.is_host || !active_game.is_changed() {
-        return;
-    }
-
-    let state_data = active_game.game.serialize_state();
-    let msg = breakpoint_core::net::messages::ServerMessage::GameState(GameStateMsg {
-        tick: active_game.tick,
-        state_data,
-    });
-    if let Ok(data) = encode_server_message(&msg) {
-        let _ = ws_client.send(&data);
-    }
-}
-
 fn client_receive_system(
     ws_client: NonSend<WsClient>,
     mut active_game: ResMut<ActiveGame>,
-    network_role: Res<NetworkRole>,
     mut next_state: ResMut<NextState<AppState>>,
     mut overlay_queue: ResMut<crate::overlay::OverlayEventQueue>,
     mut round_tracker: ResMut<RoundTracker>,
@@ -444,16 +327,8 @@ fn client_receive_system(
         };
 
         match msg_type {
-            // Host receives relayed PlayerInput as ClientMessage
-            MessageType::PlayerInput if network_role.is_host => {
-                if let Ok(breakpoint_core::net::messages::ClientMessage::PlayerInput(pi)) =
-                    decode_client_message(&data)
-                {
-                    active_game.game.apply_input(pi.player_id, &pi.input_data);
-                }
-            },
-            // Non-host receives GameState
-            MessageType::GameState if !network_role.is_host => {
+            // All clients receive GameState from the server
+            MessageType::GameState => {
                 if let Ok(breakpoint_core::net::messages::ServerMessage::GameState(gs)) =
                     decode_server_message(&data)
                 {

@@ -8,7 +8,7 @@ pub struct Player {
     pub id: PlayerId,
     pub display_name: String,
     pub color: PlayerColor,
-    pub is_host: bool,
+    pub is_leader: bool,
     pub is_spectator: bool,
 }
 

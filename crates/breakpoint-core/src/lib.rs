@@ -26,7 +26,7 @@ pub mod test_helpers {
                 id: i as PlayerId + 1,
                 display_name: format!("Player{}", i + 1),
                 color: PlayerColor::default(),
-                is_host: i == 0,
+                is_leader: i == 0,
                 is_spectator: false,
             })
             .collect()

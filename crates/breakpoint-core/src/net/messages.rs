@@ -10,17 +10,18 @@ use crate::room::{RoomConfig, RoomState};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum MessageType {
-    // Client -> Server/Host
+    // Client -> Server
     PlayerInput = 0x01,
     JoinRoom = 0x02,
     LeaveRoom = 0x03,
     ClaimAlert = 0x04,
     ChatMessage = 0x05,
+    RequestGameStart = 0x30,
 
     // Server -> Client
     JoinRoomResponse = 0x06,
 
-    // Host -> Client
+    // Server -> Client (game lifecycle)
     GameState = 0x10,
     PlayerList = 0x11,
     RoomConfigMsg = 0x12,
@@ -28,7 +29,7 @@ pub enum MessageType {
     RoundEnd = 0x14,
     GameEnd = 0x15,
 
-    // Host -> Client (Alert channel)
+    // Server -> Client (Alert channel)
     AlertEvent = 0x20,
     AlertClaimed = 0x21,
     AlertDismissed = 0x22,
@@ -56,6 +57,7 @@ impl MessageType {
             0x21 => Some(Self::AlertClaimed),
             0x22 => Some(Self::AlertDismissed),
             0x23 => Some(Self::OverlayConfig),
+            0x30 => Some(Self::RequestGameStart),
             _ => None,
         }
     }
@@ -102,6 +104,11 @@ pub struct ChatMessageMsg {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RequestGameStartMsg {
+    pub game_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ClaimAlertMsg {
     pub player_id: PlayerId,
     pub event_id: String,
@@ -110,7 +117,7 @@ pub struct ClaimAlertMsg {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PlayerListMsg {
     pub players: Vec<Player>,
-    pub host_id: PlayerId,
+    pub leader_id: PlayerId,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -128,7 +135,7 @@ pub struct GameStateMsg {
 pub struct GameStartMsg {
     pub game_name: String,
     pub players: Vec<Player>,
-    pub host_id: PlayerId,
+    pub leader_id: PlayerId,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -166,7 +173,7 @@ pub struct AlertDismissedMsg {
 
 // --- Unified message enums ---
 
-/// Messages sent from client to server/host.
+/// Messages sent from client to server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ClientMessage {
     JoinRoom(JoinRoomMsg),
@@ -175,6 +182,7 @@ pub enum ClientMessage {
     ChatMessage(ChatMessageMsg),
     ClaimAlert(ClaimAlertMsg),
     OverlayConfig(OverlayConfigMsg),
+    RequestGameStart(RequestGameStartMsg),
 }
 
 impl ClientMessage {
@@ -186,11 +194,12 @@ impl ClientMessage {
             Self::ChatMessage(_) => MessageType::ChatMessage,
             Self::ClaimAlert(_) => MessageType::ClaimAlert,
             Self::OverlayConfig(_) => MessageType::OverlayConfig,
+            Self::RequestGameStart(_) => MessageType::RequestGameStart,
         }
     }
 }
 
-/// Messages sent from server/host to client.
+/// Messages sent from server to client.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ServerMessage {
     JoinRoomResponse(JoinRoomResponseMsg),

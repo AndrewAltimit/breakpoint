@@ -47,19 +47,19 @@ pub struct Room {
     pub config: RoomConfig,
     pub state: RoomState,
     pub players: Vec<Player>,
-    pub host_id: PlayerId,
+    pub leader_id: PlayerId,
     pub current_round: u8,
 }
 
 impl Room {
     pub fn new(code: String, host: Player) -> Self {
-        let host_id = host.id;
+        let leader_id = host.id;
         Self {
             code,
             config: RoomConfig::default(),
             state: RoomState::Lobby,
             players: vec![host],
-            host_id,
+            leader_id,
             current_round: 0,
         }
     }

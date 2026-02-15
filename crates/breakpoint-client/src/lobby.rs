@@ -5,7 +5,7 @@ use bevy::prelude::*;
 
 use breakpoint_core::game_trait::{GameId, PlayerId};
 use breakpoint_core::net::messages::{
-    ClientMessage, GameStartMsg, JoinRoomMsg, JoinRoomResponseMsg, PlayerListMsg,
+    ClientMessage, JoinRoomMsg, JoinRoomResponseMsg, PlayerListMsg, RequestGameStartMsg,
 };
 use breakpoint_core::net::protocol::{
     PROTOCOL_VERSION, decode_server_message, encode_client_message,
@@ -42,7 +42,7 @@ pub struct LobbyState {
     pub color_index: usize,
     pub room_code: String,
     pub local_player_id: Option<PlayerId>,
-    pub is_host: bool,
+    pub is_leader: bool,
     pub players: Vec<Player>,
     pub connected: bool,
     pub is_spectator: bool,
@@ -301,7 +301,7 @@ fn setup_lobby(mut commands: Commands, mut lobby: ResMut<LobbyState>) {
                     spawn_button(row, "Join Room", LobbyButton::Join, btn_color);
                 });
 
-            // Start Game button (hidden initially, shown when host is in room)
+            // Start Game button (hidden initially, shown when leader is in room)
             parent
                 .spawn((
                     LobbyButton::StartGame,
@@ -493,7 +493,6 @@ fn lobby_input_system(
     mut lobby: ResMut<LobbyState>,
     mut ws_client: NonSendMut<WsClient>,
     mut game_text_query: Query<&mut Text, With<GameSelectionText>>,
-    mut next_state: ResMut<NextState<AppState>>,
 ) {
     // Handle game selection buttons
     for (interaction, btn) in &game_select_query {
@@ -524,7 +523,7 @@ fn lobby_input_system(
                         continue;
                     }
                 }
-                lobby.is_host = true;
+                lobby.is_leader = true;
                 let color = PlayerColor::PALETTE[lobby.color_index % PlayerColor::PALETTE.len()];
                 let msg = ClientMessage::JoinRoom(JoinRoomMsg {
                     room_code: String::new(),
@@ -556,7 +555,7 @@ fn lobby_input_system(
                         continue;
                     }
                 }
-                lobby.is_host = false;
+                lobby.is_leader = false;
                 let color = PlayerColor::PALETTE[lobby.color_index % PlayerColor::PALETTE.len()];
                 let msg = ClientMessage::JoinRoom(JoinRoomMsg {
                     room_code: code.clone(),
@@ -570,19 +569,16 @@ fn lobby_input_system(
                 lobby.status_message = Some(format!("Joining room {code}..."));
             },
             LobbyButton::StartGame => {
-                if lobby.is_host {
-                    let msg =
-                        breakpoint_core::net::messages::ServerMessage::GameStart(GameStartMsg {
-                            game_name: lobby.selected_game.to_string(),
-                            players: lobby.players.clone(),
-                            host_id: lobby.local_player_id.unwrap_or(0),
-                        });
-                    if let Ok(data) = breakpoint_core::net::protocol::encode_server_message(&msg) {
+                if lobby.is_leader {
+                    // Send RequestGameStart to the server. The server will start
+                    // the game and broadcast GameStart to all clients (including us).
+                    let msg = ClientMessage::RequestGameStart(RequestGameStartMsg {
+                        game_name: lobby.selected_game.to_string(),
+                    });
+                    if let Ok(data) = encode_client_message(&msg) {
                         let _ = ws_client.send(&data);
                     }
-                    // The server relays GameStart to other players but NOT back to
-                    // the sender (broadcast_to_room_except). Transition locally.
-                    next_state.set(AppState::InGame);
+                    lobby.status_message = Some("Starting game...".to_string());
                 }
             },
         }
@@ -632,14 +628,14 @@ fn lobby_network_system(
                 handle_join_response(&resp, &mut lobby);
                 if resp.success {
                     overlay_state.local_player_id = resp.player_id;
-                    if lobby.is_host {
+                    if lobby.is_leader {
                         lobby.status_message = Some(
                             "Room created! Click Start Game, or share the code with friends."
                                 .to_string(),
                         );
                     } else {
                         lobby.status_message =
-                            Some("Joined! Waiting for host to start...".to_string());
+                            Some("Joined! Waiting for leader to start...".to_string());
                     }
 
                     if let Some(room_state) = resp.room_state
@@ -665,8 +661,8 @@ fn lobby_network_system(
                         .players
                         .iter()
                         .map(|p| {
-                            if p.is_host {
-                                format!("{} (host)", p.display_name)
+                            if p.is_leader {
+                                format!("{} (leader)", p.display_name)
                             } else {
                                 p.display_name.clone()
                             }
@@ -679,8 +675,8 @@ fn lobby_network_system(
                     for mut node in &mut join_row_node {
                         node.display = Display::None;
                     }
-                    // Show Start Game for the host
-                    if lobby.is_host {
+                    // Show Start Game for the leader
+                    if lobby.is_leader {
                         for mut vis in &mut start_btn_vis {
                             *vis = Visibility::Visible;
                         }
@@ -728,7 +724,7 @@ fn handle_join_response(resp: &JoinRoomResponseMsg, lobby: &mut LobbyState) {
 fn handle_player_list(pl: &PlayerListMsg, lobby: &mut LobbyState) {
     lobby.players = pl.players.clone();
     if let Some(my_id) = lobby.local_player_id {
-        lobby.is_host = pl.host_id == my_id;
+        lobby.is_leader = pl.leader_id == my_id;
     }
 }
 

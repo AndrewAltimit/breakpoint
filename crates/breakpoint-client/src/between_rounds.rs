@@ -1,14 +1,10 @@
-use std::collections::HashMap;
-
 use bevy::ecs::system::NonSend;
 use bevy::prelude::*;
 
 use breakpoint_core::game_trait::{GameId, PlayerId};
-use breakpoint_core::net::messages::GameStartMsg;
-use breakpoint_core::net::protocol::encode_server_message;
 
 use crate::app::AppState;
-use crate::game::{ActiveGame, NetworkRole, RoundTracker};
+use crate::game::{NetworkRole, RoundTracker};
 use crate::lobby::LobbyState;
 use crate::net_client::WsClient;
 use crate::overlay::OverlayState;
@@ -20,11 +16,7 @@ impl Plugin for BetweenRoundsPlugin {
         app.add_systems(OnEnter(AppState::BetweenRounds), setup_between_rounds)
             .add_systems(
                 Update,
-                (
-                    between_rounds_countdown,
-                    between_rounds_host_transition,
-                    between_rounds_network,
-                )
+                (between_rounds_countdown, between_rounds_network)
                     .run_if(in_state(AppState::BetweenRounds)),
             )
             .add_systems(OnExit(AppState::BetweenRounds), cleanup_between_rounds);
@@ -176,62 +168,7 @@ fn between_rounds_countdown(
     }
 }
 
-/// Host: when countdown expires, re-init the game and start next round.
-#[allow(clippy::too_many_arguments)]
-fn between_rounds_host_transition(
-    timer: Res<BetweenRoundTimer>,
-    network_role: Res<NetworkRole>,
-    mut round_tracker: ResMut<RoundTracker>,
-    mut next_state: ResMut<NextState<AppState>>,
-    ws_client: NonSend<WsClient>,
-    lobby: Res<LobbyState>,
-    mut active_game: Option<ResMut<ActiveGame>>,
-) {
-    if timer.remaining > 0.0 || !network_role.is_host {
-        return;
-    }
-
-    // Advance round
-    round_tracker.current_round += 1;
-
-    // Promote spectators to active players for the new round
-    let mut players_for_round = lobby.players.clone();
-    for p in &mut players_for_round {
-        p.is_spectator = false;
-    }
-
-    // Re-initialize game for next round with all players active
-    if let Some(ref mut active_game) = active_game {
-        let mut custom = HashMap::new();
-        // current_round is already incremented above, and is 1-indexed.
-        // hole_index is 0-indexed, so round 2 → hole_index 1, etc.
-        custom.insert(
-            "hole_index".to_string(),
-            serde_json::json!(round_tracker.current_round - 1),
-        );
-        let config = breakpoint_core::game_trait::GameConfig {
-            round_count: round_tracker.total_rounds,
-            round_duration: std::time::Duration::from_secs(90),
-            custom,
-        };
-        active_game.game.init(&players_for_round, &config);
-        active_game.tick = 0;
-        active_game.tick_accumulator = 0.0;
-    }
-
-    // Send GameStart to other clients (with promoted player list)
-    let msg = breakpoint_core::net::messages::ServerMessage::GameStart(GameStartMsg {
-        game_name: lobby.selected_game.to_string(),
-        players: players_for_round,
-        host_id: lobby.local_player_id.unwrap_or(0),
-    });
-    if let Ok(data) = encode_server_message(&msg) {
-        let _ = ws_client.send(&data);
-    }
-
-    next_state.set(AppState::InGame);
-}
-
+/// All clients listen for the server's GameStart to enter the next round.
 fn between_rounds_network(
     ws_client: NonSend<WsClient>,
     mut next_state: ResMut<NextState<AppState>>,
@@ -239,10 +176,6 @@ fn between_rounds_network(
     mut overlay_queue: ResMut<crate::overlay::OverlayEventQueue>,
     mut lobby: ResMut<LobbyState>,
 ) {
-    if network_role.is_host {
-        return;
-    }
-
     let messages = ws_client.drain_messages();
     for data in messages {
         let msg = match breakpoint_core::net::protocol::decode_server_message(&data) {

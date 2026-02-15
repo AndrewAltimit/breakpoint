@@ -5,12 +5,12 @@ use crate::overlay::config::OverlayConfigMsg;
 use super::messages::{
     AlertClaimedMsg, AlertDismissedMsg, AlertEventMsg, ChatMessageMsg, ClaimAlertMsg,
     ClientMessage, GameEndMsg, GameStartMsg, GameStateMsg, JoinRoomMsg, JoinRoomResponseMsg,
-    LeaveRoomMsg, MessageType, PlayerInputMsg, PlayerListMsg, RoomConfigPayload, RoundEndMsg,
-    ServerMessage,
+    LeaveRoomMsg, MessageType, PlayerInputMsg, PlayerListMsg, RequestGameStartMsg,
+    RoomConfigPayload, RoundEndMsg, ServerMessage,
 };
 
 /// Current protocol version.
-pub const PROTOCOL_VERSION: u8 = 1;
+pub const PROTOCOL_VERSION: u8 = 2;
 
 /// Default game tick rate in Hz.
 pub const DEFAULT_TICK_RATE_HZ: u32 = 10;
@@ -72,6 +72,7 @@ pub fn encode_client_message(msg: &ClientMessage) -> Result<Vec<u8>, ProtocolErr
         ClientMessage::ChatMessage(m) => encode_message(MessageType::ChatMessage, m),
         ClientMessage::ClaimAlert(m) => encode_message(MessageType::ClaimAlert, m),
         ClientMessage::OverlayConfig(m) => encode_message(MessageType::OverlayConfig, m),
+        ClientMessage::RequestGameStart(m) => encode_message(MessageType::RequestGameStart, m),
     }
 }
 
@@ -130,6 +131,9 @@ pub fn decode_client_message(data: &[u8]) -> Result<ClientMessage, ProtocolError
         MessageType::OverlayConfig => Ok(ClientMessage::OverlayConfig(decode_payload::<
             OverlayConfigMsg,
         >(data)?)),
+        MessageType::RequestGameStart => Ok(ClientMessage::RequestGameStart(decode_payload::<
+            RequestGameStartMsg,
+        >(data)?)),
         _ => Err(ProtocolError::UnknownMessageType(data[0])),
     }
 }
@@ -186,7 +190,7 @@ mod tests {
             id: 42,
             display_name: "Alice".to_string(),
             color: PlayerColor::default(),
-            is_host: true,
+            is_leader: true,
             is_spectator: false,
         }
     }
@@ -326,7 +330,7 @@ mod tests {
     fn roundtrip_player_list() {
         let msg = ServerMessage::PlayerList(PlayerListMsg {
             players: vec![test_player()],
-            host_id: 42,
+            leader_id: 42,
         });
         let encoded = encode_server_message(&msg).unwrap();
         let decoded = decode_server_message(&encoded).unwrap();
@@ -359,7 +363,7 @@ mod tests {
         let msg = ServerMessage::GameStart(GameStartMsg {
             game_name: "mini-golf".to_string(),
             players: vec![test_player()],
-            host_id: 42,
+            leader_id: 42,
         });
         let encoded = encode_server_message(&msg).unwrap();
         let decoded = decode_server_message(&encoded).unwrap();
