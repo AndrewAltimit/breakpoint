@@ -637,6 +637,11 @@ impl App {
 
 #[cfg(target_family = "wasm")]
 pub fn run() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use wasm_bindgen::JsCast;
+
     let renderer = match Renderer::new() {
         Ok(r) => r,
         Err(e) => {
