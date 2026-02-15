@@ -158,12 +158,46 @@ fn spawn_relay_writer(
     });
 }
 
+/// Per-connection rate limiter (token bucket), same pattern as the main server.
+struct RateLimiter {
+    tokens: f64,
+    last_refill: tokio::time::Instant,
+    max_tokens: f64,
+    refill_rate: f64,
+}
+
+impl RateLimiter {
+    fn new(max_tokens: f64, refill_rate: f64) -> Self {
+        Self {
+            tokens: max_tokens,
+            last_refill: tokio::time::Instant::now(),
+            max_tokens,
+            refill_rate,
+        }
+    }
+
+    fn allow(&mut self) -> bool {
+        let now = tokio::time::Instant::now();
+        let elapsed = now.duration_since(self.last_refill).as_secs_f64();
+        self.tokens = (self.tokens + elapsed * self.refill_rate).min(self.max_tokens);
+        self.last_refill = now;
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 /// Host read loop: messages from host go to all clients.
 async fn host_read_loop(
     ws_receiver: &mut futures::stream::SplitStream<WebSocket>,
     state: &SharedRelayState,
     room_code: &str,
 ) {
+    let mut rate_limiter = RateLimiter::new(100.0, 100.0);
+
     while let Some(Ok(msg)) = ws_receiver.next().await {
         let data = match msg {
             Message::Binary(d) => d.to_vec(),
@@ -172,6 +206,20 @@ async fn host_read_loop(
         };
 
         if data.is_empty() {
+            continue;
+        }
+
+        if data.len() > breakpoint_core::net::protocol::MAX_MESSAGE_SIZE {
+            tracing::warn!(
+                room = room_code,
+                size = data.len(),
+                "Oversized host message dropped"
+            );
+            continue;
+        }
+
+        if !rate_limiter.allow() {
+            tracing::warn!(room = room_code, "Host rate limited");
             continue;
         }
 
@@ -186,8 +234,10 @@ async fn client_read_loop(
     ws_receiver: &mut futures::stream::SplitStream<WebSocket>,
     state: &SharedRelayState,
     room_code: &str,
-    _client_id: u64,
+    client_id: u64,
 ) {
+    let mut rate_limiter = RateLimiter::new(50.0, 50.0);
+
     while let Some(Ok(msg)) = ws_receiver.next().await {
         let data = match msg {
             Message::Binary(d) => d.to_vec(),
@@ -196,6 +246,21 @@ async fn client_read_loop(
         };
 
         if data.is_empty() {
+            continue;
+        }
+
+        if data.len() > breakpoint_core::net::protocol::MAX_MESSAGE_SIZE {
+            tracing::warn!(
+                room = room_code,
+                client_id,
+                size = data.len(),
+                "Oversized client message dropped"
+            );
+            continue;
+        }
+
+        if !rate_limiter.allow() {
+            tracing::warn!(room = room_code, client_id, "Client rate limited");
             continue;
         }
 

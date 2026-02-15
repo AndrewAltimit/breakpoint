@@ -277,9 +277,9 @@ impl BreakpointGame for LaserTagArena {
         }
         self.state.laser_trails.retain(|t| t.age < 0.3);
 
-        // Process player movement and firing
-        let player_ids = self.player_ids.clone();
-        for &pid in &player_ids {
+        // Process player movement and firing (iterate by index to avoid clone)
+        for i in 0..self.player_ids.len() {
+            let pid = self.player_ids[i];
             let input = self.pending_inputs.remove(&pid).unwrap_or_default();
 
             // Update aim

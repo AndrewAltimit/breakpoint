@@ -197,10 +197,10 @@ impl BreakpointGame for PlatformRacer {
             self.state.hazard_y += dt * 0.5; // rises 0.5 units/sec
         }
 
-        // Process each player
+        // Process each player (iterate by index to avoid borrowing self.player_ids)
         let sub_dt = dt / SUBSTEPS as f32;
-        let player_ids: Vec<PlayerId> = self.player_ids.clone();
-        for &pid in &player_ids {
+        for i in 0..self.player_ids.len() {
+            let pid = self.player_ids[i];
             let input = self.pending_inputs.remove(&pid).unwrap_or_default();
 
             if let Some(player) = self.state.players.get_mut(&pid) {

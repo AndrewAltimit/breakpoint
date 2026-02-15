@@ -1,5 +1,9 @@
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
+
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{State, WebSocketUpgrade};
+use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use futures::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
@@ -11,13 +15,26 @@ use breakpoint_core::net::protocol::{
 };
 use breakpoint_core::room::RoomState;
 
-use crate::state::AppState;
+use crate::state::{AppState, ConnectionGuard, MAX_WS_CONNECTIONS};
 
-pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+pub async fn ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, StatusCode> {
+    let current = state.ws_connection_count.load(Ordering::Relaxed);
+    if current >= MAX_WS_CONNECTIONS {
+        tracing::warn!(
+            current,
+            max = MAX_WS_CONNECTIONS,
+            "WS connection limit reached"
+        );
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    Ok(ws.on_upgrade(move |socket| handle_socket(socket, state)))
 }
 
 async fn handle_socket(socket: WebSocket, state: AppState) {
+    let _guard = ConnectionGuard::new(Arc::clone(&state.ws_connection_count));
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
     // Wait for the first message: must be a JoinRoom (with room_code empty to create,
@@ -35,20 +52,25 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         breakpoint_core::net::messages::ClientMessage::JoinRoom(join) => {
             // Validate protocol version
             if join.protocol_version != 0 && join.protocol_version != PROTOCOL_VERSION {
-                let response = crate::room_manager::RoomManager::make_join_error(&format!(
+                if let Ok(response) = crate::room_manager::RoomManager::make_join_error(&format!(
                     "Protocol version mismatch: client={}, server={}",
                     join.protocol_version, PROTOCOL_VERSION
-                ));
-                let _ = ws_sender.send(Message::Binary(response.into())).await;
+                )) && let Err(e) = ws_sender.send(Message::Binary(response.into())).await
+                {
+                    tracing::warn!(error = %e, "Failed to send protocol mismatch error");
+                }
                 return;
             }
 
             // Validate player name
             let name = join.player_name.trim().to_string();
             if name.is_empty() || name.len() > 32 || name.chars().any(|c| c.is_control()) {
-                let response =
-                    crate::room_manager::RoomManager::make_join_error("Invalid player name");
-                let _ = ws_sender.send(Message::Binary(response.into())).await;
+                if let Ok(response) =
+                    crate::room_manager::RoomManager::make_join_error("Invalid player name")
+                    && let Err(e) = ws_sender.send(Message::Binary(response.into())).await
+                {
+                    tracing::warn!(error = %e, "Failed to send invalid name error");
+                }
                 return;
             }
 
@@ -59,11 +81,14 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             if join.room_code.is_empty() {
                 // Create new room
                 let (code, pid) = rooms.create_room(name, join.player_color, tx);
-                let response = crate::room_manager::RoomManager::make_join_response(
+                let Ok(response) = crate::room_manager::RoomManager::make_join_response(
                     pid,
                     &code,
                     RoomState::Lobby,
-                );
+                ) else {
+                    tracing::warn!("Failed to encode JoinRoomResponse");
+                    return;
+                };
                 drop(rooms);
 
                 // Send response to this player
@@ -85,10 +110,16 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             } else {
                 // Validate room code format before lookup
                 if !breakpoint_core::room::is_valid_room_code(&join.room_code) {
-                    let response =
-                        crate::room_manager::RoomManager::make_join_error("Invalid room code");
-                    drop(rooms);
-                    let _ = ws_sender.send(Message::Binary(response.into())).await;
+                    if let Ok(response) =
+                        crate::room_manager::RoomManager::make_join_error("Invalid room code")
+                    {
+                        drop(rooms);
+                        if let Err(e) = ws_sender.send(Message::Binary(response.into())).await {
+                            tracing::warn!(error = %e, "Failed to send invalid room code error");
+                        }
+                    } else {
+                        drop(rooms);
+                    }
                     return;
                 }
 
@@ -98,11 +129,14 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                         let room_state = rooms
                             .get_room_state(&join.room_code)
                             .unwrap_or(RoomState::Lobby);
-                        let response = crate::room_manager::RoomManager::make_join_response(
+                        let Ok(response) = crate::room_manager::RoomManager::make_join_response(
                             pid,
                             &join.room_code,
                             room_state,
-                        );
+                        ) else {
+                            tracing::warn!("Failed to encode JoinRoomResponse");
+                            return;
+                        };
                         let code = join.room_code.clone();
                         drop(rooms);
 
@@ -122,8 +156,12 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                         (code, pid)
                     },
                     Err(err) => {
-                        let response = crate::room_manager::RoomManager::make_join_error(&err);
-                        let _ = ws_sender.send(Message::Binary(response.into())).await;
+                        if let Ok(response) =
+                            crate::room_manager::RoomManager::make_join_error(&err)
+                            && let Err(e) = ws_sender.send(Message::Binary(response.into())).await
+                        {
+                            tracing::warn!(error = %e, "Failed to send join error response");
+                        }
                         return;
                     },
                 }
@@ -333,14 +371,21 @@ async fn read_loop(
             // Chat messages broadcast to all (cap at 1024 bytes, valid UTF-8, no control chars)
             MessageType::ChatMessage => {
                 if data.len() <= 1024 {
-                    // Validate the raw message bytes are valid UTF-8 and contain
-                    // no control characters (except newlines) to prevent injection.
-                    // Note: data is MessagePack-encoded, so we validate the whole
-                    // frame rather than trying to decode the inner string.
-                    let valid = std::str::from_utf8(&data)
-                        .map(|text| !text.chars().any(|c| c.is_control() && c != '\n'))
-                        .unwrap_or(true); // Binary MessagePack is fine
-                    if valid {
+                    // Decode and validate content length at the application level
+                    if let Ok(breakpoint_core::net::messages::ClientMessage::ChatMessage(cm)) =
+                        decode_client_message(&data)
+                    {
+                        if cm.content.len() > 1024 {
+                            tracing::debug!(
+                                player_id,
+                                room_code,
+                                "Chat message content exceeds 1024 chars"
+                            );
+                            continue;
+                        }
+                        if cm.content.chars().any(|c| c.is_control() && c != '\n') {
+                            continue;
+                        }
                         rooms.broadcast_to_room(room_code, &data);
                     }
                 }

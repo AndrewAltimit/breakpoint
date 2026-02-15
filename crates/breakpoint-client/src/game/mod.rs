@@ -65,7 +65,16 @@ pub fn send_player_input(
 
 /// Deserialize the current game state from the active game.
 pub fn read_game_state<S: serde::de::DeserializeOwned>(active_game: &ActiveGame) -> Option<S> {
-    rmp_serde::from_slice(&active_game.game.serialize_state()).ok()
+    match rmp_serde::from_slice(&active_game.game.serialize_state()) {
+        Ok(state) => Some(state),
+        Err(e) => {
+            #[cfg(target_arch = "wasm32")]
+            web_sys::console::warn_1(&format!("Failed to deserialize game state: {e}").into());
+            #[cfg(not(target_arch = "wasm32"))]
+            eprintln!("Failed to deserialize game state: {e}");
+            None
+        },
+    }
 }
 
 /// HUD text anchor position.
@@ -486,4 +495,121 @@ fn full_cleanup(mut commands: Commands) {
     commands.remove_resource::<RoundTracker>();
     #[cfg(feature = "golf")]
     commands.remove_resource::<golf_plugin::GolfCourseInfo>();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn player_color_to_bevy_black() {
+        let color = PlayerColor { r: 0, g: 0, b: 0 };
+        let bevy_color = player_color_to_bevy(&color);
+        assert_eq!(bevy_color, Color::srgb(0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn player_color_to_bevy_white() {
+        let color = PlayerColor {
+            r: 255,
+            g: 255,
+            b: 255,
+        };
+        let bevy_color = player_color_to_bevy(&color);
+        assert_eq!(bevy_color, Color::srgb(1.0, 1.0, 1.0));
+    }
+
+    #[test]
+    fn player_color_to_bevy_midvalue() {
+        let color = PlayerColor {
+            r: 128,
+            g: 64,
+            b: 32,
+        };
+        let bevy_color = player_color_to_bevy(&color);
+        let expected = Color::srgb(128.0 / 255.0, 64.0 / 255.0, 32.0 / 255.0);
+        assert_eq!(bevy_color, expected);
+    }
+
+    #[test]
+    fn round_tracker_new() {
+        let tracker = RoundTracker::new(9);
+        assert_eq!(tracker.current_round, 1);
+        assert_eq!(tracker.total_rounds, 9);
+        assert!(tracker.cumulative_scores.is_empty());
+    }
+
+    #[test]
+    fn round_tracker_record_round() {
+        let mut tracker = RoundTracker::new(3);
+        tracker.record_round(&[
+            PlayerScore {
+                player_id: 1,
+                score: 5,
+            },
+            PlayerScore {
+                player_id: 2,
+                score: 3,
+            },
+        ]);
+        assert_eq!(tracker.cumulative_scores[&1], 5);
+        assert_eq!(tracker.cumulative_scores[&2], 3);
+
+        // Second round scores accumulate
+        tracker.record_round(&[
+            PlayerScore {
+                player_id: 1,
+                score: 2,
+            },
+            PlayerScore {
+                player_id: 2,
+                score: 7,
+            },
+        ]);
+        assert_eq!(tracker.cumulative_scores[&1], 7);
+        assert_eq!(tracker.cumulative_scores[&2], 10);
+    }
+
+    #[test]
+    fn round_tracker_is_final_round() {
+        let mut tracker = RoundTracker::new(3);
+        assert!(!tracker.is_final_round());
+
+        tracker.current_round = 2;
+        assert!(!tracker.is_final_round());
+
+        tracker.current_round = 3;
+        assert!(tracker.is_final_round());
+
+        tracker.current_round = 4;
+        assert!(tracker.is_final_round());
+    }
+
+    #[test]
+    fn round_tracker_single_round_game() {
+        let tracker = RoundTracker::new(1);
+        assert!(tracker.is_final_round());
+    }
+
+    #[test]
+    fn game_registry_register_and_create() {
+        let mut registry = GameRegistry::default();
+        assert!(registry.create(GameId::Golf).is_none());
+
+        registry.register(GameId::Golf, || Box::new(breakpoint_golf::MiniGolf::new()));
+        assert!(registry.create(GameId::Golf).is_some());
+        // Other game IDs still missing
+        assert!(registry.create(GameId::Platformer).is_none());
+    }
+
+    #[test]
+    fn game_registry_multiple_games() {
+        let mut registry = GameRegistry::default();
+        registry.register(GameId::Golf, || Box::new(breakpoint_golf::MiniGolf::new()));
+        registry.register(GameId::Platformer, || {
+            Box::new(breakpoint_platformer::PlatformRacer::new())
+        });
+        assert!(registry.create(GameId::Golf).is_some());
+        assert!(registry.create(GameId::Platformer).is_some());
+    }
 }

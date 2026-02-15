@@ -27,7 +27,7 @@ async fn main() {
         && gh.enabled
         && gh.token.is_some()
     {
-        spawn_github_poller(&state);
+        spawn_github_poller(&state, gh);
     }
 
     let listener = match tokio::net::TcpListener::bind(&listen_addr).await {
@@ -48,12 +48,10 @@ async fn main() {
 
 /// Spawn the GitHub Actions polling monitor as a background task.
 #[cfg(feature = "github-poller")]
-fn spawn_github_poller(state: &breakpoint_server::state::AppState) {
-    let gh = state
-        .config
-        .github
-        .as_ref()
-        .expect("github config must exist when github-poller feature is enabled");
+fn spawn_github_poller(
+    state: &breakpoint_server::state::AppState,
+    gh: &breakpoint_server::config::GitHubConfig,
+) {
     let poller_config = breakpoint_github::GitHubPollerConfig {
         token: gh.token.clone().unwrap_or_default(),
         repos: gh.repos.clone(),

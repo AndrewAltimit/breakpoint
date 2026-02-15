@@ -66,7 +66,8 @@ fn validate_event_fields(event: &Event) -> Result<(), AppError> {
                 "metadata key exceeds 64 chars".to_string(),
             ));
         }
-        let serialized = serde_json::to_string(val).unwrap_or_default();
+        let serialized = serde_json::to_string(val)
+            .map_err(|e| AppError::BadRequest(format!("metadata value not serializable: {e}")))?;
         if serialized.len() > 1024 {
             return Err(AppError::BadRequest(
                 "metadata value exceeds 1024 chars".to_string(),
@@ -172,7 +173,8 @@ impl From<&crate::event_store::StoredEvent> for EventSummary {
     fn from(se: &crate::event_store::StoredEvent) -> Self {
         Self {
             id: se.event.id.clone(),
-            event_type: serde_json::to_string(&se.event.event_type).unwrap_or_default(),
+            event_type: serde_json::to_string(&se.event.event_type)
+                .unwrap_or_else(|_| "unknown".to_string()),
             title: se.event.title.clone(),
             source: se.event.source.clone(),
             claimed_by: se.claimed_by.clone(),

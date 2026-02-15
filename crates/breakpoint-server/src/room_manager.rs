@@ -115,10 +115,9 @@ impl RoomManager {
         }
 
         let player_id = self.alloc_player_id();
-        let entry = self
-            .rooms
-            .get_mut(room_code)
-            .expect("room must exist: validated above");
+        let Some(entry) = self.rooms.get_mut(room_code) else {
+            return Err("Room not found".to_string());
+        };
 
         // Late-joiners (room not in Lobby) enter as spectators
         let is_spectator = entry.room.state != RoomState::Lobby;
@@ -145,8 +144,10 @@ impl RoomManager {
         let entry = self.rooms.get_mut(room_code)?;
 
         // Notify active game session about player leaving
-        if let Some(ref cmd_tx) = entry.game_command_tx {
-            let _ = cmd_tx.send(GameCommand::PlayerLeft { player_id });
+        if let Some(ref cmd_tx) = entry.game_command_tx
+            && let Err(e) = cmd_tx.send(GameCommand::PlayerLeft { player_id })
+        {
+            tracing::debug!(player_id, room = room_code, error = %e, "Game session gone");
         }
 
         entry.connections.remove(&player_id);
@@ -154,8 +155,10 @@ impl RoomManager {
 
         if entry.room.players.is_empty() {
             // Stop the game session if running
-            if let Some(ref cmd_tx) = entry.game_command_tx {
-                let _ = cmd_tx.send(GameCommand::Stop);
+            if let Some(ref cmd_tx) = entry.game_command_tx
+                && let Err(e) = cmd_tx.send(GameCommand::Stop)
+            {
+                tracing::debug!(room = room_code, error = %e, "Game session already stopped");
             }
             self.rooms.remove(room_code);
             return Some(room_code.to_string());
@@ -287,12 +290,13 @@ impl RoomManager {
     ) {
         if let Some(entry) = self.rooms.get(room_code)
             && let Some(ref cmd_tx) = entry.game_command_tx
-        {
-            let _ = cmd_tx.send(GameCommand::PlayerInput {
+            && let Err(e) = cmd_tx.send(GameCommand::PlayerInput {
                 player_id,
                 tick,
                 input_data,
-            });
+            })
+        {
+            tracing::debug!(player_id, room = room_code, error = %e, "Game session gone");
         }
     }
 
@@ -307,8 +311,10 @@ impl RoomManager {
     /// Clean up a game session when it ends.
     pub fn end_game_session(&mut self, room_code: &str) {
         if let Some(entry) = self.rooms.get_mut(room_code) {
-            if let Some(ref cmd_tx) = entry.game_command_tx {
-                let _ = cmd_tx.send(GameCommand::Stop);
+            if let Some(ref cmd_tx) = entry.game_command_tx
+                && let Err(e) = cmd_tx.send(GameCommand::Stop)
+            {
+                tracing::debug!(room = room_code, error = %e, "Game session already stopped");
             }
             entry.game_command_tx = None;
             entry.game_task = None;
@@ -321,16 +327,25 @@ impl RoomManager {
     pub fn send_to_player(&self, room_code: &str, player_id: PlayerId, data: Vec<u8>) {
         if let Some(entry) = self.rooms.get(room_code)
             && let Some(conn) = entry.connections.get(&player_id)
+            && let Err(e) = conn.sender.try_send(data)
         {
-            let _ = conn.sender.try_send(data);
+            tracing::debug!(
+                player_id, room = room_code, error = %e,
+                "Failed to send to player (slow or disconnected)"
+            );
         }
     }
 
     /// Broadcast raw binary data to all players in a room.
     pub fn broadcast_to_room(&self, room_code: &str, data: &[u8]) {
         if let Some(entry) = self.rooms.get(room_code) {
-            for conn in entry.connections.values() {
-                let _ = conn.sender.try_send(data.to_vec());
+            for (&pid, conn) in &entry.connections {
+                if let Err(e) = conn.sender.try_send(data.to_vec()) {
+                    tracing::debug!(
+                        player_id = pid, room = room_code, error = %e,
+                        "Skipping broadcast to slow client"
+                    );
+                }
             }
         }
     }
@@ -338,9 +353,14 @@ impl RoomManager {
     /// Broadcast raw binary data to all players except one.
     pub fn broadcast_to_room_except(&self, room_code: &str, exclude: PlayerId, data: &[u8]) {
         if let Some(entry) = self.rooms.get(room_code) {
-            for (id, conn) in &entry.connections {
-                if *id != exclude {
-                    let _ = conn.sender.try_send(data.to_vec());
+            for (&id, conn) in &entry.connections {
+                if id != exclude
+                    && let Err(e) = conn.sender.try_send(data.to_vec())
+                {
+                    tracing::debug!(
+                        player_id = id, room = room_code, error = %e,
+                        "Skipping broadcast to slow client"
+                    );
                 }
             }
         }
@@ -354,8 +374,13 @@ impl RoomManager {
                 leader_id: entry.room.leader_id,
             });
             if let Ok(data) = encode_server_message(&msg) {
-                for conn in entry.connections.values() {
-                    let _ = conn.sender.try_send(data.clone());
+                for (&pid, conn) in &entry.connections {
+                    if let Err(e) = conn.sender.try_send(data.clone()) {
+                        tracing::debug!(
+                            player_id = pid, room = room_code, error = %e,
+                            "Skipping player list broadcast to slow client"
+                        );
+                    }
                 }
             }
         }
@@ -366,7 +391,7 @@ impl RoomManager {
         player_id: PlayerId,
         room_code: &str,
         room_state: RoomState,
-    ) -> Vec<u8> {
+    ) -> Result<Vec<u8>, breakpoint_core::net::protocol::ProtocolError> {
         let msg = ServerMessage::JoinRoomResponse(JoinRoomResponseMsg {
             success: true,
             player_id: Some(player_id),
@@ -374,11 +399,13 @@ impl RoomManager {
             room_state: Some(room_state),
             error: None,
         });
-        encode_server_message(&msg).expect("JoinRoomResponse serialization must succeed")
+        encode_server_message(&msg)
     }
 
     /// Build a JoinRoomResponse error message.
-    pub fn make_join_error(error: &str) -> Vec<u8> {
+    pub fn make_join_error(
+        error: &str,
+    ) -> Result<Vec<u8>, breakpoint_core::net::protocol::ProtocolError> {
         let msg = ServerMessage::JoinRoomResponse(JoinRoomResponseMsg {
             success: false,
             player_id: None,
@@ -386,14 +413,19 @@ impl RoomManager {
             room_state: None,
             error: Some(error.to_string()),
         });
-        encode_server_message(&msg).expect("JoinRoomResponse error serialization must succeed")
+        encode_server_message(&msg)
     }
 
     /// Broadcast raw binary data to all players in all rooms.
     pub fn broadcast_to_all_rooms(&self, data: &[u8]) {
-        for entry in self.rooms.values() {
-            for conn in entry.connections.values() {
-                let _ = conn.sender.try_send(data.to_vec());
+        for (room_code, entry) in &self.rooms {
+            for (&pid, conn) in &entry.connections {
+                if let Err(e) = conn.sender.try_send(data.to_vec()) {
+                    tracing::debug!(
+                        player_id = pid, room = %room_code, error = %e,
+                        "Skipping global broadcast to slow client"
+                    );
+                }
             }
         }
     }

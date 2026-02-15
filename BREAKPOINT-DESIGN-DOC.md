@@ -771,11 +771,11 @@ pub trait BreakpointGame: Send + Sync {
     fn update(&mut self, dt: f32, inputs: &PlayerInputs) -> Vec<GameEvent>;
     fn serialize_state(&self) -> Vec<u8>;
     fn apply_state(&mut self, state: &[u8]);
-    fn serialize_input(&self, player_id: PlayerId) -> Vec<u8>;
     fn apply_input(&mut self, player_id: PlayerId, input: &[u8]);
     fn player_joined(&mut self, player: &Player);
     fn player_left(&mut self, player_id: PlayerId);
     fn tick_rate(&self) -> f32 { 10.0 }
+    fn round_count_hint(&self) -> u8 { 1 }
     fn supports_pause(&self) -> bool { true }
     fn pause(&mut self);
     fn resume(&mut self);

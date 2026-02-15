@@ -98,6 +98,14 @@ impl ServerConfig {
             std::process::exit(1);
         }
 
+        // Warn when webhook signature verification is disabled without a secret
+        if !self.auth.require_webhook_signature && self.auth.github_webhook_secret.is_none() {
+            tracing::warn!(
+                "Webhook signature verification is disabled and no secret is configured — \
+                 webhooks are unauthenticated"
+            );
+        }
+
         // Warn about secrets in config file (should use env vars in production)
         if self.auth.bearer_token.is_some() {
             tracing::warn!(

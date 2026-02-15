@@ -453,4 +453,200 @@ mod tests {
         let encoded = encode_client_message(&msg).unwrap();
         assert_eq!(encoded[0], MessageType::JoinRoom as u8);
     }
+
+    // ================================================================
+    // Additional edge-case protocol tests (Phase 3)
+    // ================================================================
+
+    #[test]
+    fn roundtrip_overlay_config() {
+        use crate::overlay::config::OverlayConfigMsg;
+        let msg = ClientMessage::OverlayConfig(OverlayConfigMsg {
+            room_config: crate::overlay::config::OverlayRoomConfig::default(),
+        });
+        let encoded = encode_client_message(&msg).unwrap();
+        let decoded = decode_client_message(&encoded).unwrap();
+        assert_eq!(msg, decoded);
+    }
+
+    #[test]
+    fn roundtrip_request_game_start() {
+        let msg = ClientMessage::RequestGameStart(RequestGameStartMsg {
+            game_name: "mini-golf".to_string(),
+        });
+        let encoded = encode_client_message(&msg).unwrap();
+        let decoded = decode_client_message(&encoded).unwrap();
+        assert_eq!(msg, decoded);
+    }
+
+    #[test]
+    fn roundtrip_server_overlay_config() {
+        use crate::overlay::config::OverlayConfigMsg;
+        let msg = ServerMessage::OverlayConfig(OverlayConfigMsg {
+            room_config: crate::overlay::config::OverlayRoomConfig::default(),
+        });
+        let encoded = encode_server_message(&msg).unwrap();
+        let decoded = decode_server_message(&encoded).unwrap();
+        assert_eq!(msg, decoded);
+    }
+
+    #[test]
+    fn decode_client_msg_with_server_type_fails() {
+        // Encode a server message, then try to decode as client → should fail
+        let msg = ServerMessage::GameState(GameStateMsg {
+            tick: 1,
+            state_data: vec![],
+        });
+        let encoded = encode_server_message(&msg).unwrap();
+        let result = decode_client_message(&encoded);
+        assert!(
+            result.is_err(),
+            "Server message type should fail as client message"
+        );
+    }
+
+    #[test]
+    fn decode_server_msg_with_client_type_fails() {
+        // Encode a client message, then try to decode as server → should fail
+        let msg = ClientMessage::PlayerInput(PlayerInputMsg {
+            player_id: 1,
+            tick: 0,
+            input_data: vec![],
+        });
+        let encoded = encode_client_message(&msg).unwrap();
+        let result = decode_server_message(&encoded);
+        assert!(
+            result.is_err(),
+            "Client message type should fail as server message"
+        );
+    }
+
+    #[test]
+    fn message_type_from_byte_exhaustive() {
+        // Test all known byte values
+        let known: Vec<(u8, MessageType)> = vec![
+            (0x01, MessageType::PlayerInput),
+            (0x02, MessageType::JoinRoom),
+            (0x03, MessageType::LeaveRoom),
+            (0x04, MessageType::ClaimAlert),
+            (0x05, MessageType::ChatMessage),
+            (0x06, MessageType::JoinRoomResponse),
+            (0x10, MessageType::GameState),
+            (0x11, MessageType::PlayerList),
+            (0x12, MessageType::RoomConfigMsg),
+            (0x13, MessageType::GameStart),
+            (0x14, MessageType::RoundEnd),
+            (0x15, MessageType::GameEnd),
+            (0x20, MessageType::AlertEvent),
+            (0x21, MessageType::AlertClaimed),
+            (0x22, MessageType::AlertDismissed),
+            (0x23, MessageType::OverlayConfig),
+            (0x30, MessageType::RequestGameStart),
+        ];
+        for (byte, expected) in &known {
+            assert_eq!(
+                MessageType::from_byte(*byte),
+                Some(*expected),
+                "Byte 0x{byte:02x} should map to {expected:?}"
+            );
+        }
+
+        // All other bytes should return None
+        for byte in 0u8..=255 {
+            if known.iter().any(|(b, _)| *b == byte) {
+                continue;
+            }
+            assert!(
+                MessageType::from_byte(byte).is_none(),
+                "Byte 0x{byte:02x} should not map to any MessageType"
+            );
+        }
+    }
+
+    #[test]
+    fn encode_message_preserves_type_byte() {
+        // Verify all client message variants have the correct type prefix
+        let cases: Vec<(ClientMessage, u8)> = vec![
+            (
+                ClientMessage::JoinRoom(JoinRoomMsg {
+                    room_code: String::new(),
+                    player_name: "A".to_string(),
+                    player_color: PlayerColor::default(),
+                    protocol_version: 0,
+                }),
+                0x02,
+            ),
+            (
+                ClientMessage::LeaveRoom(LeaveRoomMsg { player_id: 1 }),
+                0x03,
+            ),
+            (
+                ClientMessage::PlayerInput(PlayerInputMsg {
+                    player_id: 1,
+                    tick: 0,
+                    input_data: vec![],
+                }),
+                0x01,
+            ),
+            (
+                ClientMessage::ChatMessage(ChatMessageMsg {
+                    player_id: 1,
+                    content: "hi".to_string(),
+                }),
+                0x05,
+            ),
+            (
+                ClientMessage::ClaimAlert(ClaimAlertMsg {
+                    player_id: 1,
+                    event_id: "e1".to_string(),
+                }),
+                0x04,
+            ),
+            (
+                ClientMessage::RequestGameStart(RequestGameStartMsg {
+                    game_name: "g".to_string(),
+                }),
+                0x30,
+            ),
+        ];
+        for (msg, expected_byte) in cases {
+            let encoded = encode_client_message(&msg).unwrap();
+            assert_eq!(
+                encoded[0],
+                expected_byte,
+                "Type byte mismatch for {:?}",
+                msg.message_type()
+            );
+        }
+    }
+
+    #[test]
+    fn protocol_error_display() {
+        assert_eq!(format!("{}", ProtocolError::EmptyMessage), "empty message");
+        assert_eq!(
+            format!("{}", ProtocolError::UnknownMessageType(0xFF)),
+            "unknown message type: 0xff"
+        );
+        assert!(format!("{}", ProtocolError::PayloadTooLarge(99999)).contains("99999"));
+        assert!(format!("{}", ProtocolError::SerializeError("boom".into())).contains("boom"));
+        assert!(format!("{}", ProtocolError::DeserializeError("oops".into())).contains("oops"));
+    }
+
+    #[test]
+    fn payload_too_large_rejected() {
+        // Create a message with a payload exceeding MAX_MESSAGE_SIZE
+        let huge_data = vec![0u8; MAX_MESSAGE_SIZE + 1];
+        let msg = ClientMessage::PlayerInput(PlayerInputMsg {
+            player_id: 1,
+            tick: 0,
+            input_data: huge_data,
+        });
+        let result = encode_client_message(&msg);
+        assert!(result.is_err(), "Oversized payload should be rejected");
+        if let Err(ProtocolError::PayloadTooLarge(_)) = result {
+            // expected
+        } else {
+            panic!("Expected PayloadTooLarge error");
+        }
+    }
 }

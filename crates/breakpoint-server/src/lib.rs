@@ -11,8 +11,11 @@ pub mod webhooks;
 pub mod ws;
 
 use axum::Router;
+use axum::http::HeaderValue;
 use axum::middleware;
+use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
+use tower_http::set_header::SetResponseHeaderLayer;
 
 use breakpoint_core::net::messages::{AlertEventMsg, ServerMessage};
 use breakpoint_core::net::protocol::encode_server_message;
@@ -45,12 +48,30 @@ pub fn build_app(config: ServerConfig) -> (Router<()>, AppState) {
         axum::routing::post(webhooks::github::github_webhook),
     );
 
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
     let app = Router::new()
         .route("/ws", axum::routing::get(ws::ws_handler))
         .route("/health", axum::routing::get(|| async { "ok" }))
         .nest("/api/v1", api_routes)
         .nest("/api/v1/webhooks", webhook_routes)
         .fallback_service(ServeDir::new(&web_root))
+        .layer(cors)
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::X_FRAME_OPTIONS,
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::HeaderName::from_static("x-xss-protection"),
+            HeaderValue::from_static("0"),
+        ))
         .with_state(state.clone());
 
     (app, state)

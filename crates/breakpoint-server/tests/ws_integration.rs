@@ -629,3 +629,208 @@ async fn protocol_version_mismatch_rejected() {
         other => panic!("Expected JoinRoomResponse error, got: {other:?}"),
     }
 }
+
+// ============================================================================
+// Additional error path integration tests (Phase 3)
+// ============================================================================
+
+#[tokio::test]
+async fn malformed_binary_message_ignored() {
+    let server = TestServer::new().await;
+    let (mut leader, mut client, _leader_id, _client_id, _room_code) =
+        setup_two_player_room(&server).await;
+
+    // Send malformed binary (valid type byte but garbage payload)
+    let malformed = vec![0x01, 0xFF, 0xFF, 0xFF];
+    client
+        .send(Message::Binary(malformed.into()))
+        .await
+        .unwrap();
+
+    // Connection should remain alive — leader can still start a game
+    ws_request_game_start(&mut leader, "mini-golf").await;
+    let msg = ws_read_server_msg(&mut leader).await;
+    assert!(
+        matches!(msg, ServerMessage::GameStart(_)),
+        "Connection should survive malformed message"
+    );
+}
+
+#[tokio::test]
+async fn empty_binary_message_ignored() {
+    let server = TestServer::new().await;
+    let (mut leader, mut client, _leader_id, _client_id, _room_code) =
+        setup_two_player_room(&server).await;
+
+    // Send empty binary message
+    client
+        .send(Message::Binary(Vec::new().into()))
+        .await
+        .unwrap();
+
+    // Connection should remain alive
+    ws_request_game_start(&mut leader, "mini-golf").await;
+    let msg = ws_read_server_msg(&mut leader).await;
+    assert!(
+        matches!(msg, ServerMessage::GameStart(_)),
+        "Connection should survive empty message"
+    );
+}
+
+#[tokio::test]
+async fn invalid_type_byte_ignored() {
+    let server = TestServer::new().await;
+    let (mut leader, mut client, _leader_id, _client_id, _room_code) =
+        setup_two_player_room(&server).await;
+
+    // Send message with unknown type byte 0xFF
+    let invalid = vec![0xFF, 0x01, 0x02, 0x03];
+    client.send(Message::Binary(invalid.into())).await.unwrap();
+
+    // Connection should remain alive
+    ws_request_game_start(&mut leader, "mini-golf").await;
+    let msg = ws_read_server_msg(&mut leader).await;
+    assert!(
+        matches!(msg, ServerMessage::GameStart(_)),
+        "Connection should survive invalid type byte"
+    );
+}
+
+#[tokio::test]
+async fn text_frame_ignored() {
+    let server = TestServer::new().await;
+    let (mut leader, mut client, _leader_id, _client_id, _room_code) =
+        setup_two_player_room(&server).await;
+
+    // Send a text frame instead of binary
+    client.send(Message::Text("hello".into())).await.unwrap();
+
+    // Connection should remain alive
+    ws_request_game_start(&mut leader, "mini-golf").await;
+    let msg = ws_read_server_msg(&mut leader).await;
+    assert!(
+        matches!(msg, ServerMessage::GameStart(_)),
+        "Connection should survive text frame"
+    );
+}
+
+#[tokio::test]
+async fn invalid_room_code_format_rejected() {
+    let server = TestServer::new().await;
+    let mut stream = ws_connect(&server.ws_url()).await;
+
+    // Try joining with invalid room code format
+    let resp = ws_join_room_expect_error(&mut stream, "not-a-valid-code!!!", "Alice").await;
+    assert!(!resp.success);
+    let err = resp.error.as_deref().unwrap();
+    assert!(
+        err.contains("Invalid room code") || err.contains("Room not found"),
+        "Invalid room code format should be rejected, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn spoofed_player_input_has_no_effect() {
+    let server = TestServer::new().await;
+    let (mut leader, mut client, leader_id, client_id, _room_code) =
+        setup_two_player_room(&server).await;
+
+    // Start a game
+    ws_request_game_start(&mut leader, "mini-golf").await;
+    let _ = ws_read_server_msg(&mut leader).await; // GameStart
+    let _ = ws_read_server_msg(&mut client).await; // GameStart
+
+    // Consume initial GameState for both
+    let _ = ws_read_server_msg(&mut leader).await;
+    let initial_msg = ws_read_server_msg(&mut client).await;
+    let initial_state = match initial_msg {
+        ServerMessage::GameState(gs) => gs.state_data,
+        other => panic!("Expected GameState, got: {other:?}"),
+    };
+
+    // Client sends PlayerInput with the LEADER's player_id (spoofed)
+    let golf_input = breakpoint_golf::GolfInput {
+        aim_angle: 0.0,
+        power: 1.0,
+        stroke: true,
+    };
+    let input_data = rmp_serde::to_vec(&golf_input).unwrap();
+    let spoofed = ClientMessage::PlayerInput(PlayerInputMsg {
+        player_id: leader_id, // Spoofed! Client is client_id, not leader_id
+        tick: 1,
+        input_data: input_data.clone(),
+    });
+    ws_send_client_msg(&mut client, &spoofed).await;
+
+    // Now send a legitimate input from the client
+    let legit = ClientMessage::PlayerInput(PlayerInputMsg {
+        player_id: client_id,
+        tick: 2,
+        input_data,
+    });
+    ws_send_client_msg(&mut client, &legit).await;
+
+    // Verify that the client's stroke was counted (not the leader's)
+    for _ in 0..50 {
+        let msg = ws_read_server_msg(&mut client).await;
+        if let ServerMessage::GameState(gs) = msg
+            && gs.state_data != initial_state
+        {
+            let state: breakpoint_golf::GolfState = rmp_serde::from_slice(&gs.state_data).unwrap();
+            // Client's stroke should be counted
+            assert!(
+                state.strokes.get(&client_id).copied().unwrap_or(0) >= 1,
+                "Client's legitimate input should be processed"
+            );
+            return;
+        }
+    }
+    panic!("GameState never reflected player input");
+}
+
+#[tokio::test]
+async fn non_join_first_message_disconnects() {
+    let server = TestServer::new().await;
+    let mut stream = ws_connect(&server.ws_url()).await;
+
+    // Send a PlayerInput as the first message (should be JoinRoom)
+    let input = ClientMessage::PlayerInput(PlayerInputMsg {
+        player_id: 1,
+        tick: 0,
+        input_data: vec![],
+    });
+    ws_send_client_msg(&mut stream, &input).await;
+
+    // The server should close the connection — next read should be Close, error, or stream end
+    use futures::StreamExt as _;
+    let deadline = std::time::Duration::from_secs(2);
+    let result = tokio::time::timeout(deadline, async {
+        loop {
+            match stream.next().await {
+                Some(Ok(Message::Binary(_))) => continue, // skip any in-flight binary
+                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => return true,
+                _ => continue,
+            }
+        }
+    })
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "Non-join first message should cause connection closure"
+    );
+}
+
+#[tokio::test]
+async fn whitespace_only_name_rejected() {
+    let server = TestServer::new().await;
+    let mut stream = ws_connect(&server.ws_url()).await;
+
+    let resp = ws_join_room_with_name(&mut stream, "   ").await;
+    assert!(!resp.success);
+    let err = resp.error.as_deref().unwrap();
+    assert!(
+        err.contains("Invalid player name"),
+        "Whitespace-only name should be rejected, got: {err}"
+    );
+}
