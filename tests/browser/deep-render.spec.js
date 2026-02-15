@@ -37,7 +37,9 @@ test('dense pixel scan - find non-background pixels', async ({ page }) => {
 
   const result = await page.evaluate(() => {
     return new Promise(resolve => {
-      requestAnimationFrame(() => {
+      // In Firefox, rAF may never fire if WASM uses an internal event loop path.
+      // Fall back to scanning immediately after a timeout.
+      const doScan = () => {
         const c = document.getElementById('game-canvas');
         const gl = c?.getContext('webgl2');
         if (!gl) { resolve({ error: 'no gl' }); return; }
@@ -69,7 +71,12 @@ test('dense pixel scan - find non-background pixels', async ({ page }) => {
           nonBgCount: nonBgPixels.length,
           nonBgSamples: nonBgPixels.slice(0, 20),
         });
-      });
+      };
+
+      // Try rAF first, fall back to setTimeout if rAF doesn't fire
+      let fired = false;
+      requestAnimationFrame(() => { fired = true; doScan(); });
+      setTimeout(() => { if (!fired) doScan(); }, 3000);
     });
   });
 

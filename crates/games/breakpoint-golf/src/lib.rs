@@ -1433,4 +1433,91 @@ mod tests {
             );
         }
     }
+
+    // REGRESSION: Verify JS msgpackr encoding is correctly decoded by rmp_serde.
+    // msgpackr encodes 0.0 as integer 0 (not float32) and 0.8 as float64 (not float32).
+    #[test]
+    fn js_msgpackr_golf_input_decodes_correctly() {
+        // Exact bytes from: msgpackr.pack([0.0, 0.8, true])
+        // 93 = fixarray(3)
+        // 00 = fixint(0)  <-- aim_angle=0.0 encoded as INTEGER
+        // cb 3f e9 99 99 99 99 99 9a = float64(0.8)  <-- power as f64
+        // c3 = true
+        let js_bytes: Vec<u8> = vec![
+            0x93, 0x00, 0xcb, 0x3f, 0xe9, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9a, 0xc3,
+        ];
+
+        let result: Result<GolfInput, _> = rmp_serde::from_slice(&js_bytes);
+        match result {
+            Ok(input) => {
+                assert_eq!(input.aim_angle, 0.0, "aim_angle should be 0.0");
+                assert!(
+                    (input.power - 0.8).abs() < 0.001,
+                    "power should be ~0.8, got {}",
+                    input.power
+                );
+                assert!(input.stroke, "stroke should be true");
+
+                // Verify stroke direction: aim_angle=0 should produce +X velocity
+                let mut ball = BallState::new(course::Vec3::new(10.0, 0.0, 3.0));
+                ball.stroke(input.aim_angle, input.power * physics::MAX_POWER);
+                assert!(
+                    ball.velocity.x > 0.0,
+                    "aim_angle=0 should produce +X velocity, got vx={}",
+                    ball.velocity.x
+                );
+                assert!(
+                    ball.velocity.z.abs() < 0.01,
+                    "aim_angle=0 should produce ~0 Z velocity, got vz={}",
+                    ball.velocity.z
+                );
+            },
+            Err(e) => {
+                panic!(
+                    "rmp_serde CANNOT decode JS msgpackr encoding: {e}\n\
+                     This means aim_angle=0 (integer) or power=0.8 (float64) is incompatible!\n\
+                     The apply_input Err branch silently drops the input."
+                );
+            },
+        }
+    }
+
+    // REGRESSION: Test that apply_input with JS-encoded bytes actually moves the ball
+    #[test]
+    fn apply_input_with_js_encoded_bytes_moves_ball() {
+        let mut game = MiniGolf::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(90));
+
+        // Exact bytes from JS: msgpackr.pack([0.0, 0.8, true])
+        let js_golf_input: Vec<u8> = vec![
+            0x93, 0x00, 0xcb, 0x3f, 0xe9, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9a, 0xc3,
+        ];
+
+        let initial_x = game.state.balls[&2].position.x;
+        game.apply_input(2, &js_golf_input);
+
+        // Ball should now have velocity
+        let ball = &game.state.balls[&2];
+        assert!(
+            ball.velocity.x > 0.0,
+            "Ball vx should be positive after aim_angle=0 stroke, got {}",
+            ball.velocity.x
+        );
+
+        // Tick physics to see movement
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        for _ in 0..10 {
+            game.update(0.1, &inputs);
+        }
+
+        let after_x = game.state.balls[&2].position.x;
+        let dx = after_x - initial_x;
+        assert!(
+            dx > 0.0,
+            "Ball should move +X with aim_angle=0, got dx={dx} (initial={initial_x}, after={after_x})"
+        );
+    }
 }
