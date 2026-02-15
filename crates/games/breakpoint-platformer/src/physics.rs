@@ -16,6 +16,12 @@ pub const PLAYER_HEIGHT: f32 = 1.2;
 pub const SUBSTEPS: u32 = 4;
 /// Tile size in world units.
 pub const TILE_SIZE: f32 = 1.0;
+/// Tolerance above platform top for landing detection.
+const PLATFORM_LAND_TOLERANCE: f32 = 0.2;
+/// Tolerance below platform top for landing detection.
+const PLATFORM_SNAP_TOLERANCE: f32 = 0.1;
+/// Y threshold below which player respawns at checkpoint.
+const FALL_RESPAWN_Y: f32 = -5.0;
 
 /// State of a single player in the platformer.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -57,6 +63,8 @@ impl PlatformerPlayerState {
         self.y = self.last_checkpoint_y + 1.0;
         self.vx = 0.0;
         self.vy = 0.0;
+        self.has_double_jump = false;
+        self.jumps_remaining = 1;
     }
 }
 
@@ -89,8 +97,13 @@ pub fn tick_player(
         return;
     }
 
-    // Horizontal movement
-    player.vx = input.move_dir * MOVE_SPEED;
+    // Horizontal movement (sanitize NaN/Inf)
+    let move_dir = if input.move_dir.is_finite() {
+        input.move_dir
+    } else {
+        0.0
+    };
+    player.vx = move_dir * MOVE_SPEED;
 
     // Jump
     if input.jump && player.jumps_remaining > 0 {
@@ -203,8 +216,8 @@ pub(crate) fn resolve_collisions(player: &mut PlatformerPlayerState, course: &Co
 
             // Only collide if falling and feet near top of platform
             if player.vy < 0.0
-                && p_bottom >= tile_top - 0.2
-                && p_bottom <= tile_top + 0.1
+                && p_bottom >= tile_top - PLATFORM_LAND_TOLERANCE
+                && p_bottom <= tile_top + PLATFORM_SNAP_TOLERANCE
                 && player.x + half_w > tile_left
                 && player.x - half_w < tile_right
             {
@@ -218,7 +231,7 @@ pub(crate) fn resolve_collisions(player: &mut PlatformerPlayerState, course: &Co
     }
 
     // Fall off bottom → respawn
-    if player.y < -5.0 {
+    if player.y < FALL_RESPAWN_Y {
         player.respawn_at_checkpoint();
     }
 }
@@ -833,5 +846,44 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn respawn_resets_double_jump() {
+        let mut player = PlatformerPlayerState::new(5.0, 5.0);
+        player.has_double_jump = true;
+        player.jumps_remaining = 2;
+        player.last_checkpoint_x = 10.0;
+        player.last_checkpoint_y = 8.0;
+
+        player.respawn_at_checkpoint();
+
+        assert!(
+            !player.has_double_jump,
+            "Double jump should be reset on respawn"
+        );
+        assert_eq!(
+            player.jumps_remaining, 1,
+            "Jumps remaining should be 1 on respawn"
+        );
+    }
+
+    #[test]
+    fn nan_move_dir_treated_as_zero() {
+        let course = generate_course(42);
+        let mut player = PlatformerPlayerState::new(2.0, 2.0);
+        player.grounded = true;
+
+        let input = PlatformerInput {
+            move_dir: f32::NAN,
+            jump: false,
+            use_powerup: false,
+        };
+        tick_player(&mut player, &input, &course, 0.1);
+
+        assert_eq!(
+            player.vx, 0.0,
+            "NaN move_dir should be sanitized to 0, resulting in vx=0"
+        );
     }
 }

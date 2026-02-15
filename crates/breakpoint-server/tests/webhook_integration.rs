@@ -91,8 +91,8 @@ async fn github_webhook_invalid_signature_rejected() {
 
 #[tokio::test]
 async fn github_webhook_no_secret_allows_any() {
-    // Server with no webhook secret configured
-    let server = TestServer::new().await;
+    // Server with no webhook secret and signature requirement disabled
+    let server = TestServer::with_no_webhook_requirement().await;
     let client = reqwest::Client::new();
 
     let body = serde_json::to_vec(&pr_opened_payload()).unwrap();

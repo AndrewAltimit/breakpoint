@@ -1516,6 +1516,7 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]
@@ -1528,6 +1529,7 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]
@@ -1540,6 +1542,7 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]

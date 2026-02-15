@@ -87,7 +87,7 @@ async fn handle_relay_socket(socket: WebSocket, state: SharedRelayState) {
         Err(_) => return,
     };
 
-    let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (tx, rx) = mpsc::channel::<Vec<u8>>(256);
 
     if join.room_code.is_empty() {
         // Create a new room — this connection is the host
@@ -147,7 +147,7 @@ async fn handle_relay_socket(socket: WebSocket, state: SharedRelayState) {
 
 fn spawn_relay_writer(
     mut ws_sender: futures::stream::SplitSink<WebSocket, Message>,
-    mut rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    mut rx: mpsc::Receiver<Vec<u8>>,
 ) {
     tokio::spawn(async move {
         while let Some(data) = rx.recv().await {

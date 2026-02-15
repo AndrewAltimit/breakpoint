@@ -273,6 +273,7 @@ fn platformer_input_system(
 
 fn platformer_render_sync(
     active_game: Res<ActiveGame>,
+    time: Res<Time>,
     mut player_query: Query<(&PlatformerPlayerEntity, &mut Transform, &mut Visibility)>,
 ) {
     let state: Option<PlatformerState> = read_game_state(&active_game);
@@ -280,15 +281,15 @@ fn platformer_render_sync(
         return;
     };
 
+    let lerp_factor = (15.0 * time.delta_secs()).min(1.0);
     for (entity, mut transform, mut visibility) in &mut player_query {
         if let Some(ps) = state.players.get(&entity.0) {
             if ps.eliminated {
                 *visibility = Visibility::Hidden;
             } else {
                 *visibility = Visibility::Visible;
-                transform.translation.x = ps.x;
-                transform.translation.y = ps.y;
-                transform.translation.z = 0.0;
+                let target = Vec3::new(ps.x, ps.y, 0.0);
+                transform.translation = transform.translation.lerp(target, lerp_factor);
             }
         }
     }

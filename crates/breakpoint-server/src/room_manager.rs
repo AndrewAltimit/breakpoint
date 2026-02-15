@@ -14,7 +14,8 @@ use crate::game_loop::{
 };
 
 /// Per-player sender for outbound WebSocket binary messages.
-pub type PlayerSender = mpsc::UnboundedSender<Vec<u8>>;
+/// Bounded to 256 messages to prevent memory exhaustion from slow clients.
+pub type PlayerSender = mpsc::Sender<Vec<u8>>;
 
 /// Tracks a connected player's outbound channel.
 struct ConnectedPlayer {
@@ -321,7 +322,7 @@ impl RoomManager {
         if let Some(entry) = self.rooms.get(room_code)
             && let Some(conn) = entry.connections.get(&player_id)
         {
-            let _ = conn.sender.send(data);
+            let _ = conn.sender.try_send(data);
         }
     }
 
@@ -329,7 +330,7 @@ impl RoomManager {
     pub fn broadcast_to_room(&self, room_code: &str, data: &[u8]) {
         if let Some(entry) = self.rooms.get(room_code) {
             for conn in entry.connections.values() {
-                let _ = conn.sender.send(data.to_vec());
+                let _ = conn.sender.try_send(data.to_vec());
             }
         }
     }
@@ -339,7 +340,7 @@ impl RoomManager {
         if let Some(entry) = self.rooms.get(room_code) {
             for (id, conn) in &entry.connections {
                 if *id != exclude {
-                    let _ = conn.sender.send(data.to_vec());
+                    let _ = conn.sender.try_send(data.to_vec());
                 }
             }
         }
@@ -354,7 +355,7 @@ impl RoomManager {
             });
             if let Ok(data) = encode_server_message(&msg) {
                 for conn in entry.connections.values() {
-                    let _ = conn.sender.send(data.clone());
+                    let _ = conn.sender.try_send(data.clone());
                 }
             }
         }
@@ -392,7 +393,7 @@ impl RoomManager {
     pub fn broadcast_to_all_rooms(&self, data: &[u8]) {
         for entry in self.rooms.values() {
             for conn in entry.connections.values() {
-                let _ = conn.sender.send(data.to_vec());
+                let _ = conn.sender.try_send(data.to_vec());
             }
         }
     }
@@ -441,8 +442,14 @@ async fn forward_broadcasts(
     while let Some(broadcast) = broadcast_rx.recv().await {
         match broadcast {
             GameBroadcast::EncodedMessage(data) => {
-                for sender in connections.values() {
-                    let _ = sender.send(data.clone());
+                for (&player_id, sender) in &connections {
+                    if sender.try_send(data.clone()).is_err() {
+                        tracing::debug!(
+                            player_id,
+                            room = room_code,
+                            "Skipping broadcast to slow client (channel full or closed)"
+                        );
+                    }
                 }
             },
             GameBroadcast::GameEnded => {
@@ -468,8 +475,8 @@ mod tests {
     use super::*;
     use breakpoint_core::player::PlayerColor;
 
-    fn make_sender() -> (PlayerSender, mpsc::UnboundedReceiver<Vec<u8>>) {
-        mpsc::unbounded_channel()
+    fn make_sender() -> (PlayerSender, mpsc::Receiver<Vec<u8>>) {
+        mpsc::channel(256)
     }
 
     #[test]

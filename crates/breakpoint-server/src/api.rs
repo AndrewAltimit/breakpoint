@@ -23,6 +23,59 @@ pub struct PostEventsResponse {
     pub event_ids: Vec<String>,
 }
 
+/// Validate event field lengths to prevent abuse.
+fn validate_event_fields(event: &Event) -> Result<(), AppError> {
+    if event.id.len() > 128 {
+        return Err(AppError::BadRequest("id exceeds 128 chars".to_string()));
+    }
+    if event.title.len() > 256 {
+        return Err(AppError::BadRequest("title exceeds 256 chars".to_string()));
+    }
+    if event.source.len() > 128 {
+        return Err(AppError::BadRequest("source exceeds 128 chars".to_string()));
+    }
+    if let Some(ref body) = event.body
+        && body.len() > 4096
+    {
+        return Err(AppError::BadRequest("body exceeds 4096 chars".to_string()));
+    }
+    if let Some(ref url) = event.url
+        && url.len() > 2048
+    {
+        return Err(AppError::BadRequest("url exceeds 2048 chars".to_string()));
+    }
+    if let Some(ref actor) = event.actor
+        && actor.len() > 128
+    {
+        return Err(AppError::BadRequest("actor exceeds 128 chars".to_string()));
+    }
+    if event.tags.len() > 20 {
+        return Err(AppError::BadRequest("tags exceed 20 entries".to_string()));
+    }
+    for tag in &event.tags {
+        if tag.len() > 64 {
+            return Err(AppError::BadRequest("tag exceeds 64 chars".to_string()));
+        }
+    }
+    if event.metadata.len() > 32 {
+        return Err(AppError::BadRequest("metadata exceeds 32 keys".to_string()));
+    }
+    for (key, val) in &event.metadata {
+        if key.len() > 64 {
+            return Err(AppError::BadRequest(
+                "metadata key exceeds 64 chars".to_string(),
+            ));
+        }
+        let serialized = serde_json::to_string(val).unwrap_or_default();
+        if serialized.len() > 1024 {
+            return Err(AppError::BadRequest(
+                "metadata value exceeds 1024 chars".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// POST /api/v1/events — accept single or batch events.
 pub async fn post_events(
     State(state): State<AppState>,
@@ -42,6 +95,11 @@ pub async fn post_events(
             "Batch too large: {} (max 100)",
             events.len()
         )));
+    }
+
+    // Validate field lengths before inserting
+    for event in &events {
+        validate_event_fields(event)?;
     }
 
     let mut event_ids = Vec::with_capacity(events.len());
@@ -268,5 +326,57 @@ mod tests {
         assert_eq!(json.stats.total_pending_actions, 1);
         assert_eq!(json.recent_events.len(), 2);
         assert_eq!(json.pending_actions.len(), 1);
+    }
+
+    #[test]
+    fn validate_rejects_oversized_title() {
+        let mut event = make_event("evt-1");
+        event.title = "x".repeat(257);
+        let result = validate_event_fields(&event);
+        assert!(
+            result.is_err(),
+            "Title exceeding 256 chars should be rejected"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_oversized_body() {
+        let mut event = make_event("evt-1");
+        event.body = Some("x".repeat(4097));
+        let result = validate_event_fields(&event);
+        assert!(
+            result.is_err(),
+            "Body exceeding 4096 chars should be rejected"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_too_many_tags() {
+        let mut event = make_event("evt-1");
+        event.tags = (0..21).map(|i| format!("tag-{i}")).collect();
+        let result = validate_event_fields(&event);
+        assert!(result.is_err(), "More than 20 tags should be rejected");
+    }
+
+    #[test]
+    fn validate_rejects_too_many_metadata_keys() {
+        let mut event = make_event("evt-1");
+        for i in 0..33 {
+            event
+                .metadata
+                .insert(format!("key-{i}"), serde_json::json!("v"));
+        }
+        let result = validate_event_fields(&event);
+        assert!(
+            result.is_err(),
+            "More than 32 metadata keys should be rejected"
+        );
+    }
+
+    #[test]
+    fn validate_accepts_valid_event() {
+        let event = make_event("evt-1");
+        let result = validate_event_fields(&event);
+        assert!(result.is_ok(), "Valid event should pass validation");
     }
 }

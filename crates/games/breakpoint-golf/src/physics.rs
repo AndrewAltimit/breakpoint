@@ -11,6 +11,11 @@ pub const FRICTION: f32 = 0.95;
 pub const MAX_POWER: f32 = 25.0;
 /// Minimum velocity magnitude; below this the ball is considered stopped.
 pub const MIN_VELOCITY: f32 = 0.1;
+/// Maximum ball speed that allows sinking into the hole.
+/// At 50% of MAX_POWER, fast bounces off bumpers can still sink.
+const HOLE_SINK_SPEED: f32 = MAX_POWER * 0.5;
+/// Energy retained on wall bounce (1.0 = perfect, 0.0 = full stop).
+const WALL_BOUNCE_RESTITUTION: f32 = 0.9;
 /// Physics substeps per tick for more accurate collision detection.
 const SUBSTEPS: u32 = 4;
 
@@ -39,6 +44,9 @@ impl BallState {
     /// Apply a stroke impulse at the given angle (radians) and power (0..MAX_POWER).
     pub fn stroke(&mut self, angle: f32, power: f32) {
         if self.is_sunk || !self.is_stopped() {
+            return;
+        }
+        if angle.is_nan() || power.is_nan() {
             return;
         }
         let p = power.clamp(0.0, MAX_POWER);
@@ -79,7 +87,7 @@ impl BallState {
             let dx = self.position.x - course.hole_position.x;
             let dz = self.position.z - course.hole_position.z;
             let dist = (dx * dx + dz * dz).sqrt();
-            if dist < HOLE_RADIUS && velocity_magnitude(&self.velocity) < MAX_POWER * 0.4 {
+            if dist < HOLE_RADIUS && velocity_magnitude(&self.velocity) < HOLE_SINK_SPEED {
                 self.is_sunk = true;
                 self.velocity = Vec3::ZERO;
                 self.position = course.hole_position;
@@ -137,8 +145,8 @@ impl BallState {
                 self.velocity.x -= 2.0 * dot * nx;
                 self.velocity.z -= 2.0 * dot * nz;
                 // Slight energy loss on wall bounce
-                self.velocity.x *= 0.9;
-                self.velocity.z *= 0.9;
+                self.velocity.x *= WALL_BOUNCE_RESTITUTION;
+                self.velocity.z *= WALL_BOUNCE_RESTITUTION;
             }
         }
     }
@@ -751,5 +759,25 @@ mod tests {
                 let _ = initial_dist; // used above
             }
         }
+    }
+
+    #[test]
+    fn stroke_nan_angle_rejected() {
+        let mut ball = BallState::new(Vec3::new(5.0, 0.0, 5.0));
+        ball.stroke(f32::NAN, 10.0);
+        assert!(
+            ball.is_stopped(),
+            "NaN angle should be rejected — ball should not move"
+        );
+    }
+
+    #[test]
+    fn stroke_nan_power_rejected() {
+        let mut ball = BallState::new(Vec3::new(5.0, 0.0, 5.0));
+        ball.stroke(0.0, f32::NAN);
+        assert!(
+            ball.is_stopped(),
+            "NaN power should be rejected — ball should not move"
+        );
     }
 }

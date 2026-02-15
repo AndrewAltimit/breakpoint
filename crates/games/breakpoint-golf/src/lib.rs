@@ -192,7 +192,10 @@ impl BreakpointGame for MiniGolf {
     fn apply_input(&mut self, player_id: PlayerId, input: &[u8]) {
         let golf_input: GolfInput = match rmp_serde::from_slice(input) {
             Ok(i) => i,
-            Err(_) => return,
+            Err(e) => {
+                tracing::debug!(player_id, error = %e, "Dropped malformed golf input");
+                return;
+            },
         };
 
         if golf_input.stroke

@@ -6,6 +6,8 @@ pub const LASER_SPEED: f32 = 40.0;
 pub const STUN_DURATION: f32 = 1.5;
 /// Fire cooldown in seconds.
 pub const FIRE_COOLDOWN: f32 = 0.4;
+/// Cooldown multiplier when RapidFire power-up is active.
+pub const RAPIDFIRE_COOLDOWN_MULT: f32 = 0.4;
 /// Maximum bounces off reflective walls.
 pub const MAX_BOUNCES: u8 = 2;
 /// Player collision radius.

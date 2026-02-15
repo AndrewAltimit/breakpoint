@@ -7,18 +7,18 @@ use breakpoint_core::net::messages::MessageType;
 
 /// A connected client in a relay room.
 struct RelayClient {
-    tx: mpsc::UnboundedSender<Vec<u8>>,
+    tx: mpsc::Sender<Vec<u8>>,
 }
 
 /// A relay room: first joiner is host, subsequent are clients.
 struct RelayRoom {
-    host_tx: mpsc::UnboundedSender<Vec<u8>>,
+    host_tx: mpsc::Sender<Vec<u8>>,
     clients: HashMap<u64, RelayClient>,
     next_id: u64,
 }
 
 impl RelayRoom {
-    fn new(host_tx: mpsc::UnboundedSender<Vec<u8>>) -> Self {
+    fn new(host_tx: mpsc::Sender<Vec<u8>>) -> Self {
         Self {
             host_tx,
             clients: HashMap::new(),
@@ -26,7 +26,7 @@ impl RelayRoom {
         }
     }
 
-    fn add_client(&mut self, tx: mpsc::UnboundedSender<Vec<u8>>) -> u64 {
+    fn add_client(&mut self, tx: mpsc::Sender<Vec<u8>>) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         self.clients.insert(id, RelayClient { tx });
@@ -39,13 +39,13 @@ impl RelayRoom {
 
     /// Forward message from a client to the host.
     fn forward_to_host(&self, data: &[u8]) {
-        let _ = self.host_tx.send(data.to_vec());
+        let _ = self.host_tx.try_send(data.to_vec());
     }
 
     /// Forward message from the host to all clients.
     fn forward_to_all_clients(&self, data: &[u8]) {
         for client in self.clients.values() {
-            let _ = client.tx.send(data.to_vec());
+            let _ = client.tx.try_send(data.to_vec());
         }
     }
 
@@ -73,7 +73,7 @@ impl RelayState {
     pub fn create_room(
         &mut self,
         code: String,
-        host_tx: mpsc::UnboundedSender<Vec<u8>>,
+        host_tx: mpsc::Sender<Vec<u8>>,
     ) -> Result<(), String> {
         if self.rooms.len() >= self.max_rooms {
             return Err("Maximum room limit reached".to_string());
@@ -86,11 +86,7 @@ impl RelayState {
     }
 
     /// Join an existing room as a client. Returns a client ID.
-    pub fn join_room(
-        &mut self,
-        code: &str,
-        tx: mpsc::UnboundedSender<Vec<u8>>,
-    ) -> Result<u64, String> {
+    pub fn join_room(&mut self, code: &str, tx: mpsc::Sender<Vec<u8>>) -> Result<u64, String> {
         let room = self
             .rooms
             .get_mut(code)
@@ -175,10 +171,10 @@ mod tests {
     #[test]
     fn create_and_join_room() {
         let mut state = RelayState::new(10);
-        let (host_tx, _host_rx) = mpsc::unbounded_channel();
+        let (host_tx, _host_rx) = mpsc::channel(256);
         state.create_room("ABCD-1234".to_string(), host_tx).unwrap();
 
-        let (client_tx, _client_rx) = mpsc::unbounded_channel();
+        let (client_tx, _client_rx) = mpsc::channel(256);
         let client_id = state.join_room("ABCD-1234", client_tx).unwrap();
         assert_eq!(client_id, 1);
         assert!(state.room_exists("ABCD-1234"));
@@ -187,26 +183,26 @@ mod tests {
     #[test]
     fn join_nonexistent_room_fails() {
         let mut state = RelayState::new(10);
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::channel(256);
         assert!(state.join_room("NOPE-0000", tx).is_err());
     }
 
     #[test]
     fn max_rooms_enforced() {
         let mut state = RelayState::new(1);
-        let (tx1, _rx1) = mpsc::unbounded_channel();
+        let (tx1, _rx1) = mpsc::channel(256);
         state.create_room("AAAA-0001".to_string(), tx1).unwrap();
-        let (tx2, _rx2) = mpsc::unbounded_channel();
+        let (tx2, _rx2) = mpsc::channel(256);
         assert!(state.create_room("BBBB-0002".to_string(), tx2).is_err());
     }
 
     #[test]
     fn leave_room_cleanup() {
         let mut state = RelayState::new(10);
-        let (host_tx, _host_rx) = mpsc::unbounded_channel();
+        let (host_tx, _host_rx) = mpsc::channel(256);
         state.create_room("ABCD-1234".to_string(), host_tx).unwrap();
 
-        let (client_tx, _client_rx) = mpsc::unbounded_channel();
+        let (client_tx, _client_rx) = mpsc::channel(256);
         let cid = state.join_room("ABCD-1234", client_tx).unwrap();
 
         // Remove the only client — room still exists (host is still there)
@@ -217,10 +213,10 @@ mod tests {
     #[test]
     fn forward_to_host() {
         let mut state = RelayState::new(10);
-        let (host_tx, mut host_rx) = mpsc::unbounded_channel();
+        let (host_tx, mut host_rx) = mpsc::channel(256);
         state.create_room("ABCD-1234".to_string(), host_tx).unwrap();
 
-        let (client_tx, _client_rx) = mpsc::unbounded_channel();
+        let (client_tx, _client_rx) = mpsc::channel(256);
         let _cid = state.join_room("ABCD-1234", client_tx).unwrap();
 
         state.relay_to_host("ABCD-1234", &[0x01, 0x02, 0x03]);
@@ -231,12 +227,12 @@ mod tests {
     #[test]
     fn forward_to_clients() {
         let mut state = RelayState::new(10);
-        let (host_tx, _host_rx) = mpsc::unbounded_channel();
+        let (host_tx, _host_rx) = mpsc::channel(256);
         state.create_room("ABCD-1234".to_string(), host_tx).unwrap();
 
-        let (client_tx1, mut client_rx1) = mpsc::unbounded_channel();
+        let (client_tx1, mut client_rx1) = mpsc::channel(256);
         let _cid1 = state.join_room("ABCD-1234", client_tx1).unwrap();
-        let (client_tx2, mut client_rx2) = mpsc::unbounded_channel();
+        let (client_tx2, mut client_rx2) = mpsc::channel(256);
         let _cid2 = state.join_room("ABCD-1234", client_tx2).unwrap();
 
         state.relay_to_clients("ABCD-1234", &[0x10, 0x20]);
@@ -247,7 +243,7 @@ mod tests {
     #[test]
     fn host_disconnect_destroys_room() {
         let mut state = RelayState::new(10);
-        let (host_tx, _host_rx) = mpsc::unbounded_channel();
+        let (host_tx, _host_rx) = mpsc::channel(256);
         state.create_room("ABCD-1234".to_string(), host_tx).unwrap();
         assert!(state.room_exists("ABCD-1234"));
 
@@ -278,16 +274,16 @@ mod tests {
     #[test]
     fn client_ids_sequential() {
         let mut state = RelayState::new(10);
-        let (host_tx, _host_rx) = mpsc::unbounded_channel();
+        let (host_tx, _host_rx) = mpsc::channel(256);
         state.create_room("ABCD-1234".to_string(), host_tx).unwrap();
 
-        let (tx1, _rx1) = mpsc::unbounded_channel();
+        let (tx1, _rx1) = mpsc::channel(256);
         let id1 = state.join_room("ABCD-1234", tx1).unwrap();
 
-        let (tx2, _rx2) = mpsc::unbounded_channel();
+        let (tx2, _rx2) = mpsc::channel(256);
         let id2 = state.join_room("ABCD-1234", tx2).unwrap();
 
-        let (tx3, _rx3) = mpsc::unbounded_channel();
+        let (tx3, _rx3) = mpsc::channel(256);
         let id3 = state.join_room("ABCD-1234", tx3).unwrap();
 
         assert_eq!(id1, 1);
@@ -298,10 +294,10 @@ mod tests {
     #[test]
     fn duplicate_room_code_rejected() {
         let mut state = RelayState::new(10);
-        let (tx1, _rx1) = mpsc::unbounded_channel();
+        let (tx1, _rx1) = mpsc::channel(256);
         state.create_room("DUPE-0001".to_string(), tx1).unwrap();
 
-        let (tx2, _rx2) = mpsc::unbounded_channel();
+        let (tx2, _rx2) = mpsc::channel(256);
         let result = state.create_room("DUPE-0001".to_string(), tx2);
         assert!(result.is_err(), "Duplicate room code should be rejected");
     }
@@ -311,11 +307,11 @@ mod tests {
         let mut state = RelayState::new(10);
         assert_eq!(state.room_count(), 0);
 
-        let (tx1, _rx1) = mpsc::unbounded_channel();
+        let (tx1, _rx1) = mpsc::channel(256);
         state.create_room("ROOM-0001".to_string(), tx1).unwrap();
         assert_eq!(state.room_count(), 1);
 
-        let (tx2, _rx2) = mpsc::unbounded_channel();
+        let (tx2, _rx2) = mpsc::channel(256);
         state.create_room("ROOM-0002".to_string(), tx2).unwrap();
         assert_eq!(state.room_count(), 2);
 
@@ -341,12 +337,12 @@ mod tests {
     #[test]
     fn multiple_clients_independent_channels() {
         let mut state = RelayState::new(10);
-        let (host_tx, _host_rx) = mpsc::unbounded_channel();
+        let (host_tx, _host_rx) = mpsc::channel(256);
         state.create_room("MULTI-001".to_string(), host_tx).unwrap();
 
-        let (tx1, mut rx1) = mpsc::unbounded_channel();
+        let (tx1, mut rx1) = mpsc::channel(256);
         let _id1 = state.join_room("MULTI-001", tx1).unwrap();
-        let (tx2, mut rx2) = mpsc::unbounded_channel();
+        let (tx2, mut rx2) = mpsc::channel(256);
         let _id2 = state.join_room("MULTI-001", tx2).unwrap();
 
         // Broadcast to all clients

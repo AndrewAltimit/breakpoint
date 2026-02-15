@@ -16,7 +16,9 @@ use breakpoint_core::player::Player;
 
 use arena::{Arena, ArenaSize, generate_arena};
 use powerups::{ActiveLaserPowerUp, LaserPowerUpKind, SpawnedLaserPowerUp};
-use projectile::{FIRE_COOLDOWN, PLAYER_RADIUS, STUN_DURATION, raycast_laser};
+use projectile::{
+    FIRE_COOLDOWN, PLAYER_RADIUS, RAPIDFIRE_COOLDOWN_MULT, STUN_DURATION, raycast_laser,
+};
 
 /// Serializable game state for network broadcast.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -384,7 +386,7 @@ impl BreakpointGame for LaserTagArena {
                     if self.state.active_powerups.get(&pid).is_some_and(|pus| {
                         pus.iter().any(|p| p.kind == LaserPowerUpKind::RapidFire)
                     }) {
-                        FIRE_COOLDOWN * 0.4
+                        FIRE_COOLDOWN * RAPIDFIRE_COOLDOWN_MULT
                     } else {
                         FIRE_COOLDOWN
                     };
@@ -442,24 +444,39 @@ impl BreakpointGame for LaserTagArena {
     breakpoint_game_boilerplate!(state_type: LaserTagState);
 
     fn apply_input(&mut self, player_id: PlayerId, input: &[u8]) {
-        if let Ok(li) = rmp_serde::from_slice::<LaserTagInput>(input) {
-            // Accumulate transient flags (fire, use_powerup) across frames.
-            // Without this, a fire:true in frame N gets overwritten by fire:false
-            // in frame N+1 before the game tick processes it. Continuous values
-            // (move_x, move_z, aim_angle) are always overwritten with the latest.
-            if let Some(existing) = self.pending_inputs.get_mut(&player_id) {
-                existing.move_x = li.move_x;
-                existing.move_z = li.move_z;
-                existing.aim_angle = li.aim_angle;
-                if li.fire {
-                    existing.fire = true;
+        match rmp_serde::from_slice::<LaserTagInput>(input) {
+            Err(e) => {
+                tracing::debug!(player_id, error = %e, "Dropped malformed laser tag input");
+            },
+            Ok(mut li) => {
+                // Sanitize NaN/Inf inputs to prevent position corruption
+                if !li.move_x.is_finite() {
+                    li.move_x = 0.0;
                 }
-                if li.use_powerup {
-                    existing.use_powerup = true;
+                if !li.move_z.is_finite() {
+                    li.move_z = 0.0;
                 }
-            } else {
-                self.pending_inputs.insert(player_id, li);
-            }
+                if !li.aim_angle.is_finite() {
+                    li.aim_angle = 0.0;
+                }
+                // Accumulate transient flags (fire, use_powerup) across frames.
+                // Without this, a fire:true in frame N gets overwritten by fire:false
+                // in frame N+1 before the game tick processes it. Continuous values
+                // (move_x, move_z, aim_angle) are always overwritten with the latest.
+                if let Some(existing) = self.pending_inputs.get_mut(&player_id) {
+                    existing.move_x = li.move_x;
+                    existing.move_z = li.move_z;
+                    existing.aim_angle = li.aim_angle;
+                    if li.fire {
+                        existing.fire = true;
+                    }
+                    if li.use_powerup {
+                        existing.use_powerup = true;
+                    }
+                } else {
+                    self.pending_inputs.insert(player_id, li);
+                }
+            },
         }
     }
 
@@ -1740,9 +1757,9 @@ mod tests {
 
         let rapid_cooldown = game.state.players[&1].fire_cooldown;
         assert!(
-            rapid_cooldown <= FIRE_COOLDOWN * 0.4 + 0.01,
+            rapid_cooldown <= FIRE_COOLDOWN * RAPIDFIRE_COOLDOWN_MULT + 0.01,
             "RapidFire cooldown should be ~{}, got {rapid_cooldown}",
-            FIRE_COOLDOWN * 0.4
+            FIRE_COOLDOWN * RAPIDFIRE_COOLDOWN_MULT
         );
 
         // Now expire the RapidFire powerup
@@ -1871,6 +1888,43 @@ mod tests {
         assert_eq!(
             game.state.tags_scored[&1], 1,
             "Fire with active cooldown should be rejected"
+        );
+    }
+
+    #[test]
+    fn nan_inputs_sanitized() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(180));
+
+        let nan_input = LaserTagInput {
+            move_x: f32::NAN,
+            move_z: f32::INFINITY,
+            aim_angle: f32::NEG_INFINITY,
+            fire: false,
+            use_powerup: false,
+        };
+        let data = rmp_serde::to_vec(&nan_input).unwrap();
+
+        let x_before = game.state.players[&1].x;
+        let z_before = game.state.players[&1].z;
+
+        game.apply_input(1, &data);
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(0.05, &inputs);
+
+        let player = &game.state.players[&1];
+        assert!(
+            player.x.is_finite() && player.z.is_finite(),
+            "Player position should remain finite after NaN inputs: x={}, z={}",
+            player.x,
+            player.z
+        );
+        assert!(
+            (player.x - x_before).abs() < 0.01 && (player.z - z_before).abs() < 0.01,
+            "NaN move inputs should be sanitized to 0 — no movement expected"
         );
     }
 }

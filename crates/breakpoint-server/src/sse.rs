@@ -17,13 +17,19 @@ pub async fn event_stream(
 
     let stream =
         BroadcastStream::new(rx).filter_map(|result: Result<breakpoint_core::events::Event, _>| {
-            result.ok().map(|event| {
-                let json = serde_json::to_string(&event).unwrap_or_default();
-                Ok(SseEvent::default()
-                    .event("alert")
-                    .data(json)
-                    .id(event.id.clone()))
-            })
+            match result {
+                Ok(event) => {
+                    let json = serde_json::to_string(&event).unwrap_or_default();
+                    Some(Ok(SseEvent::default()
+                        .event("alert")
+                        .data(json)
+                        .id(event.id.clone())))
+                },
+                Err(e) => {
+                    tracing::warn!("SSE broadcast receive error: {e}");
+                    None
+                },
+            }
         });
 
     Sse::new(stream).keep_alive(KeepAlive::default())

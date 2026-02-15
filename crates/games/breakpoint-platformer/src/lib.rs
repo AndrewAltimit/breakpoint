@@ -335,22 +335,27 @@ impl BreakpointGame for PlatformRacer {
     breakpoint_game_boilerplate!(state_type: PlatformerState);
 
     fn apply_input(&mut self, player_id: PlayerId, input: &[u8]) {
-        if let Ok(pi) = rmp_serde::from_slice::<PlatformerInput>(input) {
-            // Accumulate transient flags (jump, use_powerup) across frames.
-            // Without this, a jump:true in frame N gets overwritten by jump:false
-            // in frame N+1 before the game tick processes it. Continuous values
-            // (move_dir) are always overwritten with the latest.
-            if let Some(existing) = self.pending_inputs.get_mut(&player_id) {
-                existing.move_dir = pi.move_dir;
-                if pi.jump {
-                    existing.jump = true;
+        match rmp_serde::from_slice::<PlatformerInput>(input) {
+            Err(e) => {
+                tracing::debug!(player_id, error = %e, "Dropped malformed platformer input");
+            },
+            Ok(pi) => {
+                // Accumulate transient flags (jump, use_powerup) across frames.
+                // Without this, a jump:true in frame N gets overwritten by jump:false
+                // in frame N+1 before the game tick processes it. Continuous values
+                // (move_dir) are always overwritten with the latest.
+                if let Some(existing) = self.pending_inputs.get_mut(&player_id) {
+                    existing.move_dir = pi.move_dir;
+                    if pi.jump {
+                        existing.jump = true;
+                    }
+                    if pi.use_powerup {
+                        existing.use_powerup = true;
+                    }
+                } else {
+                    self.pending_inputs.insert(player_id, pi);
                 }
-                if pi.use_powerup {
-                    existing.use_powerup = true;
-                }
-            } else {
-                self.pending_inputs.insert(player_id, pi);
-            }
+            },
         }
     }
 

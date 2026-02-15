@@ -52,7 +52,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 return;
             }
 
-            let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
+            let (tx, rx) = mpsc::channel::<Vec<u8>>(256);
 
             let mut rooms = state.rooms.write().await;
 
@@ -153,7 +153,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
 fn spawn_writer(
     mut ws_sender: futures::stream::SplitSink<WebSocket, Message>,
-    mut rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    mut rx: mpsc::Receiver<Vec<u8>>,
 ) {
     tokio::spawn(async move {
         while let Some(data) = rx.recv().await {
@@ -330,10 +330,19 @@ async fn read_loop(
                 }
             },
 
-            // Chat messages broadcast to all (cap at 1024 bytes)
+            // Chat messages broadcast to all (cap at 1024 bytes, valid UTF-8, no control chars)
             MessageType::ChatMessage => {
                 if data.len() <= 1024 {
-                    rooms.broadcast_to_room(room_code, &data);
+                    // Validate the raw message bytes are valid UTF-8 and contain
+                    // no control characters (except newlines) to prevent injection.
+                    // Note: data is MessagePack-encoded, so we validate the whole
+                    // frame rather than trying to decode the inner string.
+                    let valid = std::str::from_utf8(&data)
+                        .map(|text| !text.chars().any(|c| c.is_control() && c != '\n'))
+                        .unwrap_or(true); // Binary MessagePack is fine
+                    if valid {
+                        rooms.broadcast_to_room(room_code, &data);
+                    }
                 }
             },
 

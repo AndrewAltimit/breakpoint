@@ -30,6 +30,18 @@ impl TestServer {
         Self::from_config(ServerConfig::default()).await
     }
 
+    /// Start a test server with no auth and no webhook signature requirement.
+    pub async fn with_no_webhook_requirement() -> Self {
+        let config = ServerConfig {
+            auth: AuthFileConfig {
+                require_webhook_signature: false,
+                ..AuthFileConfig::default()
+            },
+            ..ServerConfig::default()
+        };
+        Self::from_config(config).await
+    }
+
     /// Start a test server with bearer token and webhook secret.
     pub async fn with_auth(token: &str, webhook_secret: &str) -> Self {
         let config = ServerConfig {

@@ -357,11 +357,18 @@ fn lasertag_input_system(
 
 fn lasertag_render_sync(
     active_game: Res<ActiveGame>,
+    time: Res<Time>,
     mut player_query: Query<
-        (&LaserTagPlayerEntity, &mut Transform, &mut Visibility),
+        (
+            &LaserTagPlayerEntity,
+            &mut Transform,
+            &mut Visibility,
+            &MeshMaterial3d<StandardMaterial>,
+        ),
         Without<AimIndicator>,
     >,
     mut aim_query: Query<(&AimIndicator, &mut Transform), Without<LaserTagPlayerEntity>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let state: Option<LaserTagState> = read_game_state(&active_game);
     let Some(state) = state else {
@@ -389,11 +396,26 @@ fn lasertag_render_sync(
         );
     }
 
-    for (entity, mut transform, mut visibility) in &mut player_query {
+    let lerp_factor = (15.0 * time.delta_secs()).min(1.0);
+    for (entity, mut transform, mut visibility, mat_handle) in &mut player_query {
         if let Some(ps) = state.players.get(&entity.0) {
             *visibility = Visibility::Visible;
-            transform.translation.x = ps.x;
-            transform.translation.z = ps.z;
+            let target = Vec3::new(ps.x, transform.translation.y, ps.z);
+            transform.translation = transform.translation.lerp(target, lerp_factor);
+
+            // Stun visual feedback: reduce alpha when stunned
+            if let Some(mat) = materials.get_mut(mat_handle) {
+                let current_alpha = mat.base_color.alpha();
+                if ps.is_stunned() {
+                    if current_alpha > 0.4 {
+                        mat.base_color.set_alpha(0.4);
+                        mat.alpha_mode = AlphaMode::Blend;
+                    }
+                } else if current_alpha < 0.7 {
+                    // Restore normal alpha (0.7 for remote, 1.0 for local — use 0.7 as safe floor)
+                    mat.base_color.set_alpha(current_alpha.max(0.7));
+                }
+            }
         }
     }
 

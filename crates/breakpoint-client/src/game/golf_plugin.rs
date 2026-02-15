@@ -684,6 +684,7 @@ fn golf_apply_input_system(
 fn golf_render_sync(
     active_game: Res<ActiveGame>,
     network_role: Res<NetworkRole>,
+    time: Res<Time>,
     mut ball_query: Query<(&BallEntity, &mut Transform, &mut Visibility), Without<BallMarker>>,
     mut marker_query: Query<
         (&mut Transform, &mut Visibility),
@@ -694,15 +695,15 @@ fn golf_render_sync(
     let Some(state) = state else {
         return;
     };
+    let lerp_factor = (15.0 * time.delta_secs()).min(1.0);
     for (ball_entity, mut transform, mut visibility) in &mut ball_query {
         if let Some(ball) = state.balls.get(&ball_entity.0) {
             if ball.is_sunk {
                 *visibility = Visibility::Hidden;
             } else {
                 *visibility = Visibility::Visible;
-                transform.translation.x = ball.position.x;
-                transform.translation.y = BALL_RADIUS;
-                transform.translation.z = ball.position.z;
+                let target = Vec3::new(ball.position.x, BALL_RADIUS, ball.position.z);
+                transform.translation = transform.translation.lerp(target, lerp_factor);
             }
         }
     }
@@ -714,9 +715,8 @@ fn golf_render_sync(
                 *visibility = Visibility::Hidden;
             } else {
                 *visibility = Visibility::Visible;
-                transform.translation.x = ball.position.x;
-                transform.translation.y = 0.01;
-                transform.translation.z = ball.position.z;
+                let target = Vec3::new(ball.position.x, 0.01, ball.position.z);
+                transform.translation = transform.translation.lerp(target, lerp_factor);
             }
         }
     }

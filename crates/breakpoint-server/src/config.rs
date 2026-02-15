@@ -26,14 +26,29 @@ impl Default for ServerConfig {
 }
 
 /// Auth section of the config file.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct AuthFileConfig {
     pub bearer_token: Option<String>,
     pub github_webhook_secret: Option<String>,
     /// When true, reject GitHub webhooks that have no HMAC signature.
     /// Defaults to true for production safety.
+    #[serde(default = "default_true")]
     pub require_webhook_signature: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for AuthFileConfig {
+    fn default() -> Self {
+        Self {
+            bearer_token: None,
+            github_webhook_secret: None,
+            require_webhook_signature: true,
+        }
+    }
 }
 
 /// Default overlay settings applied to new rooms.
