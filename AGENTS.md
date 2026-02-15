@@ -64,8 +64,9 @@ These images are pre-built from template-repo and are **not buildable from this 
 | Phase 3 | Games, multi-round, editor | 131 | Claude Code |
 | Phase 4 | Polish and release preparation | 157 | Claude Code |
 | Post-Phase 4 | Integration tests, production hardening, golf UX polish | 221 | Claude Code |
+| Post-Phase 5 | Server-authoritative architecture, security hardening, comprehensive testing | 467 | Claude Code |
 
-Total: 221 tests across 8 workspace crates, plus 10 Playwright browser spec files (Chromium + Firefox). All clippy-clean with `-D warnings`.
+Total: 467 tests across 8 workspace crates, plus 12 Playwright browser spec files (Chromium + Firefox). All clippy-clean with `-D warnings`.
 
 ## Conventions for Agents
 

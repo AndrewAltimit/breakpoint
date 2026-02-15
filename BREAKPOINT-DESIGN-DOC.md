@@ -70,17 +70,17 @@ The metaphor is a mission control room where operators play cards between launch
 
 ### 3.1 High-Level Architecture
 
-Breakpoint follows a host-authoritative client-server model where the host player's browser acts as both a game client and the authoritative server. All other players connect as lightweight clients. A separate, optional relay service can be deployed for NAT traversal or when the host cannot accept direct connections.
+Breakpoint follows a server-authoritative client-server model where the Axum server runs the game simulation. All browser clients are equal renderers that send inputs and receive authoritative state. A separate, optional relay service can be deployed for NAT traversal.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        HOST MACHINE                             │
+│                      AXUM SERVER (Rust)                          │
 │                                                                 │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────────┐   │
-│  │  Axum Server │◄──►│  Game Engine  │◄──►│  WASM Client     │   │
-│  │  (Rust)      │    │  (Authority)  │    │  (Host Player)   │   │
-│  └──────┬───────┘    └──────────────┘    └──────────────────┘   │
-│         │                                                       │
+│  │  Events      │    │  Game Loop   │    │  Room Manager    │   │
+│  │  Store       │    │  (Authority) │    │                  │   │
+│  └──────┬───────┘    └──────┬───────┘    └──────────────────┘   │
+│         │                   │                                   │
 │         ├── WSS: Game state broadcast ──────────────────────┐   │
 │         ├── REST: /api/v1/events (ingestion) ◄── Webhooks   │   │
 │         ├── SSE: /api/v1/events/stream ─────────────────┐   │   │
@@ -132,10 +132,10 @@ All network communication uses WSS (WebSocket Secure) over port 443 to ensure co
 
 Since all players act simultaneously, the system uses a client-side prediction model with server reconciliation:
 
-1. Each client runs the full game simulation locally for immediate responsiveness.
-2. Clients send player inputs (not state) to the host at the game's tick rate (10–20 Hz for casual games).
-3. The host runs the authoritative simulation, processes all inputs, and broadcasts the canonical game state.
-4. Clients reconcile their local state with the host's authoritative state, interpolating other players' positions for smooth rendering.
+1. Each client renders the game state received from the server.
+2. Clients send player inputs (not state) to the server at the game's tick rate (10–20 Hz for casual games).
+3. The server runs the authoritative simulation, processes all inputs, and broadcasts the canonical game state.
+4. Clients apply the server's authoritative state and interpolate other players' positions for smooth rendering.
 
 For the target game types (mini-golf, platformer, laser tag), this model provides responsive local feel with authoritative fairness. The tick rate is kept deliberately low (10–20 Hz rather than 60+) because the games are casual and the reduced bandwidth is important for corporate network politeness.
 
@@ -211,7 +211,7 @@ Players race through procedurally assembled obstacle courses. All players are vi
 - Chunk difficulty is tagged (easy, medium, hard) and courses ramp difficulty progressively.
 - Seed-based generation ensures all players see the identical course per round.
 
-**Technical Notes:** Requires 15–20 Hz state sync for responsive platforming feel. Client-side prediction is critical here — local player movement must feel instant, with zero perceived input lag. Other players are interpolated between server updates with smooth position lerping. The host resolves finish-order disputes authoritatively using server-side timestamps.
+**Technical Notes:** Requires 15–20 Hz state sync for responsive platforming feel. Other players are interpolated between server updates with smooth position lerping. The server resolves finish-order disputes authoritatively using server-side timestamps.
 
 ### 4.3 Laser Tag Arena
 
@@ -238,7 +238,7 @@ Players navigate a top-down arena, firing lasers to tag opponents. Tagged player
 - Stunned players pulse with a "tagged" indicator and are visually dimmed.
 - No health bars, no death, no respawn timers. Being tagged is a brief inconvenience, not an elimination.
 
-**Technical Notes:** This is the most network-intensive game due to real-time position + aim direction broadcasting. Target 20 Hz tick rate. Laser hit detection is host-authoritative to prevent cheating — clients send "fire" inputs with aim direction, the host resolves hits against authoritative player positions and broadcasts results. Laser projectiles are fast enough that client-side prediction of hits works well visually; the host confirms/denies within 1–2 frames, and mispredictions are rare enough to not feel jarring.
+**Technical Notes:** This is the most network-intensive game due to real-time position + aim direction broadcasting. Target 20 Hz tick rate. Laser hit detection is server-authoritative to prevent cheating — clients send "fire" inputs with aim direction, the server resolves hits against authoritative player positions and broadcasts results. Laser projectiles are fast enough that client-side prediction of hits works well visually; the server confirms/denies within 1–2 frames, and mispredictions are rare enough to not feel jarring.
 
 ---
 
@@ -861,7 +861,7 @@ This is negligible on any network. Even the most network-intensive game (laser t
 - [x] Basic state synchronization: player positions broadcast at 10 Hz
 - [x] Simultaneous mini-golf with 2D physics, multiple obstacle types, scoring
 - [x] MessagePack binary protocol with 1-byte type prefix
-- [x] Host-authoritative networking with room codes (ABCD-1234 format)
+- [x] Server-authoritative networking with room codes (ABCD-1234 format)
 
 **Milestone:** Two players can join a room and play mini-golf simultaneously over WSS.
 
@@ -912,7 +912,7 @@ This is negligible on any network. Even the most network-intensive game (laser t
 
 The platform is feature-complete. Testing, validation, and production hardening work:
 
-- [x] End-to-end integration testing (30 server integration tests + 10 Playwright browser spec files covering Chromium + Firefox at DPR=1 and DPR=2)
+- [x] End-to-end integration testing (467 workspace tests + 12 Playwright browser spec files covering Chromium + Firefox at DPR=1 and DPR=2)
 - [x] WASM build verification (CI runs `wasm-pack build --dev` on every push)
 - [x] Docker image build verification (CI builds production Docker image)
 - [x] Cross-browser compatibility testing (Playwright specs run Chromium + Firefox)

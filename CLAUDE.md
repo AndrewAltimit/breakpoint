@@ -8,7 +8,7 @@ Breakpoint is a browser-based multiplayer gaming platform (Rust + WASM) designed
 
 All code is authored by AI agents under human direction. No external contributions are accepted.
 
-**Status:** Feature-complete (Phases 1–4). 221 tests pass across 8 workspace crates. Production-hardened with input validation, state machine enforcement, idle room cleanup, and event batch limits. Browser integration tests via Playwright (10 spec files, Chromium + Firefox).
+**Status:** Feature-complete (Phases 1–4). 467 tests pass across 8 workspace crates. Production-hardened with input validation, state machine enforcement, idle room cleanup, and event batch limits. Browser integration tests via Playwright (12 spec files, Chromium + Firefox).
 
 ## Build Commands
 
@@ -72,7 +72,7 @@ Winit 0.30.12 is patched at build time via [patch-crate](https://crates.io/crate
 **Workspace layout** — Eight crates in `crates/`:
 
 - **breakpoint-core** — Shared types with no runtime dependencies. Event schema (`events.rs`), `BreakpointGame` trait (`game_trait.rs`), player/room types, network message types (`net/`), overlay data models (`overlay/` including config, ticker, toast, dashboard).
-- **breakpoint-server** — Axum binary. WSS game state relay, REST event ingestion (`/api/v1/events`), SSE streaming, GitHub webhook adapter, room management, TOML config loading, static file serving. Optional `github-poller` feature flag spawns the GitHub Actions polling monitor.
+- **breakpoint-server** — Axum binary. Server-authoritative game simulation (`game_loop.rs`), WSS game state broadcast, REST event ingestion (`/api/v1/events`), SSE streaming, GitHub webhook adapter, room management, TOML config loading, static file serving. Optional `github-poller` feature flag spawns the GitHub Actions polling monitor.
 - **breakpoint-client** — WASM library (`crate-type = ["cdylib", "rlib"]`), Bevy 0.18 game engine. Lobby UI, game rendering (golf/platformer/lasertag), overlay system (ticker/toasts/dashboard/claim), settings panel with localStorage persistence, audio, course editor.
 - **breakpoint-relay** — Stateless WebSocket relay for NAT traversal. Protocol-agnostic message forwarding, room code generation, auto-cleanup.
 - **breakpoint-golf** — Simultaneous mini-golf (2-8 players, 10 Hz). Physics, obstacles, scoring.
@@ -81,7 +81,7 @@ Winit 0.30.12 is patched at build time via [patch-crate](https://crates.io/crate
 - **breakpoint-github** — GitHub Actions polling adapter with agent/bot detection. Configurable glob-style patterns.
 
 **Key design patterns:**
-- Host-authoritative client-server: host browser runs authoritative simulation, clients send inputs and receive state
+- Server-authoritative: the Axum server runs the game simulation (`game_loop.rs`), all clients are equal renderers that send inputs and receive state
 - Dual-channel communication: game state over WSS (MessagePack, tick-aligned), alerts over SSE/WSS (JSON, event-driven)
 - Games are pluggable via the `BreakpointGame` trait — networking, overlay, and lobby code don't change when adding games
 - Alert overlay operates independently of game lifecycle (works in lobby, between rounds, during gameplay)
@@ -125,12 +125,19 @@ Three GitHub Actions workflows, all on a self-hosted runner using Docker contain
 | Message types | `crates/breakpoint-core/src/net/messages.rs` |
 | Overlay config types | `crates/breakpoint-core/src/overlay/config.rs` |
 | Server entry point | `crates/breakpoint-server/src/main.rs` |
+| Server game loop | `crates/breakpoint-server/src/game_loop.rs` |
+| Room manager | `crates/breakpoint-server/src/room_manager.rs` |
 | Server config loading | `crates/breakpoint-server/src/config.rs` |
 | REST API handlers | `crates/breakpoint-server/src/api.rs` |
 | WebSocket handler | `crates/breakpoint-server/src/ws.rs` |
+| Auth (tokens + HMAC) | `crates/breakpoint-server/src/auth.rs` |
+| Event store | `crates/breakpoint-server/src/event_store.rs` |
 | GitHub webhook | `crates/breakpoint-server/src/webhooks/github.rs` |
 | Client entry point | `crates/breakpoint-client/src/lib.rs` |
+| Lobby UI | `crates/breakpoint-client/src/lobby.rs` |
+| Network client | `crates/breakpoint-client/src/net_client.rs` |
 | Overlay rendering | `crates/breakpoint-client/src/overlay.rs` |
+| Camera setup | `crates/breakpoint-client/src/camera.rs` |
 | Settings UI | `crates/breakpoint-client/src/settings.rs` |
 | Agent detection | `crates/adapters/breakpoint-github/src/agent_detect.rs` |
 | Relay server | `crates/breakpoint-relay/src/relay.rs` |

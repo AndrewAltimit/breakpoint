@@ -83,17 +83,18 @@ See [docs/INTEGRATION-GUIDE.md](docs/INTEGRATION-GUIDE.md) for the full event sc
 ## Architecture
 
 ```
-Host Machine
-├── Axum Server (Rust)           ← WSS game state, REST event ingestion, SSE alerts
-├── Game Engine (Authority)      ← Authoritative game simulation
-└── WASM Client (Host Player)   ← Renders game + overlay
+Axum Server (Rust)
+├── Game Loop (Authority)        ← Server-authoritative game simulation
+├── Room Manager                 ← Room lifecycle, player management
+├── REST API                     ← Event ingestion, SSE alerts
+└── WebSocket Handler            ← Game state broadcast to all clients
 
-Player Clients (WASM in browser)
-├── Game View                   ← Local simulation with server reconciliation
+All Clients (WASM in browser)
+├── Game View                   ← Renders server-authoritative state
 └── Alert Overlay               ← Ambient ticker, toasts, dashboard, claim system
 ```
 
-**Deployment modes:** Direct host (LAN/VPN), relay (NAT traversal), Docker, or hybrid. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+**Deployment modes:** Server (direct), relay (NAT traversal), or Docker. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Project Structure
 
@@ -101,7 +102,7 @@ Player Clients (WASM in browser)
 breakpoint/
 ├── crates/
 │   ├── breakpoint-core/              # Shared types, traits, event schema
-│   ├── breakpoint-server/            # Axum host server
+│   ├── breakpoint-server/            # Axum server (game authority)
 │   ├── breakpoint-client/            # WASM browser client (Bevy)
 │   ├── breakpoint-relay/             # Stateless WS relay for NAT traversal
 │   ├── games/
@@ -153,4 +154,4 @@ docker compose --profile ci run --rm rust-ci cargo test --workspace
 
 ## License
 
-Dual-licensed under [Unlicense](LICENSE-UNLICENSE) and [MIT](LICENSE-MIT).
+Dual-licensed under [Unlicense](LICENSE) and [MIT](LICENSE-MIT).

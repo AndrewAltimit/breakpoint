@@ -2,31 +2,33 @@
 
 ## System Overview
 
-Breakpoint is a browser-based multiplayer gaming platform built in Rust, compiled to WebAssembly for the client. It uses a host-authoritative networking model where one browser acts as the game authority, with an Axum server handling relay, event ingestion, and static file serving.
+Breakpoint is a browser-based multiplayer gaming platform built in Rust, compiled to WebAssembly for the client. It uses a server-authoritative networking model where the Axum server runs the game simulation, and all browser clients are equal renderers that send inputs and receive state.
 
 ```
                      ┌──────────────────────────────────────┐
                      │           Axum Server                │
                      │  ┌─────────┐  ┌──────┐  ┌────────┐  │
 External ──REST/WH──►│  │ Events  │  │  WS  │  │  SSE   │  │
-Systems              │  │  Store  │  │ Relay │  │ Stream │  │
+Systems              │  │  Store  │  │Handler│  │ Stream │  │
                      │  └────┬────┘  └──┬───┘  └───┬────┘  │
                      │       │          │          │        │
                      │       └──────────┼──────────┘        │
                      │                  │                    │
                      │       ┌──────────┴──────────┐        │
                      │       │   Room Manager      │        │
+                     │       │   + Game Loop       │        │
+                     │       │   (Authority)       │        │
                      │       └──────────┬──────────┘        │
                      └──────────────────┼───────────────────┘
                                         │ WSS
            ┌────────────────────────────┼────────────────────────┐
            │                            │                        │
     ┌──────┴──────┐              ┌──────┴──────┐          ┌──────┴──────┐
-    │ Host Client │              │   Client 2  │          │   Client N  │
-    │  (Authority)│              │  (Predicted) │          │  (Predicted) │
+    │  Client 1   │              │   Client 2  │          │   Client N  │
+    │  (Renderer) │              │  (Renderer)  │          │  (Renderer)  │
     │ ┌─────────┐ │              │ ┌─────────┐ │          │ ┌─────────┐ │
     │ │  Game   │ │              │ │  Game   │ │          │ │  Game   │ │
-    │ │  Sim    │ │              │ │  View   │ │          │ │  View   │ │
+    │ │  View   │ │              │ │  View   │ │          │ │  View   │ │
     │ ├─────────┤ │              │ ├─────────┤ │          │ ├─────────┤ │
     │ │ Overlay │ │              │ │ Overlay │ │          │ │ Overlay │ │
     │ └─────────┘ │              │ └─────────┘ │          │ └─────────┘ │
@@ -49,13 +51,14 @@ Shared types with no runtime dependencies. Everything that both server and clien
 
 ### breakpoint-server
 
-Axum binary serving as the game relay and event hub:
+Axum binary running the server-authoritative game simulation, event hub, and WebSocket broadcast:
 
 - **`api.rs`** — REST endpoints: `POST /api/v1/events`, `POST /api/v1/events/:id/claim`, `GET /api/v1/status`
 - **`sse.rs`** — `GET /api/v1/events/stream` — Server-Sent Events for real-time alert streaming
 - **`webhooks/github.rs`** — `POST /api/v1/webhooks/github` — GitHub webhook transformer
-- **`ws.rs`** — WebSocket handler for game state relay
-- **`room_manager.rs`** — Room lifecycle (create, join, leave, broadcast)
+- **`ws.rs`** — WebSocket handler for client connections and input routing
+- **`game_loop.rs`** — Server-authoritative game tick loop (runs `BreakpointGame` instances)
+- **`room_manager.rs`** — Room lifecycle (create, join, leave, game start/stop)
 - **`event_store.rs`** — In-memory event store with broadcast channel
 - **`auth.rs`** — Bearer token auth + GitHub HMAC signature verification
 - **`config.rs`** — TOML config file loading with env var overrides
@@ -71,7 +74,8 @@ WASM library (`cdylib` + `rlib`) entry point via `wasm-bindgen`:
 - **`settings.rs`** — Settings panel (audio, overlay preferences)
 - **`audio.rs`** — Sound effects with per-priority volume
 - **`camera.rs`** — Bevy camera setup
-- **`editor.rs`** — Course editor for mini-golf
+- **`between_rounds.rs`** — Scoreboard and between-round UI
+- **`game_over.rs`** — Game-over summary screen
 
 ### breakpoint-relay
 
@@ -94,11 +98,11 @@ Stateless WebSocket relay for NAT traversal:
 
 ### Game State (WSS, MessagePack)
 
-1. Client sends `Input` message with serialized player input
-2. Server relays to host client
-3. Host runs authoritative game simulation
-4. Host sends `GameState` message with serialized state
-5. Server broadcasts to all clients in the room
+1. Client sends `PlayerInput` message with serialized player input
+2. Server's `game_loop` receives input via `GameCommand::PlayerInput`
+3. Server runs authoritative game simulation (`BreakpointGame::update()`)
+4. Server serializes state via `BreakpointGame::serialize_state()`
+5. Server broadcasts `GameState` message to all clients in the room
 6. Clients apply state and render
 
 ### Alert Events (REST + SSE/WSS, JSON)
@@ -136,17 +140,17 @@ All game messages use MessagePack with a 1-byte type prefix:
 
 ## Deployment Modes
 
-### Direct Host
+### Server (Primary)
 
-Host browser runs the game server. Other players connect via WebSocket to the host's machine. Works on LAN or VPN without additional infrastructure.
+The Axum server runs the authoritative game simulation and serves the WASM client. All players connect as equal clients via WebSocket. Best for teams with internal infrastructure or Docker deployment.
 
 ### Relay
 
-The `breakpoint-relay` crate provides a stateless WebSocket relay. Clients connect to the relay, which forwards messages between host and clients. Enables NAT traversal without exposing host machines.
+The `breakpoint-relay` crate provides a stateless WebSocket relay for NAT traversal. Clients connect to the relay, which forwards messages between the server and clients. Enables deployment without exposing the server directly.
 
-### Hybrid
+### Docker
 
-The Axum server runs persistently, serving the WASM client, handling event ingestion, and relaying game traffic. Best for teams with internal infrastructure.
+The production Docker image bundles the server binary, WASM client, and static assets. One command deployment via `docker run` or `docker compose`.
 
 ## Technology Stack
 

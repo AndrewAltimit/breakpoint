@@ -193,14 +193,14 @@ Then add the game module in the client's `game/` directory and register it in th
 
 ## Key Concepts
 
-### Host-Authoritative Model
+### Server-Authoritative Model
 
-The host browser runs the authoritative simulation. Clients send inputs and receive state:
+The Axum server runs the authoritative simulation. All clients send inputs and receive state:
 
 1. **Client** captures input each frame via `serialize_input()`
-2. **Host** receives input and applies it via `apply_input()`
-3. **Host** runs `update()` with all collected inputs
-4. **Host** broadcasts state via `serialize_state()`
+2. **Server** receives input and applies it via `apply_input()`
+3. **Server** runs `update()` with all collected inputs
+4. **Server** broadcasts state via `serialize_state()`
 5. **Clients** apply state via `apply_state()` and render
 
 ### Tick Rate

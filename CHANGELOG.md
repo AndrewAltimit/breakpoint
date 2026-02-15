@@ -5,7 +5,7 @@
 ### Platform
 
 - Browser-based multiplayer gaming over WebSocket
-- Host-authoritative networking with client prediction
+- Server-authoritative networking (Axum server runs game simulation)
 - Room system with join codes, spectator mode, and late-join support
 - Between-rounds scoreboard and game-over summary screens
 - Course editor for mini-golf level creation
