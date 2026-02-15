@@ -1,12 +1,25 @@
-use glam::{Vec3, Vec4};
+use glam::{Vec2, Vec3, Vec4};
 
-use crate::app::ActiveGame;
+use crate::app::{ActiveGame, NetworkRole};
+use crate::camera_gl::Camera;
 use crate::game::read_game_state;
+use crate::input::InputState;
+use crate::renderer::Renderer;
 use crate::scene::{MaterialType, MeshType, Scene, Transform};
 use crate::theme::{Theme, rgb_vec4};
 
 /// Sync the 3D scene with the current golf game state.
-pub fn sync_golf_scene(scene: &mut Scene, active: &ActiveGame, theme: &Theme, _dt: f32) {
+#[allow(clippy::too_many_arguments)]
+pub fn sync_golf_scene(
+    scene: &mut Scene,
+    active: &ActiveGame,
+    theme: &Theme,
+    _dt: f32,
+    input: &InputState,
+    camera: &Camera,
+    renderer: &Renderer,
+    role: Option<&NetworkRole>,
+) {
     let state: Option<breakpoint_golf::GolfState> = read_game_state(active);
     let Some(state) = state else {
         return;
@@ -106,5 +119,61 @@ pub fn sync_golf_scene(scene: &mut Scene, active: &ActiveGame, theme: &Theme, _d
             Transform::from_xyz(ball.position.x, ball.position.y.max(0.15), ball.position.z)
                 .with_scale(Vec3::splat(0.3)),
         );
+    }
+
+    // Aim indicator: draw dots from local player's ball toward cursor ground position
+    if let Some(role) = role
+        && let Some(ball) = state.balls.get(&role.local_player_id)
+        && !ball.is_sunk
+    {
+        let vel_sq = ball.velocity.x * ball.velocity.x
+            + ball.velocity.y * ball.velocity.y
+            + ball.velocity.z * ball.velocity.z;
+        if vel_sq <= 0.01 {
+            let (vw, vh) = renderer.viewport_size();
+            let viewport = Vec2::new(vw, vh);
+            if let Some(ground_pos) = camera.screen_to_ground(input.cursor_position, viewport) {
+                let ball_pos = Vec3::new(ball.position.x, 0.15, ball.position.z);
+                let dx = ground_pos.x - ball_pos.x;
+                let dz = ground_pos.z - ball_pos.z;
+                let dist = (dx * dx + dz * dz).sqrt();
+                if dist > 0.5 {
+                    let dir_x = dx / dist;
+                    let dir_z = dz / dist;
+                    let aim_color = Vec4::new(
+                        theme.golf.aim_line_color[0],
+                        theme.golf.aim_line_color[1],
+                        theme.golf.aim_line_color[2],
+                        theme.golf.aim_line_color[3],
+                    );
+                    let dot_count = 8;
+                    let max_dist = dist.min(15.0);
+                    let spacing = max_dist / dot_count as f32;
+                    for i in 1..=dot_count {
+                        let t = i as f32 * spacing;
+                        let alpha_fade = 1.0 - (i as f32 / dot_count as f32) * 0.6;
+                        let dot_color = Vec4::new(
+                            aim_color.x,
+                            aim_color.y,
+                            aim_color.z,
+                            aim_color.w * alpha_fade,
+                        );
+                        scene.add(
+                            MeshType::Sphere { segments: 6 },
+                            MaterialType::Glow {
+                                color: dot_color,
+                                intensity: 1.2,
+                            },
+                            Transform::from_xyz(
+                                ball_pos.x + dir_x * t,
+                                0.15,
+                                ball_pos.z + dir_z * t,
+                            )
+                            .with_scale(Vec3::splat(0.12)),
+                        );
+                    }
+                }
+            }
+        }
     }
 }

@@ -33,13 +33,9 @@ body {
     pointer-events: none;
 }
 
-#ui-root .screen {
-    pointer-events: auto;
-}
-
-#ui-root button,
-#ui-root input,
-#ui-root a {
+#lobby-screen,
+#between-rounds,
+#game-over {
     pointer-events: auto;
 }
 

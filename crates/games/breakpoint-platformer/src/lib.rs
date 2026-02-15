@@ -30,6 +30,7 @@ pub struct PlatformerState {
     pub hazard_y: f32,
     pub round_complete: bool,
     pub mode: GameMode,
+    pub course: Course,
 }
 
 /// Game mode for the platformer.
@@ -63,8 +64,8 @@ impl PlatformRacer {
     /// Create a PlatformRacer instance with explicit configuration.
     pub fn with_config(game_config: PlatformerConfig) -> Self {
         let round_duration = game_config.round_duration_secs;
+        let initial_course = generate_course(42);
         Self {
-            course: generate_course(42),
             state: PlatformerState {
                 players: HashMap::new(),
                 powerups: Vec::new(),
@@ -75,7 +76,9 @@ impl PlatformRacer {
                 hazard_y: -10.0,
                 round_complete: false,
                 mode: GameMode::Race,
+                course: initial_course.clone(),
             },
+            course: initial_course,
             player_ids: Vec::new(),
             pending_inputs: HashMap::new(),
             paused: false,
@@ -155,6 +158,7 @@ impl BreakpointGame for PlatformRacer {
             hazard_y: -10.0,
             round_complete: false,
             mode,
+            course: self.course.clone(),
         };
         self.player_ids.clear();
         self.pending_inputs.clear();

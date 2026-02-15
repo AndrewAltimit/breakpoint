@@ -549,7 +549,16 @@ impl App {
         match active.game_id {
             #[cfg(feature = "golf")]
             GameId::Golf => {
-                crate::game::golf_render::sync_golf_scene(&mut self.scene, active, &self.theme, dt);
+                crate::game::golf_render::sync_golf_scene(
+                    &mut self.scene,
+                    active,
+                    &self.theme,
+                    dt,
+                    &self.input,
+                    &self.camera,
+                    &self.renderer,
+                    self.network_role.as_ref(),
+                );
             },
             #[cfg(feature = "platformer")]
             GameId::Platformer => {

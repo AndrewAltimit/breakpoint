@@ -34,6 +34,10 @@ pub struct LaserTagState {
     pub teams: HashMap<PlayerId, u8>,
     pub tags_scored: HashMap<PlayerId, u32>,
     pub laser_trails: Vec<LaserTrail>,
+    pub arena_width: f32,
+    pub arena_depth: f32,
+    pub arena_walls: Vec<arena::ArenaWall>,
+    pub smoke_zones: Vec<(f32, f32, f32)>,
 }
 
 /// A player's state in laser tag.
@@ -120,8 +124,8 @@ impl LaserTagArena {
     /// Create a LaserTagArena instance with explicit configuration.
     pub fn with_config(config: LaserTagConfig) -> Self {
         let round_duration = config.round_duration_secs;
+        let initial_arena = load_arena(ArenaSize::Default);
         Self {
-            arena: load_arena(ArenaSize::Default),
             state: LaserTagState {
                 players: HashMap::new(),
                 powerups: Vec::new(),
@@ -132,7 +136,12 @@ impl LaserTagArena {
                 teams: HashMap::new(),
                 tags_scored: HashMap::new(),
                 laser_trails: Vec::new(),
+                arena_width: initial_arena.width,
+                arena_depth: initial_arena.depth,
+                arena_walls: initial_arena.walls.clone(),
+                smoke_zones: initial_arena.smoke_zones.clone(),
             },
+            arena: initial_arena,
             player_ids: Vec::new(),
             pending_inputs: HashMap::new(),
             paused: false,
@@ -234,6 +243,10 @@ impl BreakpointGame for LaserTagArena {
             teams: HashMap::new(),
             tags_scored: HashMap::new(),
             laser_trails: Vec::new(),
+            arena_width: self.arena.width,
+            arena_depth: self.arena.depth,
+            arena_walls: self.arena.walls.clone(),
+            smoke_zones: self.arena.smoke_zones.clone(),
         };
         self.player_ids.clear();
         self.pending_inputs.clear();

@@ -14,8 +14,8 @@ pub fn sync_lasertag_scene(scene: &mut Scene, active: &ActiveGame, theme: &Theme
 
     scene.clear();
 
-    // Use a default arena size for rendering (arena geometry is server-side)
-    let arena_size = 50.0_f32;
+    let arena_w = state.arena_width;
+    let arena_d = state.arena_depth;
 
     // Arena floor
     scene.add(
@@ -23,9 +23,89 @@ pub fn sync_lasertag_scene(scene: &mut Scene, active: &ActiveGame, theme: &Theme
         MaterialType::Unlit {
             color: rgb_vec4(&theme.lasertag.arena_floor),
         },
-        Transform::from_xyz(arena_size / 2.0, 0.0, arena_size / 2.0)
-            .with_scale(Vec3::new(arena_size, 1.0, arena_size)),
+        Transform::from_xyz(arena_w / 2.0, 0.0, arena_d / 2.0)
+            .with_scale(Vec3::new(arena_w, 1.0, arena_d)),
     );
+
+    // Arena walls
+    let wall_height = 2.0;
+    for wall in &state.arena_walls {
+        let dx = wall.bx - wall.ax;
+        let dz = wall.bz - wall.az;
+        let len = (dx * dx + dz * dz).sqrt();
+        if len < 0.01 {
+            continue;
+        }
+        let cx = (wall.ax + wall.bx) / 2.0;
+        let cz = (wall.az + wall.bz) / 2.0;
+        let angle = dz.atan2(dx);
+
+        let color = match wall.wall_type {
+            breakpoint_lasertag::arena::WallType::Solid => rgb_vec4(&theme.lasertag.wall_solid),
+            breakpoint_lasertag::arena::WallType::Reflective => {
+                rgb_vec4(&theme.lasertag.wall_reflective)
+            },
+        };
+
+        scene.add(
+            MeshType::Cuboid,
+            MaterialType::Unlit { color },
+            Transform::from_xyz(cx, wall_height / 2.0, cz)
+                .with_scale(Vec3::new(len, wall_height, 0.3))
+                .with_rotation(glam::Quat::from_rotation_y(-angle)),
+        );
+    }
+
+    // Smoke zones
+    for &(sx, sz, radius) in &state.smoke_zones {
+        let smoke_color = Vec4::new(
+            theme.lasertag.smoke_zone[0],
+            theme.lasertag.smoke_zone[1],
+            theme.lasertag.smoke_zone[2],
+            theme.lasertag.smoke_zone[3],
+        );
+        scene.add(
+            MeshType::Cylinder { segments: 16 },
+            MaterialType::Glow {
+                color: smoke_color,
+                intensity: 0.5,
+            },
+            Transform::from_xyz(sx, 0.05, sz).with_scale(Vec3::new(
+                radius * 2.0,
+                0.1,
+                radius * 2.0,
+            )),
+        );
+    }
+
+    // Uncollected powerups
+    for pu in &state.powerups {
+        if pu.collected {
+            continue;
+        }
+        let color = match pu.kind {
+            breakpoint_lasertag::powerups::LaserPowerUpKind::RapidFire => {
+                Vec4::new(1.0, 0.2, 0.2, 1.0)
+            },
+            breakpoint_lasertag::powerups::LaserPowerUpKind::SpeedBoost => {
+                Vec4::new(1.0, 0.9, 0.0, 1.0)
+            },
+            breakpoint_lasertag::powerups::LaserPowerUpKind::Shield => {
+                Vec4::new(0.3, 0.5, 1.0, 1.0)
+            },
+            breakpoint_lasertag::powerups::LaserPowerUpKind::WideBeam => {
+                Vec4::new(0.2, 0.9, 0.3, 1.0)
+            },
+        };
+        scene.add(
+            MeshType::Sphere { segments: 8 },
+            MaterialType::Glow {
+                color,
+                intensity: 2.0,
+            },
+            Transform::from_xyz(pu.x, 0.5, pu.z).with_scale(Vec3::splat(0.5)),
+        );
+    }
 
     // Players as cylinders
     for player in state.players.values() {
