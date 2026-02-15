@@ -8,7 +8,7 @@ Breakpoint is a browser-based multiplayer gaming platform (Rust + WASM) designed
 
 All code is authored by AI agents under human direction. No external contributions are accepted.
 
-**Status:** Feature-complete (Phases 1–4). 467 tests pass across 8 workspace crates. Production-hardened with input validation, state machine enforcement, idle room cleanup, and event batch limits. Browser integration tests via Playwright (12 spec files, Chromium + Firefox).
+**Status:** Feature-complete (Phases 1–4). 484 tests pass across 8 workspace crates. Production-hardened with input validation, state machine enforcement, idle room cleanup, and event batch limits. Browser integration tests via Playwright (12 spec files, Chromium + Firefox).
 
 ## Build Commands
 
@@ -63,17 +63,13 @@ docker compose --profile ci run --rm rust-ci cargo test --workspace
 docker build -f docker/server.Dockerfile -t breakpoint .
 ```
 
-## Dependency Patching
-
-Winit 0.30.12 is patched at build time via [patch-crate](https://crates.io/crates/patch-crate). The patch file lives in `patches/winit+0.30.12.patch` and fixes a DPR scaling bug in the WASM ResizeObserver. Run `cargo patch-crate` before any build command to apply patches (CI workflows do this automatically).
-
 ## Architecture
 
 **Workspace layout** — Eight crates in `crates/`:
 
 - **breakpoint-core** — Shared types with no runtime dependencies. Event schema (`events.rs`), `BreakpointGame` trait (`game_trait.rs`), player/room types, network message types (`net/`), overlay data models (`overlay/` including config, ticker, toast, dashboard).
 - **breakpoint-server** — Axum binary. Server-authoritative game simulation (`game_loop.rs`), WSS game state broadcast, REST event ingestion (`/api/v1/events`), SSE streaming, GitHub webhook adapter, room management, TOML config loading, static file serving. Optional `github-poller` feature flag spawns the GitHub Actions polling monitor.
-- **breakpoint-client** — WASM library (`crate-type = ["cdylib", "rlib"]`), Bevy 0.18 game engine. Lobby UI, game rendering (golf/platformer/lasertag), overlay system (ticker/toasts/dashboard/claim), settings panel with localStorage persistence, audio, course editor.
+- **breakpoint-client** — WASM library (`crate-type = ["cdylib", "rlib"]`), custom WebGL2 renderer via web-sys. HTML/CSS/JS UI layer (lobby, HUD, overlay). Game rendering (golf/platformer/lasertag) via flat scene graph rebuilt each frame. JS bridge for Rust↔UI communication. Audio, theming, localStorage persistence.
 - **breakpoint-relay** — Stateless WebSocket relay for NAT traversal. Protocol-agnostic message forwarding, room code generation, auto-cleanup.
 - **breakpoint-golf** — Simultaneous mini-golf (2-8 players, 10 Hz). Physics, obstacles, scoring.
 - **breakpoint-platformer** — Platform racer (2-6 players, 15 Hz). Procedural courses, race/survival modes, power-ups.
@@ -88,7 +84,7 @@ Winit 0.30.12 is patched at build time via [patch-crate](https://crates.io/crate
 - Game crates behind feature flags for optional compilation (reduce WASM bundle)
 - Server config via TOML file (`breakpoint.toml`) with env var overrides
 
-**Static assets** live in `web/` (HTML shell, CSS, sprites, sounds). The server serves these and the WASM bundle.
+**Static assets** live in `web/` (HTML shell, CSS, JS UI layer, sprites, sounds, theme config). The server serves these and the WASM bundle.
 
 ## Rust Conventions
 
@@ -110,7 +106,7 @@ Three GitHub Actions workflows, all on a self-hosted runner using Docker contain
 
 ## Docker
 
-- `docker/rust-ci.Dockerfile` — Rust stable + wasm-pack + cargo-deny + patch-crate. Used by `docker compose --profile ci`.
+- `docker/rust-ci.Dockerfile` — Rust stable + wasm-pack + cargo-deny. Used by `docker compose --profile ci`.
 - `docker/server.Dockerfile` — Multi-stage production image. Builder compiles server binary + WASM client. Runtime is `debian:bookworm-slim` with just the binary, web assets, and WASM bundle. Exposes port 8080.
 - `docker-compose.yml` — `rust-ci` service for CI, plus 9 MCP services (code-quality, gemini, codex, etc.) under `--profile services` for interactive agent sessions. MCP images are pre-built from template-repo, not buildable from this repo.
 - `examples/docker-compose.yml` — Production deployment compose file.
@@ -134,10 +130,16 @@ Three GitHub Actions workflows, all on a self-hosted runner using Docker contain
 | Event store | `crates/breakpoint-server/src/event_store.rs` |
 | GitHub webhook | `crates/breakpoint-server/src/webhooks/github.rs` |
 | Client entry point | `crates/breakpoint-client/src/lib.rs` |
-| Lobby UI | `crates/breakpoint-client/src/lobby.rs` |
+| Client app state machine | `crates/breakpoint-client/src/app.rs` |
+| WebGL2 renderer | `crates/breakpoint-client/src/renderer.rs` |
+| Scene graph | `crates/breakpoint-client/src/scene.rs` |
+| JS↔Rust bridge | `crates/breakpoint-client/src/bridge.rs` |
+| Camera (perspective + modes) | `crates/breakpoint-client/src/camera_gl.rs` |
 | Network client | `crates/breakpoint-client/src/net_client.rs` |
 | Overlay rendering | `crates/breakpoint-client/src/overlay.rs` |
-| Camera setup | `crates/breakpoint-client/src/camera.rs` |
-| Settings UI | `crates/breakpoint-client/src/settings.rs` |
+| Theme system | `crates/breakpoint-client/src/theme.rs` |
+| Input handling | `crates/breakpoint-client/src/input.rs` |
+| GLSL shaders | `crates/breakpoint-client/src/shaders_gl/` |
+| HTML/CSS/JS UI layer | `web/index.html`, `web/style.css`, `web/ui.js` |
 | Agent detection | `crates/adapters/breakpoint-github/src/agent_detect.rs` |
 | Relay server | `crates/breakpoint-relay/src/relay.rs` |

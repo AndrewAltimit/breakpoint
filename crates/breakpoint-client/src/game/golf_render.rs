@@ -99,7 +99,7 @@ pub fn sync_golf_scene(
 
     // Flag
     scene.add(
-        MeshType::Cylinder { segments: 8 },
+        MeshType::Cylinder { segments: 16 },
         MaterialType::Unlit {
             color: rgb_vec4(&theme.golf.flag_color),
         },
@@ -159,7 +159,7 @@ pub fn sync_golf_scene(
                             aim_color.w * alpha_fade,
                         );
                         scene.add(
-                            MeshType::Sphere { segments: 6 },
+                            MeshType::Sphere { segments: 16 },
                             MaterialType::Glow {
                                 color: dot_color,
                                 intensity: 1.2,

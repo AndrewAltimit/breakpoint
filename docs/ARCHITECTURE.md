@@ -65,17 +65,22 @@ Axum binary running the server-authoritative game simulation, event hub, and Web
 
 ### breakpoint-client
 
-WASM library (`cdylib` + `rlib`) entry point via `wasm-bindgen`:
+WASM library (`cdylib` + `rlib`) entry point via `wasm-bindgen`. Uses a custom WebGL2 renderer (not a game framework) with an HTML/CSS/JS UI layer:
 
-- **`lobby.rs`** — Lobby UI (create/join rooms, game selection, ready system)
-- **`game/`** — Game rendering and input handling per game type
-- **`overlay.rs`** — Full overlay system (ticker, toasts, dashboard, claim UI)
+- **`app.rs`** — Application state machine + requestAnimationFrame loop (`Rc<RefCell<App>>` pattern)
+- **`renderer.rs`** — WebGL2 renderer with 4 GLSL shader programs (unlit, gradient, ripple, glow)
+- **`scene.rs`** — Flat scene graph (`Vec<RenderObject>`) rebuilt each frame
+- **`bridge.rs`** — JS↔Rust bridge: pushes UI state via `window._breakpointUpdate()`, receives callbacks via globals
+- **`camera_gl.rs`** — Perspective camera with game-specific modes (GolfFollow, PlatformerFollow, LaserTagFixed)
+- **`game/`** — Per-game rendering (`*_render.rs`) and input handling (`*_input.rs`)
+- **`overlay.rs`** — Alert overlay state management
 - **`net_client.rs`** — WebSocket client connection
-- **`settings.rs`** — Settings panel (audio, overlay preferences)
 - **`audio.rs`** — Sound effects with per-priority volume
-- **`camera.rs`** — Bevy camera setup
-- **`between_rounds.rs`** — Scoreboard and between-round UI
-- **`game_over.rs`** — Game-over summary screen
+- **`input.rs`** — Keyboard + mouse input tracking
+- **`theme.rs`** — Theming system (colors, game-specific themes, loaded from `theme.json`)
+- **`shaders_gl/`** — GLSL vertex + fragment shaders
+
+UI elements (lobby, HUD, overlay, settings, between-rounds, game-over) are implemented in `web/index.html`, `web/style.css`, and `web/ui.js`.
 
 ### breakpoint-relay
 
@@ -158,7 +163,8 @@ The production Docker image bundles the server binary, WASM client, and static a
 |-------|-----------|
 | Language | Rust (Edition 2024) |
 | Client Runtime | WebAssembly (wasm-bindgen, web-sys) |
-| Game Framework | Bevy 0.18 |
+| Rendering | Custom WebGL2 (4 GLSL shaders, flat scene graph) |
+| UI Layer | HTML/CSS/JS (lobby, HUD, overlay) |
 | Server Framework | Axum 0.8 |
 | Serialization | MessagePack (game state), JSON (API/events) |
 | Build Tools | cargo, wasm-pack |

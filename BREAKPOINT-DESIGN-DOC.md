@@ -109,9 +109,9 @@ External Event Sources:
 
 | Component | Technology | Responsibility |
 |-----------|-----------|----------------|
-| Game Engine | Rust + WASM (Bevy 0.18) | Physics, rendering, game logic, input handling |
+| Game Renderer | Rust + WASM (custom WebGL2 via web-sys) | 3D rendering, scene graph, GLSL shaders |
 | Network Layer | WSS via web-sys / wasm-bindgen | State sync, player management, MessagePack protocol |
-| Overlay System | Bevy UI (Rust/WASM) | Ticker, toasts, dashboard, claim system, agent badges |
+| Overlay System | HTML/CSS/JS UI layer | Ticker, toasts, dashboard, claim system, agent badges |
 | Alert Bus | SSE + WSS broadcast | Receives agent events, routes to overlay based on priority |
 | Data Integration API | REST (JSON) + webhooks | Event ingestion, claiming, SSE streaming |
 | Host Server | Rust (Axum 0.8) | Static assets, WSS relay, REST/SSE, room management |
@@ -172,9 +172,9 @@ All players putt simultaneously on the same course. Each player sees their own b
 
 **Physics Model:**
 - Simple 2D physics with velocity, friction, and elastic collisions against obstacles.
-- Each client runs its own ball physics independently — balls don't interact with each other, so determinism between clients is not required.
-- Ball positions are broadcast at 10 Hz. Other players' balls are interpolated between updates for smooth rendering.
-- The host's simulation is authoritative only for scoring (hole detection and stroke counting), not for ball physics. This dramatically simplifies the networking.
+- The server runs the authoritative ball physics simulation for all players. Clients send aim inputs and receive ball state.
+- Ball positions are broadcast at 10 Hz. Clients render the authoritative state directly.
+- Balls don't interact with each other, keeping the physics simple despite being server-authoritative.
 
 **Scoring:**
 - First to sink: +3 bonus points
@@ -608,8 +608,8 @@ Rooms persist as long as the host is connected. If the host disconnects, a confi
 |-------|-----------|-----------|
 | Core Language | Rust | Memory safety, performance, single codebase for server + WASM client |
 | Client Runtime | WASM (wasm-bindgen, web-sys) | Near-native browser performance, no plugins, broad browser support |
-| Game Framework | Bevy 0.18 | ECS architecture with WASM support; bundle size managed via feature flags |
-| Rendering | Bevy renderer (wgpu/WebGL2) | WebGL2 for broad browser compatibility |
+| Rendering | Custom WebGL2 renderer (web-sys) | Direct WebGL2 with 4 GLSL shader programs (unlit, gradient, ripple, glow); flat scene graph rebuilt each frame |
+| UI Layer | HTML/CSS/JS | Lobby, HUD, overlay, and settings implemented as HTML/CSS/JS; Rust pushes UI state via JS bridge |
 | Networking | WSS (tokio-tungstenite server, web-sys client) | Firewall-friendly, bidirectional, low overhead |
 | Host Server | Axum | Lightweight, async, Rust-native, excellent WebSocket support |
 | Alert Ingestion | Axum REST endpoints + SSE | Standard HTTP for webhook compatibility, SSE for real-time streaming |
@@ -619,9 +619,9 @@ Rooms persist as long as the host is connected. If the host disconnects, a confi
 | CI/CD | GitHub Actions | Automated build, test, WASM compilation, and release packaging |
 | Testing | cargo test + wasm-bindgen-test | Native tests for game logic, WASM tests for browser integration |
 
-### 9.1 Bevy Decision
+### 9.1 Custom WebGL2 Renderer
 
-Bevy 0.18 was selected as the game framework. WASM bundle size is managed through careful feature selection (removing `multi_threaded`, unused rendering backends) and release profile optimization (`opt-level = "z"`, LTO, strip). Game crates are behind feature flags allowing selective compilation to further reduce bundle size when not all games are needed.
+The client uses a custom WebGL2 renderer built directly on `web-sys` bindings instead of a game framework. This provides minimal WASM bundle size, full control over the rendering pipeline, and eliminates framework dependency churn. The renderer uses 4 GLSL shader programs (unlit, gradient, ripple, glow) with a flat scene graph (`Vec<RenderObject>`) that is rebuilt each frame. UI elements (lobby, HUD, overlay, settings) are implemented as HTML/CSS/JS and communicate with the Rust WASM module via a JS bridge. Game crates are behind feature flags allowing selective compilation to further reduce bundle size when not all games are needed.
 
 ---
 
@@ -670,21 +670,30 @@ breakpoint/
 │   │           ├── mod.rs
 │   │           └── github.rs          # GitHub webhook → Breakpoint event
 │   │
-│   ├── breakpoint-client/              # WASM browser client (Bevy)
+│   ├── breakpoint-client/              # WASM browser client (WebGL2)
 │   │   └── src/
 │   │       ├── lib.rs                 # WASM entry point (wasm-bindgen)
-│   │       ├── app.rs                 # Application state machine
-│   │       ├── lobby.rs               # Room join/create UI
-│   │       ├── game/                  # Game rendering per game type
-│   │       │   └── mod.rs             # Feature-gated game modules
+│   │       ├── app.rs                 # Application state machine + rAF loop
+│   │       ├── renderer.rs            # WebGL2 renderer (4 shader programs)
+│   │       ├── scene.rs               # Flat scene graph (Vec<RenderObject>)
+│   │       ├── bridge.rs              # JS↔Rust UI bridge
+│   │       ├── camera_gl.rs           # Perspective camera with game modes
+│   │       ├── game/                  # Game rendering + input per game type
+│   │       │   ├── mod.rs             # Feature-gated game modules + registry
+│   │       │   ├── golf_render.rs     # Golf scene rendering + aim indicator
+│   │       │   ├── golf_input.rs      # Golf input (aim + shoot)
+│   │       │   ├── platformer_render.rs # Platformer tiles + hazard rendering
+│   │       │   ├── platformer_input.rs  # Platformer movement input
+│   │       │   ├── lasertag_render.rs   # Arena, walls, powerups rendering
+│   │       │   └── lasertag_input.rs    # LaserTag movement + fire input
 │   │       ├── net_client.rs          # WSS client connection
-│   │       ├── overlay.rs             # Alert overlay (ticker, toasts, dashboard, claim)
-│   │       ├── settings.rs            # Settings panel (audio + overlay prefs)
+│   │       ├── overlay.rs             # Alert overlay state management
 │   │       ├── audio.rs               # Sound effects with per-priority volume
-│   │       ├── camera.rs              # Bevy camera setup
-│   │       ├── editor.rs              # Course editor for mini-golf
-│   │       ├── between_rounds.rs      # Between-rounds scoreboard
-│   │       └── game_over.rs           # Game-over summary screen
+│   │       ├── input.rs               # Keyboard + mouse input tracking
+│   │       ├── theme.rs               # Theming system (loaded from theme.json)
+│   │       ├── storage.rs             # localStorage wrapper
+│   │       ├── effects/               # Screen shake, visual effects
+│   │       └── shaders_gl/            # GLSL vertex + fragment shaders
 │   │
 │   ├── breakpoint-relay/               # Stateless WS relay for NAT traversal
 │   │   └── src/
@@ -723,9 +732,11 @@ breakpoint/
 │               ├── poller.rs          # GitHub Actions API polling + event emission
 │               └── agent_detect.rs    # Bot/agent identification (glob patterns)
 │
-├── web/                                # Static assets
-│   ├── index.html                      # HTML shell for WASM client
-│   ├── style.css                       # Base styles
+├── web/                                # Static assets + UI layer
+│   ├── index.html                      # HTML shell with lobby/HUD/overlay markup
+│   ├── style.css                       # Full UI styles (lobby, HUD, overlays)
+│   ├── ui.js                           # JavaScript UI logic (Rust bridge consumer)
+│   ├── theme.json                      # Client theme configuration
 │   └── assets/                         # Sprites, sounds
 │
 ├── docker/
@@ -798,7 +809,7 @@ pub struct GameConfig {
 }
 ```
 
-This trait is implemented by all three game crates (golf, platformer, laser tag) and verified by 45 combined game tests. Rendering is handled by Bevy systems in the client crate rather than a `render()` method on the trait, keeping game logic decoupled from the rendering framework. The `custom` field in `GameConfig` allows each game to expose its own settings without polluting the core configuration. See [docs/GAME-DEVELOPMENT.md](docs/GAME-DEVELOPMENT.md) for a step-by-step guide to adding new games.
+This trait is implemented by all three game crates (golf, platformer, laser tag) and verified by 45 combined game tests. Rendering is handled by dedicated `*_render.rs` modules in the client crate (one per game) rather than a `render()` method on the trait, keeping game logic decoupled from the rendering framework. The `custom` field in `GameConfig` allows each game to expose its own settings without polluting the core configuration. See [docs/GAME-DEVELOPMENT.md](docs/GAME-DEVELOPMENT.md) for a step-by-step guide to adding new games.
 
 ---
 
@@ -912,7 +923,7 @@ This is negligible on any network. Even the most network-intensive game (laser t
 
 The platform is feature-complete. Testing, validation, and production hardening work:
 
-- [x] End-to-end integration testing (467 workspace tests + 12 Playwright browser spec files covering Chromium + Firefox at DPR=1 and DPR=2)
+- [x] End-to-end integration testing (484 workspace tests + 12 Playwright browser spec files covering Chromium + Firefox at DPR=1 and DPR=2)
 - [x] WASM build verification (CI runs `wasm-pack build --dev` on every push)
 - [x] Docker image build verification (CI builds production Docker image)
 - [x] Cross-browser compatibility testing (Playwright specs run Chromium + Firefox)
@@ -997,4 +1008,4 @@ Example adapters are provided in Python, Node.js, and shell, plus a ready-to-use
 
 ---
 
-*This document is a living specification. Phases 1–4 are feature-complete with 221 passing tests across 8 workspace crates, plus 10 Playwright browser spec files. Phase 5 (testing, validation, production hardening) is in progress.*
+*This document is a living specification. Phases 1–4 are feature-complete with 484 passing tests across 8 workspace crates, plus 12 Playwright browser spec files. Phase 5 (testing, validation, production hardening) is in progress.*

@@ -103,7 +103,7 @@ breakpoint/
 ├── crates/
 │   ├── breakpoint-core/              # Shared types, traits, event schema
 │   ├── breakpoint-server/            # Axum server (game authority)
-│   ├── breakpoint-client/            # WASM browser client (Bevy)
+│   ├── breakpoint-client/            # WASM browser client (WebGL2)
 │   ├── breakpoint-relay/             # Stateless WS relay for NAT traversal
 │   ├── games/
 │   │   ├── breakpoint-golf/          # Simultaneous mini-golf
@@ -139,7 +139,7 @@ docker compose --profile ci run --rm rust-ci cargo test --workspace
 | Layer | Technology |
 |-------|-----------|
 | Language | Rust (Edition 2024) |
-| Client | WebAssembly (wasm-bindgen, web-sys, Bevy 0.18) |
+| Client | WebAssembly (wasm-bindgen, web-sys, custom WebGL2 renderer) |
 | Server | Axum 0.8, Tokio |
 | Serialization | MessagePack (game state), JSON (API/events) |
 | CI/CD | GitHub Actions (self-hosted runner, Docker containers) |

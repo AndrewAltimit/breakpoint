@@ -189,7 +189,10 @@ default = ["golf", "platformer", "lasertag", "mygame"]
 mygame = ["dep:breakpoint-mygame"]
 ```
 
-Then add the game module in the client's `game/` directory and register it in the game selection system.
+Then add the game rendering and input modules in the client's `game/` directory:
+- `game/mygame_render.rs` — Build the 3D scene using `Scene::add()` with mesh types (Cuboid, Sphere, Cylinder, Plane) and materials (Unlit, Gradient, Ripple, Glow)
+- `game/mygame_input.rs` — Process keyboard/mouse input and send player inputs to the server
+- Register the game in `game/mod.rs` (feature-gated) and add the render/input calls in `app.rs`
 
 ## Key Concepts
 
@@ -244,3 +247,5 @@ See `crates/games/breakpoint-golf/` for a complete implementation. Key patterns:
 - Aim angle and power serialized as player input
 - Round completes when all players sink their ball or time expires
 - Scoring based on stroke count with bonuses for first-to-sink
+
+Rendering is in `crates/breakpoint-client/src/game/golf_render.rs` — builds a 3D scene each frame using `Scene::add()` with primitive meshes (Plane for ground, Cuboid for walls, Cylinder for bumpers/flag, Sphere for balls). Input handling is in `golf_input.rs`.

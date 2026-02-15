@@ -138,8 +138,9 @@ pub fn spawn_idle_room_cleanup(state: AppState) {
 }
 
 /// Middleware that sets Cache-Control headers based on response content type.
-/// `.wasm`, `.js`, `.css` files get long cache (1 year, immutable).
-/// Other static files get a short cache (5 minutes).
+/// `.wasm`, `.js`, `.css` files use `no-cache` so the browser always revalidates
+/// against `Last-Modified` but can still use its cached copy when unchanged.
+/// Image assets (`.png`, `.svg`) get a longer cache since they change infrequently.
 async fn cache_control_middleware(
     request: axum::extract::Request,
     next: middleware::Next,
@@ -152,14 +153,15 @@ async fn cache_control_middleware(
         return response;
     }
 
-    let cache_value = if path.ends_with(".wasm")
+    let cache_value = if path.ends_with(".png") || path.ends_with(".svg") {
+        // Image assets: cache for 1 day
+        HeaderValue::from_static("public, max-age=86400")
+    } else if path.ends_with(".wasm")
         || path.ends_with(".js")
         || path.ends_with(".css")
-        || path.ends_with(".png")
-        || path.ends_with(".svg")
     {
-        // Immutable assets: cache for 1 year
-        HeaderValue::from_static("public, max-age=31536000, immutable")
+        // Code assets: always revalidate (uses Last-Modified/ETag)
+        HeaderValue::from_static("no-cache")
     } else {
         // HTML and other files: short cache
         HeaderValue::from_static("public, max-age=300")
