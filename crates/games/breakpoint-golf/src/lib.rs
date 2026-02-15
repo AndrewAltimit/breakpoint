@@ -13,7 +13,7 @@ use breakpoint_core::game_trait::{
 };
 use breakpoint_core::player::Player;
 
-use course::{Course, all_courses};
+use course::{Course, all_courses, load_courses_from_dir};
 use physics::{BallState, GolfConfig};
 use scoring::calculate_score_with_config;
 
@@ -55,12 +55,20 @@ pub struct MiniGolf {
 
 impl MiniGolf {
     pub fn new() -> Self {
-        Self::with_config(GolfConfig::load())
+        let config = GolfConfig::load();
+        let courses_dir = std::env::var("BREAKPOINT_COURSES_DIR")
+            .unwrap_or_else(|_| "config/courses".to_string());
+        let courses = load_courses_from_dir(&courses_dir);
+        Self::with_config_and_courses(config, courses)
     }
 
-    /// Create a MiniGolf instance with explicit configuration.
+    /// Create a MiniGolf instance with explicit configuration (uses hardcoded courses).
     pub fn with_config(game_config: GolfConfig) -> Self {
-        let courses = all_courses();
+        Self::with_config_and_courses(game_config, all_courses())
+    }
+
+    /// Create a MiniGolf instance with explicit configuration and courses.
+    pub fn with_config_and_courses(game_config: GolfConfig, courses: Vec<Course>) -> Self {
         Self {
             course_index: 0,
             state: GolfState {

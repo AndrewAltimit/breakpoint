@@ -488,6 +488,50 @@ fn fortress() -> Course {
     }
 }
 
+/// Load courses from JSON files in a directory.
+///
+/// Files are sorted by name (use `01_`, `02_` prefixes for ordering).
+/// Falls back to the hardcoded `all_courses()` if the directory is missing,
+/// empty, or contains unparseable files.
+pub fn load_courses_from_dir(dir: &str) -> Vec<Course> {
+    let path = std::path::Path::new(dir);
+    let entries = match std::fs::read_dir(path) {
+        Ok(e) => e,
+        Err(_) => return all_courses(),
+    };
+
+    let mut files: Vec<std::path::PathBuf> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|ext| ext == "json"))
+        .collect();
+
+    if files.is_empty() {
+        return all_courses();
+    }
+
+    files.sort();
+
+    let mut courses = Vec::with_capacity(files.len());
+    for file in &files {
+        match std::fs::read_to_string(file) {
+            Ok(content) => match serde_json::from_str::<Course>(&content) {
+                Ok(course) => courses.push(course),
+                Err(e) => {
+                    tracing::warn!("Failed to parse {}: {e}, falling back to defaults", file.display());
+                    return all_courses();
+                }
+            },
+            Err(e) => {
+                tracing::warn!("Failed to read {}: {e}, falling back to defaults", file.display());
+                return all_courses();
+            }
+        }
+    }
+
+    courses
+}
+
 /// Returns all 9 courses in play order (index 0 = hole 1, etc.).
 pub fn all_courses() -> Vec<Course> {
     vec![
@@ -576,5 +620,51 @@ mod tests {
             courses.len(),
             "All courses should have unique names"
         );
+    }
+
+    #[test]
+    fn json_roundtrip_preserves_courses() {
+        for course in all_courses() {
+            let json = serde_json::to_string(&course).unwrap();
+            let loaded: Course = serde_json::from_str(&json).unwrap();
+            assert_eq!(course.name, loaded.name);
+            assert_eq!(course.par, loaded.par);
+            assert_eq!(course.walls.len(), loaded.walls.len());
+            assert_eq!(course.bumpers.len(), loaded.bumpers.len());
+        }
+    }
+
+    #[test]
+    fn load_from_missing_dir_falls_back() {
+        let courses = load_courses_from_dir("/nonexistent/path");
+        assert_eq!(courses.len(), 9, "Should fall back to hardcoded courses");
+    }
+
+    #[test]
+    fn load_from_empty_dir_falls_back() {
+        let dir = std::env::temp_dir().join("breakpoint_test_empty_courses");
+        let _ = std::fs::create_dir_all(&dir);
+        let courses = load_courses_from_dir(dir.to_str().unwrap());
+        assert_eq!(courses.len(), 9, "Should fall back to hardcoded courses");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_from_valid_dir() {
+        let dir = std::env::temp_dir().join("breakpoint_test_valid_courses");
+        let _ = std::fs::create_dir_all(&dir);
+
+        // Write two test courses
+        for (i, course) in all_courses().iter().take(2).enumerate() {
+            let json = serde_json::to_string(course).unwrap();
+            std::fs::write(dir.join(format!("{:02}.json", i + 1)), json).unwrap();
+        }
+
+        let courses = load_courses_from_dir(dir.to_str().unwrap());
+        assert_eq!(courses.len(), 2);
+        assert_eq!(courses[0].name, "Starter Course");
+        assert_eq!(courses[1].name, "Gentle Straight");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
