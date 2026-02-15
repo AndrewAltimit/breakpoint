@@ -213,7 +213,10 @@ jobs:
           docker compose --profile ci run --rm rust-ci bash -c "
             set -e
             wasm-pack build crates/breakpoint-client --target web --out-dir /app/release-artifacts/wasm-client
-            echo 'Built WASM client bundle'
+            wasm-opt -Oz --enable-bulk-memory \
+              /app/release-artifacts/wasm-client/breakpoint_client_bg.wasm \
+              -o /app/release-artifacts/wasm-client/breakpoint_client_bg.wasm
+            echo 'Built and optimized WASM client bundle'
           "
 
       - name: List built artifacts

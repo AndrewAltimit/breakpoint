@@ -1,5 +1,8 @@
+use bevy::asset::RenderAssetUsages;
 use bevy::ecs::system::NonSend;
+use bevy::mesh::Indices;
 use bevy::prelude::*;
+use bevy::render::render_resource::PrimitiveTopology;
 
 use breakpoint_core::game_trait::{GameId, PlayerId};
 use breakpoint_platformer::course_gen::Tile;
@@ -97,10 +100,12 @@ fn setup_platformer(
     // Render course tiles as colored cubes
     let solid_mat = materials.add(StandardMaterial {
         base_color: rgb(&theme.platformer.solid_tile),
+        unlit: true,
         ..default()
     });
     let platform_mat = materials.add(StandardMaterial {
         base_color: rgb(&theme.platformer.grass_tile),
+        unlit: true,
         ..default()
     });
     let hazard_mat = materials.add(StandardMaterial {
@@ -119,34 +124,48 @@ fn setup_platformer(
         ..default()
     });
 
-    let tile_mesh = meshes.add(Cuboid::new(TILE_SIZE, TILE_SIZE, TILE_SIZE));
+    // Collect tile positions by material type for batched mesh construction.
+    // This reduces ~800 individual draw calls down to ~5 (one per material).
+    let mut solid_tiles: Vec<[f32; 3]> = Vec::new();
+    let mut platform_tiles: Vec<[f32; 3]> = Vec::new();
+    let mut hazard_tiles: Vec<[f32; 3]> = Vec::new();
+    let mut checkpoint_tiles: Vec<[f32; 3]> = Vec::new();
+    let mut finish_tiles: Vec<[f32; 3]> = Vec::new();
 
     for y in 0..course.height {
         for x in 0..course.width {
             let tile = course.get_tile(x as i32, y as i32);
-            let mat = match tile {
-                Tile::Solid => Some(solid_mat.clone()),
-                Tile::Platform => Some(platform_mat.clone()),
-                Tile::Hazard => Some(hazard_mat.clone()),
-                Tile::Checkpoint => Some(checkpoint_mat.clone()),
-                Tile::Finish => Some(finish_mat.clone()),
-                _ => None,
-            };
-
-            if let Some(mat) = mat {
-                // Platformer uses XY plane for rendering (side view),
-                // map tile grid to 3D: tile_x -> X, tile_y -> Y, depth -> Z=0
-                let wx = x as f32 * TILE_SIZE + TILE_SIZE / 2.0;
-                let wy = y as f32 * TILE_SIZE + TILE_SIZE / 2.0;
-
-                commands.spawn((
-                    GameEntity,
-                    CourseTileEntity,
-                    Mesh3d(tile_mesh.clone()),
-                    MeshMaterial3d(mat),
-                    Transform::from_xyz(wx, wy, 0.0),
-                ));
+            let wx = x as f32 * TILE_SIZE + TILE_SIZE / 2.0;
+            let wy = y as f32 * TILE_SIZE + TILE_SIZE / 2.0;
+            let pos = [wx, wy, 0.0];
+            match tile {
+                Tile::Solid => solid_tiles.push(pos),
+                Tile::Platform => platform_tiles.push(pos),
+                Tile::Hazard => hazard_tiles.push(pos),
+                Tile::Checkpoint => checkpoint_tiles.push(pos),
+                Tile::Finish => finish_tiles.push(pos),
+                _ => {},
             }
+        }
+    }
+
+    let batches: [(&Vec<[f32; 3]>, &Handle<StandardMaterial>); 5] = [
+        (&solid_tiles, &solid_mat),
+        (&platform_tiles, &platform_mat),
+        (&hazard_tiles, &hazard_mat),
+        (&checkpoint_tiles, &checkpoint_mat),
+        (&finish_tiles, &finish_mat),
+    ];
+
+    for (positions, mat) in &batches {
+        if !positions.is_empty() {
+            let mesh = build_batched_cuboid_mesh(positions, TILE_SIZE);
+            commands.spawn((
+                GameEntity,
+                CourseTileEntity,
+                Mesh3d(meshes.add(mesh)),
+                MeshMaterial3d((*mat).clone()),
+            ));
         }
     }
 
@@ -327,6 +346,102 @@ fn platformer_hud_system(
             **text = format!("X: {:.0}", player.x);
         }
     }
+}
+
+/// Build a single merged mesh from multiple cuboid positions.
+/// Each cuboid is a full 6-face box centered at the given position.
+fn build_batched_cuboid_mesh(positions: &[[f32; 3]], size: f32) -> Mesh {
+    let half = size / 2.0;
+    let cap_v = positions.len() * 24;
+    let cap_i = positions.len() * 36;
+    let mut verts: Vec<[f32; 3]> = Vec::with_capacity(cap_v);
+    let mut norms: Vec<[f32; 3]> = Vec::with_capacity(cap_v);
+    let mut uvs: Vec<[f32; 2]> = Vec::with_capacity(cap_v);
+    let mut idxs: Vec<u32> = Vec::with_capacity(cap_i);
+
+    for &[cx, cy, cz] in positions {
+        // Each face: 4 vertices + 6 indices (2 triangles)
+        let faces: [([f32; 3], [[f32; 3]; 4]); 6] = [
+            // +Z
+            (
+                [0.0, 0.0, 1.0],
+                [
+                    [cx - half, cy - half, cz + half],
+                    [cx + half, cy - half, cz + half],
+                    [cx + half, cy + half, cz + half],
+                    [cx - half, cy + half, cz + half],
+                ],
+            ),
+            // -Z
+            (
+                [0.0, 0.0, -1.0],
+                [
+                    [cx + half, cy - half, cz - half],
+                    [cx - half, cy - half, cz - half],
+                    [cx - half, cy + half, cz - half],
+                    [cx + half, cy + half, cz - half],
+                ],
+            ),
+            // +Y
+            (
+                [0.0, 1.0, 0.0],
+                [
+                    [cx - half, cy + half, cz + half],
+                    [cx + half, cy + half, cz + half],
+                    [cx + half, cy + half, cz - half],
+                    [cx - half, cy + half, cz - half],
+                ],
+            ),
+            // -Y
+            (
+                [0.0, -1.0, 0.0],
+                [
+                    [cx - half, cy - half, cz - half],
+                    [cx + half, cy - half, cz - half],
+                    [cx + half, cy - half, cz + half],
+                    [cx - half, cy - half, cz + half],
+                ],
+            ),
+            // +X
+            (
+                [1.0, 0.0, 0.0],
+                [
+                    [cx + half, cy - half, cz + half],
+                    [cx + half, cy - half, cz - half],
+                    [cx + half, cy + half, cz - half],
+                    [cx + half, cy + half, cz + half],
+                ],
+            ),
+            // -X
+            (
+                [-1.0, 0.0, 0.0],
+                [
+                    [cx - half, cy - half, cz - half],
+                    [cx - half, cy - half, cz + half],
+                    [cx - half, cy + half, cz + half],
+                    [cx - half, cy + half, cz - half],
+                ],
+            ),
+        ];
+
+        for (normal, face_verts) in &faces {
+            let b = verts.len() as u32;
+            verts.extend_from_slice(face_verts);
+            norms.extend_from_slice(&[*normal; 4]);
+            uvs.extend_from_slice(&[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
+            idxs.extend_from_slice(&[b, b + 1, b + 2, b, b + 2, b + 3]);
+        }
+    }
+
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, verts);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, norms);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(Indices::U32(idxs));
+    mesh
 }
 
 fn cleanup_platformer(mut commands: Commands) {

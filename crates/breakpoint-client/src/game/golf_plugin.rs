@@ -186,6 +186,7 @@ fn setup_golf(
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: rgb(&theme.golf.ground_color),
             perceptual_roughness: 1.0,
+            unlit: true,
             ..default()
         })),
         Transform::from_xyz(course_data.width / 2.0, -0.01, course_data.depth / 2.0),
@@ -211,6 +212,7 @@ fn setup_golf(
     let border_mat = materials.add(StandardMaterial {
         base_color: rgb(&theme.golf.dirt_color),
         perceptual_roughness: 0.8,
+        unlit: true,
         ..default()
     });
     // Bottom border
@@ -278,6 +280,7 @@ fn setup_golf(
     let wall_mat = materials.add(StandardMaterial {
         base_color: rgb(&theme.golf.wall_color),
         perceptual_roughness: 0.85,
+        unlit: true,
         ..default()
     });
     for wall in &course_data.walls {
@@ -320,6 +323,7 @@ fn setup_golf(
         Mesh3d(meshes.add(Cylinder::new(HOLE_RADIUS, 0.05))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: rgb(&theme.golf.hole_color),
+            unlit: true,
             ..default()
         })),
         Transform::from_xyz(

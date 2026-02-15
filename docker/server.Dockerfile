@@ -12,6 +12,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libssl-dev \
+    binaryen \
     && rm -rf /var/lib/apt/lists/*
 
 # Install wasm-pack for WASM client build
@@ -69,7 +70,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # Build WASM client
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \
-    wasm-pack build crates/breakpoint-client --target web --out-dir /build/wasm-pkg
+    wasm-pack build crates/breakpoint-client --target web --out-dir /build/wasm-pkg && \
+    wasm-opt -Oz --enable-bulk-memory /build/wasm-pkg/breakpoint_client_bg.wasm \
+      -o /build/wasm-pkg/breakpoint_client_bg.wasm
 
 # ── Runtime ──────────────────────────────────────────────────────
 FROM debian:bookworm-slim AS runtime

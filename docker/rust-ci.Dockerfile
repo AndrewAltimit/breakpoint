@@ -11,6 +11,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     pkg-config \
     git \
     libssl-dev \
+    binaryen \
     && rm -rf /var/lib/apt/lists/*
 
 # Install toolchain components

@@ -77,15 +77,28 @@ struct LaserTagScoreText;
 #[derive(Component)]
 struct LaserTagTimerText;
 
-/// Marker for ephemeral laser trail mesh entities.
+/// Marker for laser trail pool entities.
 #[derive(Component)]
 struct LaserTrailEntity;
+
+/// Index into the pre-allocated laser trail pool.
+#[derive(Component)]
+struct TrailPoolSlot(usize);
+
+/// Pre-spawned pool of laser trail entities to avoid per-frame entity churn.
+#[derive(Resource)]
+struct LaserTrailPool {
+    materials: Vec<Handle<GlowMaterial>>,
+}
+
+const MAX_TRAIL_SEGMENTS: usize = 64;
 
 #[allow(clippy::too_many_arguments)]
 fn setup_lasertag(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut glow_materials: ResMut<Assets<GlowMaterial>>,
     lobby: Res<crate::lobby::LobbyState>,
     network_role: Res<NetworkRole>,
     active_game: Res<ActiveGame>,
@@ -106,6 +119,7 @@ fn setup_lasertag(
         ))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: rgb(&theme.lasertag.arena_floor),
+            unlit: true,
             ..default()
         })),
         Transform::from_xyz(arena.width / 2.0, 0.0, arena.depth / 2.0),
@@ -114,6 +128,7 @@ fn setup_lasertag(
     // Render walls
     let solid_wall_mat = materials.add(StandardMaterial {
         base_color: rgb(&theme.lasertag.wall_solid),
+        unlit: true,
         ..default()
     });
     let reflective_wall_mat = materials.add(StandardMaterial {
@@ -230,6 +245,30 @@ fn setup_lasertag(
             Transform::from_xyz(px, 0.5, pz),
         ));
     }
+
+    // Pre-spawn laser trail entity pool (avoids per-frame entity churn)
+    let trail_mesh = meshes.add(Cuboid::new(1.0, 0.08, 0.06));
+    let mut trail_pool_materials = Vec::with_capacity(MAX_TRAIL_SEGMENTS);
+    for i in 0..MAX_TRAIL_SEGMENTS {
+        let mat = glow_materials.add(GlowMaterial::new(
+            LinearRgba::new(0.3, 0.9, 2.0, 1.0),
+            1.5,
+            0.0,
+        ));
+        trail_pool_materials.push(mat.clone());
+        commands.spawn((
+            GameEntity,
+            LaserTrailEntity,
+            TrailPoolSlot(i),
+            Mesh3d(trail_mesh.clone()),
+            MeshMaterial3d(mat),
+            Transform::default(),
+            Visibility::Hidden,
+        ));
+    }
+    commands.insert_resource(LaserTrailPool {
+        materials: trail_pool_materials,
+    });
 
     // HUD
     spawn_hud_text(
@@ -459,59 +498,75 @@ fn lasertag_hud_system(
     }
 }
 
-/// Render laser trail segments from game state as glowing beams.
-/// Trails are ephemeral (max 0.3s) so we despawn+respawn each frame.
+/// Render laser trail segments by updating pre-spawned pool entities.
+/// Uses transform scaling + material alpha updates instead of despawn/respawn.
 fn laser_trail_render_system(
-    mut commands: Commands,
     active_game: Res<ActiveGame>,
-    trail_query: Query<Entity, With<LaserTrailEntity>>,
-    mut meshes: ResMut<Assets<Mesh>>,
+    pool: Option<Res<LaserTrailPool>>,
+    mut trail_query: Query<
+        (&TrailPoolSlot, &mut Transform, &mut Visibility),
+        With<LaserTrailEntity>,
+    >,
     mut glow_materials: ResMut<Assets<GlowMaterial>>,
 ) {
-    // Despawn previous frame's trail entities
-    for entity in &trail_query {
-        commands.entity(entity).despawn();
-    }
-
-    let state: Option<LaserTagState> = read_game_state(&active_game);
-    let Some(state) = state else {
+    let Some(pool) = pool else {
         return;
     };
 
-    for trail in &state.laser_trails {
-        let alpha = (1.0 - trail.age / 0.3).clamp(0.0, 1.0);
-        if alpha < 0.01 {
-            continue;
-        }
+    let state: Option<LaserTagState> = read_game_state(&active_game);
 
-        for &(sx, sz, ex, ez) in &trail.segments {
+    // Collect active segments
+    let mut segments: Vec<(f32, f32, f32, f32, f32)> = Vec::new();
+    if let Some(state) = &state {
+        for trail in &state.laser_trails {
+            let alpha = (1.0 - trail.age / 0.3).clamp(0.0, 1.0);
+            if alpha < 0.01 {
+                continue;
+            }
+            for &(sx, sz, ex, ez) in &trail.segments {
+                let dx = ex - sx;
+                let dz = ez - sz;
+                let length = (dx * dx + dz * dz).sqrt();
+                if length < 0.01 {
+                    continue;
+                }
+                segments.push((sx, sz, ex, ez, alpha));
+                if segments.len() >= MAX_TRAIL_SEGMENTS {
+                    break;
+                }
+            }
+            if segments.len() >= MAX_TRAIL_SEGMENTS {
+                break;
+            }
+        }
+    }
+
+    // Update pool entities: show active segments, hide the rest
+    for (slot, mut transform, mut visibility) in &mut trail_query {
+        if slot.0 < segments.len() {
+            let (sx, sz, ex, ez, alpha) = segments[slot.0];
             let dx = ex - sx;
             let dz = ez - sz;
             let length = (dx * dx + dz * dz).sqrt();
-            if length < 0.01 {
-                continue;
-            }
             let cx = (sx + ex) / 2.0;
             let cz = (sz + ez) / 2.0;
             let angle = dz.atan2(dx);
-            let beam_height = 0.08;
-            let beam_width = 0.06;
 
-            commands.spawn((
-                GameEntity,
-                LaserTrailEntity,
-                Mesh3d(meshes.add(Cuboid::new(length, beam_height, beam_width))),
-                MeshMaterial3d(glow_materials.add(GlowMaterial::new(
-                    LinearRgba::new(0.3, 0.9, 2.0, 1.0),
-                    1.5,
-                    alpha,
-                ))),
-                Transform::from_xyz(cx, 1.0, cz).with_rotation(Quat::from_rotation_y(-angle)),
-            ));
+            *transform = Transform::from_xyz(cx, 1.0, cz)
+                .with_rotation(Quat::from_rotation_y(-angle))
+                .with_scale(Vec3::new(length, 1.0, 1.0));
+            *visibility = Visibility::Visible;
+
+            if let Some(mat) = glow_materials.get_mut(&pool.materials[slot.0]) {
+                mat.params.y = alpha;
+            }
+        } else {
+            *visibility = Visibility::Hidden;
         }
     }
 }
 
 fn cleanup_lasertag(mut commands: Commands) {
     commands.remove_resource::<LaserTagLocalInput>();
+    commands.remove_resource::<LaserTrailPool>();
 }
