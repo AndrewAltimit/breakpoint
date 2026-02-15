@@ -56,5 +56,8 @@ strip = true
 [profile.release.package.breakpoint-client]
 opt-level = "z"
 
+[workspace.metadata.patch]
+crates = ["winit"]
+
 [patch.crates-io]
-winit = { path = "vendor/winit-0.30.12" }
+winit = { path = "target/patch/winit-0.30.12" }

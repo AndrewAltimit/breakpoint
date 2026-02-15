@@ -50,6 +50,10 @@ jobs:
           echo "USER_ID=$(id -u)" >> $GITHUB_ENV
           echo "GROUP_ID=$(id -g)" >> $GITHUB_ENV
 
+      # ── Apply dependency patches ─────────────────────────────────
+      - name: Apply dependency patches
+        run: docker compose --profile ci run --rm rust-ci cargo patch-crate
+
       # ── Formatting ──────────────────────────────────────────────
       - name: Format check
         run: docker compose --profile ci run --rm rust-ci cargo fmt --all -- --check
@@ -163,6 +167,9 @@ jobs:
 
       - name: Create output directory
         run: mkdir -p release-artifacts
+
+      - name: Apply dependency patches
+        run: docker compose --profile ci run --rm rust-ci cargo patch-crate
 
       - name: Build server + relay binaries (native)
         if: '!matrix.cross'

@@ -63,6 +63,10 @@ docker compose --profile ci run --rm rust-ci cargo test --workspace
 docker build -f docker/server.Dockerfile -t breakpoint .
 ```
 
+## Dependency Patching
+
+Winit 0.30.12 is patched at build time via [patch-crate](https://crates.io/crates/patch-crate). The patch file lives in `patches/winit+0.30.12.patch` and fixes a DPR scaling bug in the WASM ResizeObserver. Run `cargo patch-crate` before any build command to apply patches (CI workflows do this automatically).
+
 ## Architecture
 
 **Workspace layout** — Eight crates in `crates/`:
@@ -106,7 +110,7 @@ Three GitHub Actions workflows, all on a self-hosted runner using Docker contain
 
 ## Docker
 
-- `docker/rust-ci.Dockerfile` — Rust stable + wasm-pack + cargo-deny. Used by `docker compose --profile ci`.
+- `docker/rust-ci.Dockerfile` — Rust stable + wasm-pack + cargo-deny + patch-crate. Used by `docker compose --profile ci`.
 - `docker/server.Dockerfile` — Multi-stage production image. Builder compiles server binary + WASM client. Runtime is `debian:bookworm-slim` with just the binary, web assets, and WASM bundle. Exposes port 8080.
 - `docker-compose.yml` — `rust-ci` service for CI, plus 9 MCP services (code-quality, gemini, codex, etc.) under `--profile services` for interactive agent sessions. MCP images are pre-built from template-repo, not buildable from this repo.
 - `examples/docker-compose.yml` — Production deployment compose file.

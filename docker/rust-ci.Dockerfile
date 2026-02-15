@@ -24,6 +24,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo install wasm-pack --locked 2>/dev/null || true
 
+# Install patch-crate for dependency patching
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    cargo install patch-crate --locked 2>/dev/null || true
+
 # Non-root user (overridden by docker-compose USER_ID/GROUP_ID)
 RUN useradd -m -u 1000 ciuser \
     && mkdir -p /tmp/cargo && chmod 1777 /tmp/cargo
