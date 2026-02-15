@@ -1,0 +1,25 @@
+# Golf game configuration
+# All values shown are the compiled-in defaults.
+# Remove or comment out any value to use its default.
+
+[physics]
+ball_radius = 0.3
+hole_radius = 0.6
+friction = 0.95
+max_power = 25.0
+min_velocity = 0.1
+hole_sink_speed_ratio = 0.5
+wall_bounce_restitution = 0.9
+substeps = 4
+
+[scoring]
+first_sink_bonus = 3
+under_par_bonus_per_stroke = 2
+at_par_score = 1
+over_par_score = 0
+dnf_penalty = -1
+
+# Round time limit in seconds
+round_duration_secs = 90.0
+# Server tick rate (Hz)
+tick_rate_hz = 10.0

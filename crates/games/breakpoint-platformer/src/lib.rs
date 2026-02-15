@@ -15,7 +15,7 @@ use breakpoint_core::game_trait::{
 use breakpoint_core::player::Player;
 
 use course_gen::{Course, generate_course};
-use physics::{PlatformerInput, PlatformerPlayerState, SUBSTEPS, tick_player};
+use physics::{PlatformerConfig, PlatformerInput, PlatformerPlayerState, SUBSTEPS, tick_player};
 use powerups::{ActivePowerUp, PowerUpKind, SpawnedPowerUp};
 
 /// Serializable game state for network broadcast.
@@ -51,10 +51,18 @@ pub struct PlatformRacer {
     finished_set: HashSet<PlayerId>,
     /// O(1) lookup companion for `state.elimination_order`.
     eliminated_set: HashSet<PlayerId>,
+    /// Data-driven game configuration (physics, timing).
+    game_config: PlatformerConfig,
 }
 
 impl PlatformRacer {
     pub fn new() -> Self {
+        Self::with_config(PlatformerConfig::load())
+    }
+
+    /// Create a PlatformRacer instance with explicit configuration.
+    pub fn with_config(game_config: PlatformerConfig) -> Self {
+        let round_duration = game_config.round_duration_secs;
         Self {
             course: generate_course(42),
             state: PlatformerState {
@@ -71,9 +79,10 @@ impl PlatformRacer {
             player_ids: Vec::new(),
             pending_inputs: HashMap::new(),
             paused: false,
-            round_duration: 120.0,
+            round_duration,
             finished_set: HashSet::new(),
             eliminated_set: HashSet::new(),
+            game_config,
         }
     }
 
@@ -84,11 +93,16 @@ impl PlatformRacer {
     pub fn course(&self) -> &Course {
         &self.course
     }
+
+    /// Accessor for the game configuration.
+    pub fn config(&self) -> &PlatformerConfig {
+        &self.game_config
+    }
 }
 
 impl Default for PlatformRacer {
     fn default() -> Self {
-        Self::new()
+        Self::with_config(PlatformerConfig::default())
     }
 }
 

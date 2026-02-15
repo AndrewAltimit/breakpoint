@@ -1530,6 +1530,7 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde_json",
+ "toml",
  "tracing",
 ]
 
@@ -1543,6 +1544,7 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde_json",
+ "toml",
  "tracing",
 ]
 

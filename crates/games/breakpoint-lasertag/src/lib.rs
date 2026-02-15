@@ -17,7 +17,8 @@ use breakpoint_core::player::Player;
 use arena::{Arena, ArenaSize, generate_arena};
 use powerups::{ActiveLaserPowerUp, LaserPowerUpKind, SpawnedLaserPowerUp};
 use projectile::{
-    FIRE_COOLDOWN, PLAYER_RADIUS, RAPIDFIRE_COOLDOWN_MULT, STUN_DURATION, raycast_laser,
+    FIRE_COOLDOWN, LaserTagConfig, PLAYER_RADIUS, RAPIDFIRE_COOLDOWN_MULT, STUN_DURATION,
+    raycast_laser,
 };
 
 /// Serializable game state for network broadcast.
@@ -106,10 +107,18 @@ pub struct LaserTagArena {
     pending_inputs: HashMap<PlayerId, LaserTagInput>,
     paused: bool,
     round_duration: f32,
+    /// Data-driven game configuration (physics, timing).
+    game_config: LaserTagConfig,
 }
 
 impl LaserTagArena {
     pub fn new() -> Self {
+        Self::with_config(LaserTagConfig::load())
+    }
+
+    /// Create a LaserTagArena instance with explicit configuration.
+    pub fn with_config(config: LaserTagConfig) -> Self {
+        let round_duration = config.round_duration_secs;
         Self {
             arena: generate_arena(ArenaSize::Default),
             state: LaserTagState {
@@ -126,7 +135,8 @@ impl LaserTagArena {
             player_ids: Vec::new(),
             pending_inputs: HashMap::new(),
             paused: false,
-            round_duration: 180.0,
+            round_duration,
+            game_config: config,
         }
     }
 
@@ -136,6 +146,11 @@ impl LaserTagArena {
 
     pub fn arena(&self) -> &Arena {
         &self.arena
+    }
+
+    /// Accessor for the game configuration.
+    pub fn config(&self) -> &LaserTagConfig {
+        &self.game_config
     }
 
     fn get_team_ids(&self, player_id: PlayerId) -> Vec<u64> {
@@ -156,7 +171,7 @@ impl LaserTagArena {
 
 impl Default for LaserTagArena {
     fn default() -> Self {
-        Self::new()
+        Self::with_config(LaserTagConfig::default())
     }
 }
 

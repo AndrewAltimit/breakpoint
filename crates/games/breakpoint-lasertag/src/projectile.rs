@@ -1,4 +1,5 @@
 use crate::arena::{ArenaWall, WallType};
+use serde::{Deserialize, Serialize};
 
 /// Laser travel speed in units/second.
 pub const LASER_SPEED: f32 = 40.0;
@@ -12,6 +13,73 @@ pub const RAPIDFIRE_COOLDOWN_MULT: f32 = 0.4;
 pub const MAX_BOUNCES: u8 = 2;
 /// Player collision radius.
 pub const PLAYER_RADIUS: f32 = 0.6;
+
+/// Configurable laser tag physics parameters, loadable from TOML.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LaserTagPhysicsConfig {
+    pub laser_speed: f32,
+    pub stun_duration: f32,
+    pub fire_cooldown: f32,
+    pub rapidfire_cooldown_mult: f32,
+    pub max_bounces: u8,
+    pub player_radius: f32,
+    pub move_speed: f32,
+    pub powerup_respawn_time: f32,
+}
+
+impl Default for LaserTagPhysicsConfig {
+    fn default() -> Self {
+        Self {
+            laser_speed: LASER_SPEED,
+            stun_duration: STUN_DURATION,
+            fire_cooldown: FIRE_COOLDOWN,
+            rapidfire_cooldown_mult: RAPIDFIRE_COOLDOWN_MULT,
+            max_bounces: MAX_BOUNCES,
+            player_radius: PLAYER_RADIUS,
+            move_speed: 8.0,
+            powerup_respawn_time: 15.0,
+        }
+    }
+}
+
+/// Top-level laser tag game configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LaserTagConfig {
+    pub physics: LaserTagPhysicsConfig,
+    pub round_duration_secs: f32,
+    pub tick_rate_hz: f32,
+}
+
+impl Default for LaserTagConfig {
+    fn default() -> Self {
+        Self {
+            physics: LaserTagPhysicsConfig::default(),
+            round_duration_secs: 180.0,
+            tick_rate_hz: 20.0,
+        }
+    }
+}
+
+impl LaserTagConfig {
+    /// Load config from a TOML file. Falls back to defaults if the file is missing
+    /// or unparseable.
+    pub fn load() -> Self {
+        let path = std::env::var("BREAKPOINT_LASERTAG_CONFIG")
+            .unwrap_or_else(|_| "config/lasertag.toml".to_string());
+        match std::fs::read_to_string(&path) {
+            Ok(content) => match toml::from_str::<LaserTagConfig>(&content) {
+                Ok(cfg) => cfg,
+                Err(e) => {
+                    tracing::warn!("Failed to parse {path}: {e}, using defaults");
+                    LaserTagConfig::default()
+                },
+            },
+            Err(_) => LaserTagConfig::default(),
+        }
+    }
+}
 
 /// Result of a laser raycast.
 #[derive(Debug, Clone)]

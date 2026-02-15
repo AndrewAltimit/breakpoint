@@ -23,6 +23,73 @@ const PLATFORM_SNAP_TOLERANCE: f32 = 0.1;
 /// Y threshold below which player respawns at checkpoint.
 const FALL_RESPAWN_Y: f32 = -5.0;
 
+/// Configurable platformer physics parameters, loadable from TOML.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PlatformerPhysicsConfig {
+    pub gravity: f32,
+    pub move_speed: f32,
+    pub jump_velocity: f32,
+    pub player_width: f32,
+    pub player_height: f32,
+    pub substeps: u32,
+    pub tile_size: f32,
+}
+
+impl Default for PlatformerPhysicsConfig {
+    fn default() -> Self {
+        Self {
+            gravity: GRAVITY,
+            move_speed: MOVE_SPEED,
+            jump_velocity: JUMP_VELOCITY,
+            player_width: PLAYER_WIDTH,
+            player_height: PLAYER_HEIGHT,
+            substeps: SUBSTEPS,
+            tile_size: TILE_SIZE,
+        }
+    }
+}
+
+/// Top-level platformer game configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PlatformerConfig {
+    pub physics: PlatformerPhysicsConfig,
+    pub round_duration_secs: f32,
+    pub tick_rate_hz: f32,
+    pub speed_boost_multiplier: f32,
+}
+
+impl Default for PlatformerConfig {
+    fn default() -> Self {
+        Self {
+            physics: PlatformerPhysicsConfig::default(),
+            round_duration_secs: 120.0,
+            tick_rate_hz: 15.0,
+            speed_boost_multiplier: 1.5,
+        }
+    }
+}
+
+impl PlatformerConfig {
+    /// Load config from a TOML file. Falls back to defaults if the file is missing
+    /// or unparseable.
+    pub fn load() -> Self {
+        let path = std::env::var("BREAKPOINT_PLATFORMER_CONFIG")
+            .unwrap_or_else(|_| "config/platformer.toml".to_string());
+        match std::fs::read_to_string(&path) {
+            Ok(content) => match toml::from_str::<PlatformerConfig>(&content) {
+                Ok(cfg) => cfg,
+                Err(e) => {
+                    tracing::warn!("Failed to parse {path}: {e}, using defaults");
+                    PlatformerConfig::default()
+                },
+            },
+            Err(_) => PlatformerConfig::default(),
+        }
+    }
+}
+
 /// State of a single player in the platformer.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PlatformerPlayerState {
