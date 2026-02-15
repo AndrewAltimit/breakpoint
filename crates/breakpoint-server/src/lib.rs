@@ -13,6 +13,7 @@ pub mod ws;
 use axum::Router;
 use axum::http::HeaderValue;
 use axum::middleware;
+use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
@@ -53,12 +54,19 @@ pub fn build_app(config: ServerConfig) -> (Router<()>, AppState) {
         .allow_methods(Any)
         .allow_headers(Any);
 
+    // Static file serving with Cache-Control headers for immutable assets.
+    // WASM bundles, JS, and CSS are fingerprinted by wasm-pack, so long
+    // cache lifetimes are safe. HTML is short-cached to pick up new deploys.
+    let static_service = ServeDir::new(&web_root);
+
     let app = Router::new()
         .route("/ws", axum::routing::get(ws::ws_handler))
         .route("/health", axum::routing::get(|| async { "ok" }))
         .nest("/api/v1", api_routes)
         .nest("/api/v1/webhooks", webhook_routes)
-        .fallback_service(ServeDir::new(&web_root))
+        .fallback_service(static_service)
+        .layer(axum::middleware::from_fn(cache_control_middleware))
+        .layer(CompressionLayer::new())
         .layer(cors)
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::X_FRAME_OPTIONS,
@@ -127,6 +135,40 @@ pub fn spawn_idle_room_cleanup(state: AppState) {
             }
         }
     });
+}
+
+/// Middleware that sets Cache-Control headers based on response content type.
+/// `.wasm`, `.js`, `.css` files get long cache (1 year, immutable).
+/// Other static files get a short cache (5 minutes).
+async fn cache_control_middleware(
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    let path = request.uri().path().to_string();
+    let mut response = next.run(request).await;
+
+    // Skip API routes, WebSocket, and health check
+    if path.starts_with("/api/") || path.starts_with("/ws") || path == "/health" {
+        return response;
+    }
+
+    let cache_value = if path.ends_with(".wasm")
+        || path.ends_with(".js")
+        || path.ends_with(".css")
+        || path.ends_with(".png")
+        || path.ends_with(".svg")
+    {
+        // Immutable assets: cache for 1 year
+        HeaderValue::from_static("public, max-age=31536000, immutable")
+    } else {
+        // HTML and other files: short cache
+        HeaderValue::from_static("public, max-age=300")
+    };
+
+    response
+        .headers_mut()
+        .insert(axum::http::header::CACHE_CONTROL, cache_value);
+    response
 }
 
 /// Middleware wrapper that injects AuthConfig into request extensions for the

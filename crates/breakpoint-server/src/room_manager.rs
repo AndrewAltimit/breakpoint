@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use bytes::Bytes;
+
 use breakpoint_core::game_trait::{GameId, PlayerId};
 use breakpoint_core::net::messages::{JoinRoomResponseMsg, PlayerListMsg, ServerMessage};
 use breakpoint_core::net::protocol::encode_server_message;
@@ -15,7 +17,8 @@ use crate::game_loop::{
 
 /// Per-player sender for outbound WebSocket binary messages.
 /// Bounded to 256 messages to prevent memory exhaustion from slow clients.
-pub type PlayerSender = mpsc::Sender<Vec<u8>>;
+/// Uses `Bytes` for zero-copy cloning when broadcasting to multiple players.
+pub type PlayerSender = mpsc::Sender<Bytes>;
 
 /// Tracks a connected player's outbound channel.
 struct ConnectedPlayer {
@@ -324,7 +327,7 @@ impl RoomManager {
     }
 
     /// Send a raw binary message to a specific player.
-    pub fn send_to_player(&self, room_code: &str, player_id: PlayerId, data: Vec<u8>) {
+    pub fn send_to_player(&self, room_code: &str, player_id: PlayerId, data: Bytes) {
         if let Some(entry) = self.rooms.get(room_code)
             && let Some(conn) = entry.connections.get(&player_id)
             && let Err(e) = conn.sender.try_send(data)
@@ -337,10 +340,12 @@ impl RoomManager {
     }
 
     /// Broadcast raw binary data to all players in a room.
+    /// Uses `Bytes` internally for zero-copy cloning across player channels.
     pub fn broadcast_to_room(&self, room_code: &str, data: &[u8]) {
         if let Some(entry) = self.rooms.get(room_code) {
+            let bytes = Bytes::copy_from_slice(data);
             for (&pid, conn) in &entry.connections {
-                if let Err(e) = conn.sender.try_send(data.to_vec()) {
+                if let Err(e) = conn.sender.try_send(bytes.clone()) {
                     tracing::debug!(
                         player_id = pid, room = room_code, error = %e,
                         "Skipping broadcast to slow client"
@@ -353,9 +358,10 @@ impl RoomManager {
     /// Broadcast raw binary data to all players except one.
     pub fn broadcast_to_room_except(&self, room_code: &str, exclude: PlayerId, data: &[u8]) {
         if let Some(entry) = self.rooms.get(room_code) {
+            let bytes = Bytes::copy_from_slice(data);
             for (&id, conn) in &entry.connections {
                 if id != exclude
-                    && let Err(e) = conn.sender.try_send(data.to_vec())
+                    && let Err(e) = conn.sender.try_send(bytes.clone())
                 {
                     tracing::debug!(
                         player_id = id, room = room_code, error = %e,
@@ -374,8 +380,9 @@ impl RoomManager {
                 leader_id: entry.room.leader_id,
             });
             if let Ok(data) = encode_server_message(&msg) {
+                let bytes = Bytes::from(data);
                 for (&pid, conn) in &entry.connections {
-                    if let Err(e) = conn.sender.try_send(data.clone()) {
+                    if let Err(e) = conn.sender.try_send(bytes.clone()) {
                         tracing::debug!(
                             player_id = pid, room = room_code, error = %e,
                             "Skipping player list broadcast to slow client"
@@ -417,10 +424,12 @@ impl RoomManager {
     }
 
     /// Broadcast raw binary data to all players in all rooms.
+    /// Uses `Bytes` for zero-copy cloning across all player channels.
     pub fn broadcast_to_all_rooms(&self, data: &[u8]) {
+        let bytes = Bytes::copy_from_slice(data);
         for (room_code, entry) in &self.rooms {
             for (&pid, conn) in &entry.connections {
-                if let Err(e) = conn.sender.try_send(data.to_vec()) {
+                if let Err(e) = conn.sender.try_send(bytes.clone()) {
                     tracing::debug!(
                         player_id = pid, room = %room_code, error = %e,
                         "Skipping global broadcast to slow client"
@@ -507,7 +516,7 @@ mod tests {
     use super::*;
     use breakpoint_core::player::PlayerColor;
 
-    fn make_sender() -> (PlayerSender, mpsc::Receiver<Vec<u8>>) {
+    fn make_sender() -> (PlayerSender, mpsc::Receiver<Bytes>) {
         mpsc::channel(256)
     }
 

@@ -64,8 +64,25 @@ pub fn send_player_input(
 }
 
 /// Deserialize the current game state from the active game.
+/// Uses cached state bytes from the last server update when available,
+/// avoiding redundant `serialize_state()` calls (called 6+ times/frame).
 pub fn read_game_state<S: serde::de::DeserializeOwned>(active_game: &ActiveGame) -> Option<S> {
-    match rmp_serde::from_slice(&active_game.game.serialize_state()) {
+    let bytes = if let Some(ref cached) = active_game.cached_state_bytes {
+        cached.as_slice()
+    } else {
+        // Fallback for first frame before any server state arrives (setup phase)
+        return match rmp_serde::from_slice(&active_game.game.serialize_state()) {
+            Ok(state) => Some(state),
+            Err(e) => {
+                #[cfg(target_arch = "wasm32")]
+                web_sys::console::warn_1(&format!("Failed to deserialize game state: {e}").into());
+                #[cfg(not(target_arch = "wasm32"))]
+                eprintln!("Failed to deserialize game state: {e}");
+                None
+            },
+        };
+    };
+    match rmp_serde::from_slice(bytes) {
         Ok(state) => Some(state),
         Err(e) => {
             #[cfg(target_arch = "wasm32")]
@@ -195,6 +212,9 @@ pub struct ActiveGame {
     pub prev_state: Option<Vec<u8>>,
     /// Fraction [0..1] of progress toward next tick (for smooth rendering).
     pub interp_alpha: f32,
+    /// Cached raw state bytes from the last server update. Avoids redundant
+    /// `serialize_state()` calls in `read_game_state()` (called 6+ times/frame).
+    pub cached_state_bytes: Option<Vec<u8>>,
 }
 
 /// Network role for this client.
@@ -310,6 +330,7 @@ fn setup_game(
         tick_accumulator: 0.0,
         prev_state: None,
         interp_alpha: 0.0,
+        cached_state_bytes: None,
     });
     commands.insert_resource(NetworkRole {
         is_leader,
@@ -344,6 +365,8 @@ fn client_receive_system(
                     // Store previous state for interpolation
                     active_game.prev_state = Some(active_game.game.serialize_state());
                     active_game.game.apply_state(&gs.state_data);
+                    // Cache raw state bytes so read_game_state() avoids re-serializing
+                    active_game.cached_state_bytes = Some(gs.state_data);
                     active_game.tick = gs.tick;
                     active_game.interp_alpha = 0.0;
                 }

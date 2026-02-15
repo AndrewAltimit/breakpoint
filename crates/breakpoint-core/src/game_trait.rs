@@ -60,6 +60,14 @@ pub trait BreakpointGame: Send + Sync {
     /// Serialize the authoritative game state for network broadcast.
     fn serialize_state(&self) -> Vec<u8>;
 
+    /// Serialize the authoritative game state into a reusable buffer.
+    /// The buffer is cleared before writing. Default implementation
+    /// falls back to `serialize_state()`.
+    fn serialize_state_into(&self, buf: &mut Vec<u8>) {
+        buf.clear();
+        buf.extend_from_slice(&self.serialize_state());
+    }
+
     /// Apply authoritative state received from the host.
     fn apply_state(&mut self, state: &[u8]);
 
@@ -148,6 +156,12 @@ macro_rules! breakpoint_game_boilerplate {
     (state_type: $StateType:ty) => {
         fn serialize_state(&self) -> Vec<u8> {
             rmp_serde::to_vec(&self.state).expect("game state serialization must succeed")
+        }
+
+        fn serialize_state_into(&self, buf: &mut Vec<u8>) {
+            buf.clear();
+            rmp_serde::encode::write(buf, &self.state)
+                .expect("game state serialization must succeed");
         }
 
         fn apply_state(&mut self, state: &[u8]) {

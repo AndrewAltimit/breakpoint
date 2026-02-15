@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use breakpoint_core::events::Event;
 use tokio::sync::broadcast;
@@ -26,8 +26,13 @@ pub struct EventStoreStats {
 }
 
 /// In-memory, bounded event store with broadcast fan-out.
+/// Uses a HashMap index for O(1) lookups by event ID.
 pub struct EventStore {
     events: VecDeque<StoredEvent>,
+    /// Maps event ID → index in the VecDeque for O(1) lookups.
+    id_index: HashMap<String, usize>,
+    /// Offset to translate logical indices when the front is popped.
+    eviction_offset: usize,
     broadcast_tx: broadcast::Sender<Event>,
     max_stored_events: usize,
 }
@@ -48,6 +53,8 @@ impl EventStore {
         let (broadcast_tx, _) = broadcast::channel(broadcast_capacity);
         Self {
             events: VecDeque::new(),
+            id_index: HashMap::new(),
+            eviction_offset: 0,
             broadcast_tx,
             max_stored_events,
         }
@@ -57,31 +64,40 @@ impl EventStore {
     /// Also broadcasts the event to all subscribers.
     pub fn insert(&mut self, event: Event) {
         let _ = self.broadcast_tx.send(event.clone());
+        let abs_index = self.eviction_offset + self.events.len();
+        self.id_index.insert(event.id.clone(), abs_index);
         self.events.push_back(StoredEvent {
             event,
             claimed_by: None,
             claimed_at: None,
         });
         while self.events.len() > self.max_stored_events {
-            self.events.pop_front();
+            if let Some(evicted) = self.events.pop_front() {
+                self.id_index.remove(&evicted.event.id);
+                self.eviction_offset += 1;
+            }
         }
     }
 
-    /// Get a stored event by id.
+    /// Get a stored event by id. O(1) via HashMap index.
     #[cfg(test)]
     pub fn get(&self, event_id: &str) -> Option<&StoredEvent> {
-        self.events.iter().find(|e| e.event.id == event_id)
+        let &abs_idx = self.id_index.get(event_id)?;
+        let rel_idx = abs_idx.checked_sub(self.eviction_offset)?;
+        self.events.get(rel_idx)
     }
 
-    /// Claim an event. Returns true if the event was found and claimed.
+    /// Claim an event. Returns true if the event was found and claimed. O(1) via index.
     pub fn claim(&mut self, event_id: &str, claimed_by: String, claimed_at: String) -> bool {
-        if let Some(stored) = self.events.iter_mut().find(|e| e.event.id == event_id) {
+        if let Some(&abs_idx) = self.id_index.get(event_id)
+            && let Some(rel_idx) = abs_idx.checked_sub(self.eviction_offset)
+            && let Some(stored) = self.events.get_mut(rel_idx)
+        {
             stored.claimed_by = Some(claimed_by);
             stored.claimed_at = Some(claimed_at);
-            true
-        } else {
-            false
+            return true;
         }
+        false
     }
 
     /// Get the most recent N events.

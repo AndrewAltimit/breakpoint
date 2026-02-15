@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 
 use breakpoint_core::breakpoint_game_boilerplate;
 use breakpoint_core::game_trait::{
@@ -342,8 +343,8 @@ impl BreakpointGame for LaserTagArena {
                     (p.x, p.z, p.aim_angle)
                 };
 
-                // Build player list for hit detection
-                let player_positions: Vec<(u64, f32, f32)> = self
+                // Build player list for hit detection (stack-allocated for up to 8 players)
+                let player_positions: SmallVec<[(u64, f32, f32); 8]> = self
                     .state
                     .players
                     .iter()

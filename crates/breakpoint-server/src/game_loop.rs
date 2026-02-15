@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use bytes::Bytes;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
@@ -35,7 +36,8 @@ pub enum GameCommand {
 #[derive(Debug, Clone)]
 pub enum GameBroadcast {
     /// Serialized ServerMessage bytes ready to send over WebSocket.
-    EncodedMessage(Vec<u8>),
+    /// Uses `Bytes` for zero-copy cloning across player channels.
+    EncodedMessage(Bytes),
     /// Signal that the game has ended and the loop has exited.
     GameEnded,
 }
@@ -141,7 +143,7 @@ async fn run_game_tick_loop(
         leader_id: config.leader_id,
     });
     if let Ok(data) = encode_server_message(&start_msg) {
-        let _ = broadcast_tx.send(GameBroadcast::EncodedMessage(data));
+        let _ = broadcast_tx.send(GameBroadcast::EncodedMessage(Bytes::from(data)));
     }
 
     let tick_rate = game.tick_rate();
@@ -154,6 +156,7 @@ async fn run_game_tick_loop(
     let mut cumulative_scores: HashMap<PlayerId, i32> = HashMap::new();
     let mut input_buffer: HashMap<PlayerId, Vec<u8>> = HashMap::new();
     let mut players = config.players.clone();
+    let mut state_buf: Vec<u8> = Vec::with_capacity(512);
 
     loop {
         tokio::select! {
@@ -166,14 +169,14 @@ async fn run_game_tick_loop(
                 tick += 1;
                 let events = game.update(1.0 / tick_rate, &inputs);
 
-                // Broadcast game state
-                let state_data = game.serialize_state();
+                // Broadcast game state (reuse buffer to avoid per-tick allocations)
+                game.serialize_state_into(&mut state_buf);
                 let gs_msg = ServerMessage::GameState(GameStateMsg {
                     tick,
-                    state_data,
+                    state_data: state_buf.clone(),
                 });
                 if let Ok(data) = encode_server_message(&gs_msg) {
-                    let _ = broadcast_tx.send(GameBroadcast::EncodedMessage(data));
+                    let _ = broadcast_tx.send(GameBroadcast::EncodedMessage(Bytes::from(data)));
                 }
 
                 // Check for round completion
@@ -206,7 +209,9 @@ async fn run_game_tick_loop(
                             .collect();
                         let end_msg = ServerMessage::GameEnd(GameEndMsg { final_scores });
                         if let Ok(data) = encode_server_message(&end_msg) {
-                            let _ = broadcast_tx.send(GameBroadcast::EncodedMessage(data));
+                            let _ = broadcast_tx.send(GameBroadcast::EncodedMessage(
+                                Bytes::from(data),
+                            ));
                         }
                         break;
                     }
@@ -217,7 +222,9 @@ async fn run_game_tick_loop(
                         scores,
                     });
                     if let Ok(data) = encode_server_message(&round_end_msg) {
-                        let _ = broadcast_tx.send(GameBroadcast::EncodedMessage(data));
+                        let _ = broadcast_tx.send(GameBroadcast::EncodedMessage(
+                            Bytes::from(data),
+                        ));
                     }
 
                     // Pause between rounds (drain commands but don't tick)
@@ -277,7 +284,9 @@ async fn run_game_tick_loop(
                         leader_id: config.leader_id,
                     });
                     if let Ok(data) = encode_server_message(&next_start) {
-                        let _ = broadcast_tx.send(GameBroadcast::EncodedMessage(data));
+                        let _ = broadcast_tx.send(GameBroadcast::EncodedMessage(
+                            Bytes::from(data),
+                        ));
                     }
 
                     // Reset interval for clean timing

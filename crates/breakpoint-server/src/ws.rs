@@ -5,6 +5,7 @@ use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{State, WebSocketUpgrade};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
+use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 
@@ -71,7 +72,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 return;
             }
 
-            let (tx, rx) = mpsc::channel::<Vec<u8>>(state.config.limits.player_message_buffer);
+            let (tx, rx) = mpsc::channel::<Bytes>(state.config.limits.player_message_buffer);
 
             let mut rooms = state.rooms.write().await;
 
@@ -188,11 +189,15 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
 fn spawn_writer(
     mut ws_sender: futures::stream::SplitSink<WebSocket, Message>,
-    mut rx: mpsc::Receiver<Vec<u8>>,
+    mut rx: mpsc::Receiver<Bytes>,
 ) {
     tokio::spawn(async move {
         while let Some(data) = rx.recv().await {
-            if ws_sender.send(Message::Binary(data.into())).await.is_err() {
+            if ws_sender
+                .send(Message::Binary(data.to_vec().into()))
+                .await
+                .is_err()
+            {
                 break;
             }
         }
