@@ -15,19 +15,16 @@ use breakpoint_core::net::protocol::{
 };
 use breakpoint_core::room::RoomState;
 
-use crate::state::{AppState, ConnectionGuard, MAX_WS_CONNECTIONS};
+use crate::state::{AppState, ConnectionGuard};
 
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, StatusCode> {
+    let max_ws = state.config.limits.max_ws_connections;
     let current = state.ws_connection_count.load(Ordering::Relaxed);
-    if current >= MAX_WS_CONNECTIONS {
-        tracing::warn!(
-            current,
-            max = MAX_WS_CONNECTIONS,
-            "WS connection limit reached"
-        );
+    if current >= max_ws {
+        tracing::warn!(current, max = max_ws, "WS connection limit reached");
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
     Ok(ws.on_upgrade(move |socket| handle_socket(socket, state)))
@@ -74,7 +71,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                 return;
             }
 
-            let (tx, rx) = mpsc::channel::<Vec<u8>>(256);
+            let (tx, rx) = mpsc::channel::<Vec<u8>>(state.config.limits.player_message_buffer);
 
             let mut rooms = state.rooms.write().await;
 
@@ -242,7 +239,8 @@ async fn read_loop(
     room_code: &str,
     player_id: PlayerId,
 ) {
-    let mut rate_limiter = RateLimiter::new(50.0, 50.0); // 50 msg/sec burst, 50/sec sustained
+    let rate = state.config.limits.ws_rate_limit_per_sec;
+    let mut rate_limiter = RateLimiter::new(rate, rate);
 
     while let Some(Ok(msg)) = ws_receiver.next().await {
         let data = match msg {

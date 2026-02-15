@@ -111,11 +111,14 @@ pub fn spawn_event_broadcaster(state: AppState) {
     });
 }
 
-/// Background task that periodically removes rooms idle for more than 1 hour.
+/// Background task that periodically removes idle rooms.
 pub fn spawn_idle_room_cleanup(state: AppState) {
+    let check_interval = state.config.rooms.idle_check_interval_secs;
+    let idle_timeout = state.config.rooms.idle_timeout_secs;
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-        let max_idle = std::time::Duration::from_secs(3600);
+        let mut interval =
+            tokio::time::interval(std::time::Duration::from_secs(check_interval));
+        let max_idle = std::time::Duration::from_secs(idle_timeout);
         loop {
             interval.tick().await;
             let mut rooms = state.rooms.write().await;

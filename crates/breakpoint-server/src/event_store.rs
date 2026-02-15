@@ -3,11 +3,11 @@ use std::collections::VecDeque;
 use breakpoint_core::events::Event;
 use tokio::sync::broadcast;
 
-/// Maximum number of events stored before oldest are evicted.
-const MAX_STORED_EVENTS: usize = 500;
+/// Default maximum number of events stored before oldest are evicted.
+const DEFAULT_MAX_STORED_EVENTS: usize = 500;
 
-/// Broadcast channel capacity for event fan-out.
-const BROADCAST_CAPACITY: usize = 1024;
+/// Default broadcast channel capacity for event fan-out.
+const DEFAULT_BROADCAST_CAPACITY: usize = 1024;
 
 /// An event stored in the EventStore with optional claim metadata.
 #[derive(Debug, Clone)]
@@ -29,6 +29,7 @@ pub struct EventStoreStats {
 pub struct EventStore {
     events: VecDeque<StoredEvent>,
     broadcast_tx: broadcast::Sender<Event>,
+    max_stored_events: usize,
 }
 
 impl Default for EventStore {
@@ -39,10 +40,16 @@ impl Default for EventStore {
 
 impl EventStore {
     pub fn new() -> Self {
-        let (broadcast_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
+        Self::with_capacity(DEFAULT_MAX_STORED_EVENTS, DEFAULT_BROADCAST_CAPACITY)
+    }
+
+    /// Create an EventStore with configurable capacity limits.
+    pub fn with_capacity(max_stored_events: usize, broadcast_capacity: usize) -> Self {
+        let (broadcast_tx, _) = broadcast::channel(broadcast_capacity);
         Self {
             events: VecDeque::new(),
             broadcast_tx,
+            max_stored_events,
         }
     }
 
@@ -55,7 +62,7 @@ impl EventStore {
             claimed_by: None,
             claimed_at: None,
         });
-        while self.events.len() > MAX_STORED_EVENTS {
+        while self.events.len() > self.max_stored_events {
             self.events.pop_front();
         }
     }
@@ -161,12 +168,23 @@ mod tests {
         for i in 0..600 {
             store.insert(make_event(&format!("evt-{i}")));
         }
-        assert_eq!(store.events.len(), MAX_STORED_EVENTS);
+        assert_eq!(store.events.len(), DEFAULT_MAX_STORED_EVENTS);
         // Oldest events (0..99) should be evicted
         assert!(store.get("evt-0").is_none());
         assert!(store.get("evt-99").is_none());
         assert!(store.get("evt-100").is_some());
         assert!(store.get("evt-599").is_some());
+    }
+
+    #[test]
+    fn custom_capacity() {
+        let mut store = EventStore::with_capacity(10, 16);
+        for i in 0..20 {
+            store.insert(make_event(&format!("evt-{i}")));
+        }
+        assert_eq!(store.events.len(), 10);
+        assert!(store.get("evt-0").is_none());
+        assert!(store.get("evt-10").is_some());
     }
 
     #[test]

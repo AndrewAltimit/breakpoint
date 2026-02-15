@@ -91,9 +91,10 @@ pub async fn post_events(
         return Err(AppError::BadRequest("No events provided".to_string()));
     }
 
-    if events.len() > 100 {
+    let batch_limit = state.config.limits.event_batch_limit;
+    if events.len() > batch_limit {
         return Err(AppError::BadRequest(format!(
-            "Batch too large: {} (max 100)",
+            "Batch too large: {} (max {batch_limit})",
             events.len()
         )));
     }

@@ -14,8 +14,8 @@ use breakpoint_core::game_trait::{
 use breakpoint_core::player::Player;
 
 use course::{Course, all_courses};
-use physics::BallState;
-use scoring::calculate_score;
+use physics::{BallState, GolfConfig};
+use scoring::calculate_score_with_config;
 
 /// Serializable game state broadcast from host to clients.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,10 +49,17 @@ pub struct MiniGolf {
     paused: bool,
     /// O(1) lookup companion for `state.sunk_order`.
     sunk_set: HashSet<PlayerId>,
+    /// Data-driven game configuration (physics, scoring, timing).
+    game_config: GolfConfig,
 }
 
 impl MiniGolf {
     pub fn new() -> Self {
+        Self::with_config(GolfConfig::load())
+    }
+
+    /// Create a MiniGolf instance with explicit configuration.
+    pub fn with_config(game_config: GolfConfig) -> Self {
         let courses = all_courses();
         Self {
             course_index: 0,
@@ -68,6 +75,7 @@ impl MiniGolf {
             player_ids: Vec::new(),
             paused: false,
             sunk_set: HashSet::new(),
+            game_config,
         }
     }
 
@@ -91,13 +99,20 @@ impl MiniGolf {
         self.courses.len()
     }
 
-    /// Round time limit in seconds.
-    const ROUND_DURATION: f32 = 90.0;
+    /// Accessor for the game configuration.
+    pub fn config(&self) -> &GolfConfig {
+        &self.game_config
+    }
+
+    /// Round time limit in seconds (from config).
+    fn round_duration(&self) -> f32 {
+        self.game_config.round_duration_secs
+    }
 }
 
 impl Default for MiniGolf {
     fn default() -> Self {
-        Self::new()
+        Self::with_config(GolfConfig::default())
     }
 }
 
@@ -158,6 +173,7 @@ impl BreakpointGame for MiniGolf {
 
         // Check for newly sunk balls
         let mut events = Vec::new();
+        let scoring = &self.game_config.scoring;
         for &pid in &self.player_ids {
             if let Some(ball) = self.state.balls.get(&pid)
                 && ball.is_sunk
@@ -167,7 +183,8 @@ impl BreakpointGame for MiniGolf {
                 self.sunk_set.insert(pid);
                 let was_first = self.state.sunk_order.len() == 1;
                 let strokes = self.state.strokes.get(&pid).copied().unwrap_or(0);
-                let score = calculate_score(strokes, course.par, was_first, true);
+                let score =
+                    calculate_score_with_config(strokes, course.par, was_first, true, scoring);
                 events.push(GameEvent::ScoreUpdate {
                     player_id: pid,
                     score,
@@ -177,7 +194,7 @@ impl BreakpointGame for MiniGolf {
 
         // Check round completion: all sunk or timer expired
         let all_sunk = self.player_ids.iter().all(|id| self.sunk_set.contains(id));
-        let timer_expired = self.state.round_timer >= Self::ROUND_DURATION;
+        let timer_expired = self.state.round_timer >= self.round_duration();
 
         if all_sunk || timer_expired {
             self.state.round_complete = true;
@@ -232,13 +249,15 @@ impl BreakpointGame for MiniGolf {
 
     fn round_results(&self) -> Vec<PlayerScore> {
         let par = self.courses[self.course_index].par;
+        let scoring = &self.game_config.scoring;
         self.player_ids
             .iter()
             .map(|&pid| {
                 let strokes = self.state.strokes.get(&pid).copied().unwrap_or(0);
                 let finished = self.sunk_set.contains(&pid);
                 let was_first = self.state.sunk_order.first() == Some(&pid);
-                let score = calculate_score(strokes, par, was_first, finished);
+                let score =
+                    calculate_score_with_config(strokes, par, was_first, finished, scoring);
                 PlayerScore {
                     player_id: pid,
                     score,
@@ -356,7 +375,7 @@ mod tests {
         };
 
         // Advance past the round timer
-        game.state.round_timer = MiniGolf::ROUND_DURATION - 0.01;
+        game.state.round_timer = game.round_duration() - 0.01;
         let events = game.update(0.1, &inputs);
 
         assert!(game.is_round_complete());
@@ -875,7 +894,7 @@ mod tests {
         game.state.balls.get_mut(&1).unwrap().is_sunk = true;
 
         // Player 2 never sinks — advance the timer past the round duration
-        game.state.round_timer = MiniGolf::ROUND_DURATION - 0.01;
+        game.state.round_timer = game.round_duration() - 0.01;
 
         let inputs = PlayerInputs {
             inputs: HashMap::new(),
@@ -1419,7 +1438,7 @@ mod tests {
         game.init(&players, &default_config(90));
 
         // Nobody sinks — advance timer past round duration
-        game.state.round_timer = MiniGolf::ROUND_DURATION - 0.01;
+        game.state.round_timer = game.round_duration() - 0.01;
         let inputs = PlayerInputs {
             inputs: HashMap::new(),
         };

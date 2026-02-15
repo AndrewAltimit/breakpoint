@@ -1,30 +1,48 @@
+use crate::physics::GolfScoringConfig;
+
 /// Calculate a player's score for a completed hole.
 ///
-/// Scoring rules:
+/// Scoring rules (with default config):
 /// - First to sink: +3 bonus
 /// - Under par: +2 per stroke under
 /// - At par: +1
 /// - Over par: 0
 /// - DNF (did not finish): -1
 pub fn calculate_score(strokes: u32, par: u8, was_first_sink: bool, finished: bool) -> i32 {
+    calculate_score_with_config(
+        strokes,
+        par,
+        was_first_sink,
+        finished,
+        &GolfScoringConfig::default(),
+    )
+}
+
+/// Calculate a player's score using configurable scoring parameters.
+pub fn calculate_score_with_config(
+    strokes: u32,
+    par: u8,
+    was_first_sink: bool,
+    finished: bool,
+    config: &GolfScoringConfig,
+) -> i32 {
     if !finished {
-        return -1;
+        return config.dnf_penalty;
     }
 
     let par = par as i32;
     let strokes = strokes as i32;
 
     let mut score = if strokes < par {
-        // Under par: +2 per stroke under
-        (par - strokes) * 2
+        (par - strokes) * config.under_par_bonus_per_stroke
     } else if strokes == par {
-        1
+        config.at_par_score
     } else {
-        0
+        config.over_par_score
     };
 
     if was_first_sink {
-        score += 3;
+        score += config.first_sink_bonus;
     }
 
     score

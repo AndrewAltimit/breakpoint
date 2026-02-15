@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::course::{Bumper, Course, Vec3, Wall};
 
 /// Ball radius in world units.
@@ -18,6 +20,99 @@ const HOLE_SINK_SPEED: f32 = MAX_POWER * 0.5;
 const WALL_BOUNCE_RESTITUTION: f32 = 0.9;
 /// Physics substeps per tick for more accurate collision detection.
 const SUBSTEPS: u32 = 4;
+
+/// Configurable golf physics parameters, loadable from TOML.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GolfPhysicsConfig {
+    pub ball_radius: f32,
+    pub hole_radius: f32,
+    pub friction: f32,
+    pub max_power: f32,
+    pub min_velocity: f32,
+    /// Fraction of max_power below which a ball can sink into the hole.
+    pub hole_sink_speed_ratio: f32,
+    pub wall_bounce_restitution: f32,
+    pub substeps: u32,
+}
+
+impl Default for GolfPhysicsConfig {
+    fn default() -> Self {
+        Self {
+            ball_radius: BALL_RADIUS,
+            hole_radius: HOLE_RADIUS,
+            friction: FRICTION,
+            max_power: MAX_POWER,
+            min_velocity: MIN_VELOCITY,
+            hole_sink_speed_ratio: 0.5,
+            wall_bounce_restitution: WALL_BOUNCE_RESTITUTION,
+            substeps: SUBSTEPS,
+        }
+    }
+}
+
+/// Configurable golf scoring parameters, loadable from TOML.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GolfScoringConfig {
+    pub first_sink_bonus: i32,
+    pub under_par_bonus_per_stroke: i32,
+    pub at_par_score: i32,
+    pub over_par_score: i32,
+    pub dnf_penalty: i32,
+}
+
+impl Default for GolfScoringConfig {
+    fn default() -> Self {
+        Self {
+            first_sink_bonus: 3,
+            under_par_bonus_per_stroke: 2,
+            at_par_score: 1,
+            over_par_score: 0,
+            dnf_penalty: -1,
+        }
+    }
+}
+
+/// Top-level golf game configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GolfConfig {
+    pub physics: GolfPhysicsConfig,
+    pub scoring: GolfScoringConfig,
+    pub round_duration_secs: f32,
+    pub tick_rate_hz: f32,
+}
+
+impl Default for GolfConfig {
+    fn default() -> Self {
+        Self {
+            physics: GolfPhysicsConfig::default(),
+            scoring: GolfScoringConfig::default(),
+            round_duration_secs: 90.0,
+            tick_rate_hz: 10.0,
+        }
+    }
+}
+
+impl GolfConfig {
+    /// Load config from a TOML file. Falls back to defaults if the file is missing
+    /// or unparseable.
+    pub fn load() -> Self {
+        let path = std::env::var("BREAKPOINT_GOLF_CONFIG")
+            .unwrap_or_else(|_| "config/golf.toml".to_string());
+        match std::fs::read_to_string(&path) {
+            Ok(content) => match toml::from_str::<GolfConfig>(&content) {
+                Ok(cfg) => cfg,
+                Err(e) => {
+                    tracing::warn!("Failed to parse {path}: {e}, using defaults");
+                    GolfConfig::default()
+                },
+            },
+            Err(_) => GolfConfig::default(),
+        }
+    }
+}
 
 /// State of a single ball on the course.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]

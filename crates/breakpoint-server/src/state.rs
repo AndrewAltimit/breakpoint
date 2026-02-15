@@ -12,19 +12,12 @@ use crate::room_manager::RoomManager;
 pub type SharedRoomManager = Arc<RwLock<RoomManager>>;
 pub type SharedEventStore = Arc<RwLock<EventStore>>;
 
-/// Maximum concurrent WebSocket connections.
-pub const MAX_WS_CONNECTIONS: usize = 200;
-
-/// Maximum concurrent SSE subscribers.
-pub const MAX_SSE_SUBSCRIBERS: usize = 100;
-
 #[derive(Clone)]
 pub struct AppState {
     pub rooms: SharedRoomManager,
     pub event_store: SharedEventStore,
     pub auth: AuthConfig,
     pub game_registry: Arc<ServerGameRegistry>,
-    #[allow(dead_code)]
     pub config: Arc<ServerConfig>,
     pub ws_connection_count: Arc<AtomicUsize>,
     pub sse_subscriber_count: Arc<AtomicUsize>,
@@ -37,9 +30,13 @@ impl AppState {
             github_webhook_secret: config.auth.github_webhook_secret.clone(),
             require_webhook_signature: config.auth.require_webhook_signature,
         };
+        let event_store = EventStore::with_capacity(
+            config.limits.max_stored_events,
+            config.limits.broadcast_capacity,
+        );
         Self {
             rooms: Arc::new(RwLock::new(RoomManager::new())),
-            event_store: Arc::new(RwLock::new(EventStore::new())),
+            event_store: Arc::new(RwLock::new(event_store)),
             auth,
             game_registry: Arc::new(ServerGameRegistry::new()),
             config: Arc::new(config),

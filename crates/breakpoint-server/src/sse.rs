@@ -9,19 +9,16 @@ use futures::stream::Stream;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
 
-use crate::state::{AppState, ConnectionGuard, MAX_SSE_SUBSCRIBERS};
+use crate::state::{AppState, ConnectionGuard};
 
 /// GET /api/v1/events/stream — SSE endpoint for real-time event streaming.
 pub async fn event_stream(
     State(state): State<AppState>,
 ) -> Result<Sse<impl Stream<Item = Result<SseEvent, Infallible>>>, StatusCode> {
+    let max_sse = state.config.limits.max_sse_subscribers;
     let current = state.sse_subscriber_count.load(Ordering::Relaxed);
-    if current >= MAX_SSE_SUBSCRIBERS {
-        tracing::warn!(
-            current,
-            max = MAX_SSE_SUBSCRIBERS,
-            "SSE subscriber limit reached"
-        );
+    if current >= max_sse {
+        tracing::warn!(current, max = max_sse, "SSE subscriber limit reached");
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
 

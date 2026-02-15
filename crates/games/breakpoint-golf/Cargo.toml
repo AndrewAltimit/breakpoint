@@ -12,6 +12,7 @@ breakpoint-core = { path = "../../breakpoint-core" }
 serde = { workspace = true }
 rmp-serde.workspace = true
 tracing.workspace = true
+toml.workspace = true
 
 [dev-dependencies]
 breakpoint-core = { path = "../../breakpoint-core", features = ["test-helpers"] }
