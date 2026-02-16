@@ -21,6 +21,15 @@ env:
   COMPOSE_DOCKER_CLI_BUILD: 1
 
 jobs:
+  # ── Feature Flags ───────────────────────────────────────────
+  config:
+    name: Configuration
+    runs-on: ubuntu-latest
+    outputs:
+      ai-reviews-enabled: 'false'  # Set to 'true' to enable AI reviews
+    steps:
+      - run: echo "AI reviews disabled for initial release"
+
   # Fork guard: block fork PRs from running on self-hosted runners with write perms
   fork-guard:
     name: Fork PR Guard
@@ -104,8 +113,9 @@ jobs:
   # ── Gemini AI Code Review ──────────────────────────────────────
   gemini-review:
     name: Gemini AI Code Review
-    needs: fork-guard
+    needs: [fork-guard, config]
     if: >-
+      needs.config.outputs.ai-reviews-enabled == 'true' &&
       github.event_name == 'pull_request' &&
       !github.event.pull_request.draft
     runs-on: self-hosted
@@ -199,8 +209,9 @@ jobs:
   # ── Codex AI Code Review (secondary) ───────────────────────────
   codex-review:
     name: Codex AI Code Review
-    needs: [fork-guard, gemini-review]
+    needs: [fork-guard, config, gemini-review]
     if: >-
+      needs.config.outputs.ai-reviews-enabled == 'true' &&
       github.event_name == 'pull_request' &&
       !github.event.pull_request.draft &&
       needs.gemini-review.result != 'skipped'
@@ -281,10 +292,11 @@ jobs:
   # ── Agent Review Response (responds to Gemini/Codex feedback) ──
   agent-review-response:
     name: Agent Review Response
-    needs: [ci, gemini-review, codex-review]
+    needs: [ci, config, gemini-review, codex-review]
     if: |
       always() &&
       !cancelled() &&
+      needs.config.outputs.ai-reviews-enabled == 'true' &&
       github.event_name == 'pull_request' &&
       !github.event.pull_request.draft &&
       !contains(github.event.pull_request.labels.*.name, 'no-auto-fix')
@@ -370,9 +382,10 @@ jobs:
   # ── Agent Failure Handler ──────────────────────────────────────
   agent-failure-handler:
     name: Agent Failure Handler
-    needs: [ci, gemini-review, codex-review, agent-review-response]
+    needs: [ci, config, gemini-review, codex-review, agent-review-response]
     if: |
       failure() &&
+      needs.config.outputs.ai-reviews-enabled == 'true' &&
       github.event_name == 'pull_request' &&
       !github.event.pull_request.draft &&
       !contains(github.event.pull_request.labels.*.name, 'no-auto-fix') &&
@@ -449,7 +462,7 @@ jobs:
   # ── PR Status Summary ──────────────────────────────────────────
   pr-status:
     name: PR Status Summary
-    needs: [ci, gemini-review, codex-review, agent-review-response, agent-failure-handler]
+    needs: [ci, config, gemini-review, codex-review, agent-review-response, agent-failure-handler]
     if: always()
     runs-on: self-hosted
     steps:
