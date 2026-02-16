@@ -543,10 +543,20 @@ impl App {
             },
             #[cfg(feature = "tron")]
             GameId::Tron => {
-                if let Some(s) = read_game_state::<breakpoint_tron::TronState>(active) {
-                    self.camera.set_mode(CameraMode::TronFixed {
-                        arena_width: s.arena_width,
-                        arena_depth: s.arena_depth,
+                if let Some(ref role) = self.network_role
+                    && let Some(s) = read_game_state::<breakpoint_tron::TronState>(active)
+                    && let Some(c) = s.players.get(&role.local_player_id)
+                    && c.alive
+                {
+                    let dir = match c.direction {
+                        breakpoint_tron::Direction::North => [0.0, -1.0],
+                        breakpoint_tron::Direction::South => [0.0, 1.0],
+                        breakpoint_tron::Direction::East => [1.0, 0.0],
+                        breakpoint_tron::Direction::West => [-1.0, 0.0],
+                    };
+                    self.camera.set_mode(CameraMode::TronFollow {
+                        cycle_pos: glam::Vec3::new(c.x, 0.0, c.z),
+                        direction: dir,
                     });
                 }
             },

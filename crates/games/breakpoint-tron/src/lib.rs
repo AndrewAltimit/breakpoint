@@ -173,28 +173,33 @@ impl TronCycles {
         }
     }
 
-    /// Start a new wall segment for a cycle (after a turn).
-    fn start_new_segment(&mut self, player_id: PlayerId) {
-        if let Some(cycle) = self.state.players.get(&player_id) {
-            // Close the current active segment
-            for wall in &mut self.state.wall_segments {
-                if wall.owner_id == player_id && wall.is_active {
-                    wall.x2 = cycle.x;
-                    wall.z2 = cycle.z;
-                    wall.is_active = false;
-                }
+    /// Start a new wall segment at the turn point, extending to the cycle's current position.
+    fn start_new_segment_at(
+        &mut self,
+        player_id: PlayerId,
+        turn_x: f32,
+        turn_z: f32,
+        current_x: f32,
+        current_z: f32,
+    ) {
+        // Close the current active segment at the turn point
+        for wall in &mut self.state.wall_segments {
+            if wall.owner_id == player_id && wall.is_active {
+                wall.x2 = turn_x;
+                wall.z2 = turn_z;
+                wall.is_active = false;
             }
-
-            // Start a new active segment
-            self.state.wall_segments.push(WallSegment {
-                x1: cycle.x,
-                z1: cycle.z,
-                x2: cycle.x,
-                z2: cycle.z,
-                owner_id: player_id,
-                is_active: true,
-            });
         }
+
+        // Start a new active segment from turn point to current position
+        self.state.wall_segments.push(WallSegment {
+            x1: turn_x,
+            z1: turn_z,
+            x2: current_x,
+            z2: current_z,
+            owner_id: player_id,
+            is_active: true,
+        });
     }
 }
 
@@ -299,13 +304,15 @@ impl BreakpointGame for TronCycles {
         for &pid in &player_ids {
             let input = self.pending_inputs.remove(&pid).unwrap_or_default();
 
-            // Check if this turn requires a new wall segment
-            let had_turn = input.turn != TurnDirection::None;
-            let old_direction = self.state.players.get(&pid).map(|c| c.direction);
+            // Save pre-movement position as the potential turn point
+            let turn_point = self
+                .state
+                .players
+                .get(&pid)
+                .map(|c| (c.x, c.z, c.direction));
 
-            // Update cycle physics
+            // Update cycle physics (applies turn + movement)
             physics::update_cycle(
-                // We need to get a mutable reference carefully
                 match self.state.players.get_mut(&pid) {
                     Some(c) => c,
                     None => continue,
@@ -328,9 +335,14 @@ impl BreakpointGame for TronCycles {
                 continue;
             }
 
-            // If direction changed, start a new segment
-            if had_turn && old_direction != Some(cycle.direction) {
-                self.start_new_segment(pid);
+            // If direction changed, split segment at the PRE-movement turn point
+            let direction_changed = turn_point
+                .map(|(_, _, old_dir)| old_dir != cycle.direction)
+                .unwrap_or(false);
+
+            if direction_changed {
+                let (tx, tz, _) = turn_point.unwrap();
+                self.start_new_segment_at(pid, tx, tz, cycle.x, cycle.z);
             } else {
                 // Update the active segment endpoint
                 let cx = cycle.x;

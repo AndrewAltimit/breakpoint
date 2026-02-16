@@ -5,9 +5,11 @@ use crate::game::read_game_state;
 use crate::scene::{MaterialType, MeshType, Scene, Transform};
 use crate::theme::Theme;
 
-/// Neon-on-dark tron colors.
-const FLOOR_COLOR: Vec4 = Vec4::new(0.02, 0.02, 0.05, 1.0);
-const GRID_COLOR: Vec4 = Vec4::new(0.05, 0.15, 0.1, 0.6);
+/// Pure black floor.
+const FLOOR_COLOR: Vec4 = Vec4::new(0.0, 0.0, 0.0, 1.0);
+/// Bright neon grid lines.
+const GRID_COLOR: Vec4 = Vec4::new(0.0, 0.6, 0.4, 1.0);
+/// Boundary wall color.
 const BOUNDARY_COLOR: Vec4 = Vec4::new(0.3, 0.5, 1.0, 1.0);
 const WIN_ZONE_COLOR: Vec4 = Vec4::new(1.0, 0.85, 0.2, 0.7);
 
@@ -35,7 +37,7 @@ pub fn sync_tron_scene(scene: &mut Scene, active: &ActiveGame, _theme: &Theme, _
     let arena_w = state.arena_width;
     let arena_d = state.arena_depth;
 
-    // Arena floor (dark)
+    // Arena floor (pure black)
     scene.add(
         MeshType::Plane,
         MaterialType::Unlit { color: FLOOR_COLOR },
@@ -43,10 +45,11 @@ pub fn sync_tron_scene(scene: &mut Scene, active: &ActiveGame, _theme: &Theme, _
             .with_scale(Vec3::new(arena_w, 1.0, arena_d)),
     );
 
-    // Grid lines
+    // Grid lines — thick and bright
     let grid_spacing = 25.0;
-    let grid_height = 0.01;
-    let grid_thickness = 0.15;
+    let grid_height = 0.02;
+    let grid_thickness = 0.6;
+    let grid_intensity = 1.2;
 
     // Vertical grid lines (along Z axis)
     let mut x = grid_spacing;
@@ -55,11 +58,11 @@ pub fn sync_tron_scene(scene: &mut Scene, active: &ActiveGame, _theme: &Theme, _
             MeshType::Cuboid,
             MaterialType::Glow {
                 color: GRID_COLOR,
-                intensity: 0.3,
+                intensity: grid_intensity,
             },
             Transform::from_xyz(x, grid_height, arena_d / 2.0).with_scale(Vec3::new(
                 grid_thickness,
-                0.02,
+                0.04,
                 arena_d,
             )),
         );
@@ -73,21 +76,21 @@ pub fn sync_tron_scene(scene: &mut Scene, active: &ActiveGame, _theme: &Theme, _
             MeshType::Cuboid,
             MaterialType::Glow {
                 color: GRID_COLOR,
-                intensity: 0.3,
+                intensity: grid_intensity,
             },
             Transform::from_xyz(arena_w / 2.0, grid_height, z).with_scale(Vec3::new(
                 arena_w,
-                0.02,
+                0.04,
                 grid_thickness,
             )),
         );
         z += grid_spacing;
     }
 
-    // Arena boundary walls (glowing)
-    let wall_height = 3.0;
+    // Arena boundary walls
+    let wall_height = 4.0;
     let wall_thickness = 0.5;
-    let boundary_intensity = 1.5;
+    let boundary_intensity = 2.0;
 
     // North wall (z=0)
     scene.add(
@@ -148,9 +151,9 @@ pub fn sync_tron_scene(scene: &mut Scene, active: &ActiveGame, _theme: &Theme, _
         player_index.insert(pid, i);
     }
 
-    // Wall trail segments
-    let trail_height = 2.0;
-    let trail_thickness = 0.3;
+    // Wall trail segments — solid colored walls
+    let trail_height = 3.0;
+    let trail_thickness = 0.8;
     for wall in &state.wall_segments {
         let dx = wall.x2 - wall.x1;
         let dz = wall.z2 - wall.z1;
@@ -178,7 +181,7 @@ pub fn sync_tron_scene(scene: &mut Scene, active: &ActiveGame, _theme: &Theme, _
             MeshType::Cuboid,
             MaterialType::Glow {
                 color,
-                intensity: 2.0,
+                intensity: 2.5,
             },
             Transform::from_xyz(cx, trail_height / 2.0, cz).with_scale(scale),
         );
@@ -196,9 +199,9 @@ pub fn sync_tron_scene(scene: &mut Scene, active: &ActiveGame, _theme: &Theme, _
             MeshType::Cuboid,
             MaterialType::Glow {
                 color,
-                intensity: 3.0,
+                intensity: 4.0,
             },
-            Transform::from_xyz(cycle.x, 1.0, cycle.z).with_scale(Vec3::new(1.2, 2.0, 1.2)),
+            Transform::from_xyz(cycle.x, 1.5, cycle.z).with_scale(Vec3::new(1.5, 3.0, 1.5)),
         );
     }
 

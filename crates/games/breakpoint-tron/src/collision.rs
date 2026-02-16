@@ -33,10 +33,20 @@ pub fn check_wall_collision(
     let col_dist = config.collision_distance;
 
     for wall in walls {
-        // Skip the last segment of our own trail (the one currently being drawn)
-        // to avoid immediate self-collision.
+        // Skip the active segment of our own trail (the one currently being drawn)
         if wall.owner_id == cycle_owner_id && wall.is_active {
             continue;
+        }
+
+        // Skip own segments whose endpoint is at the cycle's position (turn corners).
+        // At low speeds the cycle may still be within collision distance of the
+        // just-closed segment after a turn.
+        if wall.owner_id == cycle_owner_id {
+            let ex = cycle.x - wall.x2;
+            let ez = cycle.z - wall.z2;
+            if (ex * ex + ez * ez).sqrt() < col_dist * 3.0 {
+                continue;
+            }
         }
 
         let dist = point_to_segment_distance(cycle.x, cycle.z, wall.x1, wall.z1, wall.x2, wall.z2);
