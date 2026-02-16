@@ -9,6 +9,8 @@ pub enum CameraMode {
     PlatformerFollow { player_pos: Vec2 },
     /// Laser tag: fixed top-down view.
     LaserTagFixed,
+    /// Tron: fixed top-down view for large arena.
+    TronFixed { arena_width: f32, arena_depth: f32 },
     /// Overview of the course (golf fallback).
     GolfOverview {
         center_x: f32,
@@ -105,6 +107,19 @@ impl Camera {
                 self.position = Vec3::new(25.0, 62.0, 25.0);
                 self.target = Vec3::new(25.0, 0.0, 25.0);
                 self.up = Vec3::Z;
+            },
+            CameraMode::TronFixed {
+                arena_width,
+                arena_depth,
+            } => {
+                let cx = arena_width / 2.0;
+                let cz = arena_depth / 2.0;
+                // Height proportional to arena size for full view
+                let h = arena_width.max(arena_depth) * 0.7;
+                self.position = Vec3::new(cx, h, cz);
+                self.target = Vec3::new(cx, 0.0, cz);
+                self.up = Vec3::Z;
+                self.far = h * 2.0;
             },
             CameraMode::None => {},
         }

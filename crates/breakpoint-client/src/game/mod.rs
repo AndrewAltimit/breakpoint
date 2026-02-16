@@ -10,6 +10,10 @@ pub mod lasertag_render;
 pub mod platformer_input;
 #[cfg(feature = "platformer")]
 pub mod platformer_render;
+#[cfg(feature = "tron")]
+pub mod tron_input;
+#[cfg(feature = "tron")]
+pub mod tron_render;
 
 use std::collections::HashMap;
 
@@ -53,6 +57,11 @@ pub fn create_registry() -> GameRegistry {
     registry.register(GameId::LaserTag, || {
         Box::new(breakpoint_lasertag::LaserTagArena::new())
     });
+    #[cfg(feature = "tron")]
+    registry.register(
+        GameId::Tron,
+        || Box::new(breakpoint_tron::TronCycles::new()),
+    );
     registry
 }
 

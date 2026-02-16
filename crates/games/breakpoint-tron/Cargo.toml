@@ -1,0 +1,24 @@
+[package]
+name = "breakpoint-tron"
+description = "Tron Light Cycles game for Breakpoint"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+breakpoint-core = { path = "../../breakpoint-core" }
+serde = { workspace = true }
+serde_json.workspace = true
+rmp-serde.workspace = true
+rand.workspace = true
+tracing.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+breakpoint-core = { path = "../../breakpoint-core", features = ["test-helpers"] }
+proptest.workspace = true
+
+[lints]
+workspace = true

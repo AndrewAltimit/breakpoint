@@ -541,6 +541,15 @@ impl App {
             GameId::LaserTag => {
                 self.camera.set_mode(CameraMode::LaserTagFixed);
             },
+            #[cfg(feature = "tron")]
+            GameId::Tron => {
+                if let Some(s) = read_game_state::<breakpoint_tron::TronState>(active) {
+                    self.camera.set_mode(CameraMode::TronFixed {
+                        arena_width: s.arena_width,
+                        arena_depth: s.arena_depth,
+                    });
+                }
+            },
             #[allow(unreachable_patterns)]
             _ => {},
         }
@@ -590,6 +599,10 @@ impl App {
                     &self.ws,
                 );
             },
+            #[cfg(feature = "tron")]
+            GameId::Tron => {
+                crate::game::tron_input::process_tron_input(&self.input, active, role, &self.ws);
+            },
             #[allow(unreachable_patterns)]
             _ => {},
         }
@@ -631,6 +644,10 @@ impl App {
                     &self.theme,
                     dt,
                 );
+            },
+            #[cfg(feature = "tron")]
+            GameId::Tron => {
+                crate::game::tron_render::sync_tron_scene(&mut self.scene, active, &self.theme, dt);
             },
             #[allow(unreachable_patterns)]
             _ => {},

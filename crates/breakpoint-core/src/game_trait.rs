@@ -14,6 +14,7 @@ pub enum GameId {
     Golf,
     Platformer,
     LaserTag,
+    Tron,
 }
 
 impl GameId {
@@ -23,6 +24,7 @@ impl GameId {
             Self::Golf => "mini-golf",
             Self::Platformer => "platform-racer",
             Self::LaserTag => "laser-tag",
+            Self::Tron => "tron",
         }
     }
 
@@ -32,6 +34,7 @@ impl GameId {
             "mini-golf" => Some(Self::Golf),
             "platform-racer" => Some(Self::Platformer),
             "laser-tag" => Some(Self::LaserTag),
+            "tron" => Some(Self::Tron),
             _ => None,
         }
     }

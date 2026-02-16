@@ -77,6 +77,11 @@ impl ServerGameRegistry {
         self.factories.insert(GameId::LaserTag, || {
             Box::new(breakpoint_lasertag::LaserTagArena::new())
         });
+        #[cfg(feature = "tron")]
+        self.factories.insert(
+            GameId::Tron,
+            || Box::new(breakpoint_tron::TronCycles::new()),
+        );
     }
 
     pub fn create(&self, game_id: GameId) -> Option<Box<dyn BreakpointGame>> {
