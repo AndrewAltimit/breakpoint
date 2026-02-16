@@ -541,6 +541,25 @@ impl App {
             GameId::LaserTag => {
                 self.camera.set_mode(CameraMode::LaserTagFixed);
             },
+            #[cfg(feature = "tron")]
+            GameId::Tron => {
+                if let Some(ref role) = self.network_role
+                    && let Some(s) = read_game_state::<breakpoint_tron::TronState>(active)
+                    && let Some(c) = s.players.get(&role.local_player_id)
+                    && c.alive
+                {
+                    let dir = match c.direction {
+                        breakpoint_tron::Direction::North => [0.0, -1.0],
+                        breakpoint_tron::Direction::South => [0.0, 1.0],
+                        breakpoint_tron::Direction::East => [1.0, 0.0],
+                        breakpoint_tron::Direction::West => [-1.0, 0.0],
+                    };
+                    self.camera.set_mode(CameraMode::TronFollow {
+                        cycle_pos: glam::Vec3::new(c.x, 0.0, c.z),
+                        direction: dir,
+                    });
+                }
+            },
             #[allow(unreachable_patterns)]
             _ => {},
         }
@@ -590,6 +609,10 @@ impl App {
                     &self.ws,
                 );
             },
+            #[cfg(feature = "tron")]
+            GameId::Tron => {
+                crate::game::tron_input::process_tron_input(&self.input, active, role, &self.ws);
+            },
             #[allow(unreachable_patterns)]
             _ => {},
         }
@@ -631,6 +654,10 @@ impl App {
                     &self.theme,
                     dt,
                 );
+            },
+            #[cfg(feature = "tron")]
+            GameId::Tron => {
+                crate::game::tron_render::sync_tron_scene(&mut self.scene, active, &self.theme, dt);
             },
             #[allow(unreachable_patterns)]
             _ => {},

@@ -8,6 +8,7 @@ members = [
     "crates/games/breakpoint-golf",
     "crates/games/breakpoint-platformer",
     "crates/games/breakpoint-lasertag",
+    "crates/games/breakpoint-tron",
     "crates/adapters/breakpoint-github",
 ]
 

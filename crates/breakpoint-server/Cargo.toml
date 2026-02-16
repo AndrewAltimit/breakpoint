@@ -8,10 +8,11 @@ repository.workspace = true
 authors.workspace = true
 
 [features]
-default = ["golf", "platformer", "lasertag"]
+default = ["golf", "platformer", "lasertag", "tron"]
 golf = ["dep:breakpoint-golf"]
 platformer = ["dep:breakpoint-platformer"]
 lasertag = ["dep:breakpoint-lasertag"]
+tron = ["dep:breakpoint-tron"]
 github-poller = ["dep:breakpoint-github"]
 
 [dependencies]
@@ -20,6 +21,7 @@ breakpoint-github = { path = "../adapters/breakpoint-github", optional = true }
 breakpoint-golf = { path = "../games/breakpoint-golf", optional = true }
 breakpoint-platformer = { path = "../games/breakpoint-platformer", optional = true }
 breakpoint-lasertag = { path = "../games/breakpoint-lasertag", optional = true }
+breakpoint-tron = { path = "../games/breakpoint-tron", optional = true }
 axum = { version = "0.8", features = ["ws"] }
 tokio.workspace = true
 serde.workspace = true
@@ -49,6 +51,7 @@ serde_json.workspace = true
 breakpoint-golf = { path = "../games/breakpoint-golf" }
 breakpoint-platformer = { path = "../games/breakpoint-platformer" }
 breakpoint-lasertag = { path = "../games/breakpoint-lasertag" }
+breakpoint-tron = { path = "../games/breakpoint-tron" }
 breakpoint-core = { path = "../breakpoint-core", features = ["test-helpers"] }
 rmp-serde.workspace = true
 

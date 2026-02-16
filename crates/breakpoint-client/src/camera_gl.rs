@@ -9,6 +9,11 @@ pub enum CameraMode {
     PlatformerFollow { player_pos: Vec2 },
     /// Laser tag: fixed top-down view.
     LaserTagFixed,
+    /// Tron: third-person chase camera behind the player's cycle.
+    TronFollow {
+        cycle_pos: Vec3,
+        direction: [f32; 2],
+    },
     /// Overview of the course (golf fallback).
     GolfOverview {
         center_x: f32,
@@ -105,6 +110,36 @@ impl Camera {
                 self.position = Vec3::new(25.0, 62.0, 25.0);
                 self.target = Vec3::new(25.0, 0.0, 25.0);
                 self.up = Vec3::Z;
+            },
+            CameraMode::TronFollow {
+                cycle_pos,
+                direction,
+            } => {
+                // Chase camera behind the cycle
+                let cam_height = 18.0;
+                let cam_behind = 25.0;
+                let look_ahead = 15.0;
+
+                let dir_x = direction[0];
+                let dir_z = direction[1];
+
+                // Camera behind the cycle
+                let target_pos = Vec3::new(
+                    cycle_pos.x - dir_x * cam_behind,
+                    cam_height,
+                    cycle_pos.z - dir_z * cam_behind,
+                );
+                // Look ahead of the cycle
+                let look_at = Vec3::new(
+                    cycle_pos.x + dir_x * look_ahead,
+                    0.0,
+                    cycle_pos.z + dir_z * look_ahead,
+                );
+
+                self.position = self.position.lerp(target_pos, lerp_factor);
+                self.target = self.target.lerp(look_at, lerp_factor);
+                self.up = Vec3::Y;
+                self.far = 600.0;
             },
             CameraMode::None => {},
         }

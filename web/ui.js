@@ -100,6 +100,7 @@
         "mini-golf": "Click to aim & shoot | Power = distance from ball",
         "platform-racer": "WASD / Arrows = Move | Space = Jump | E = Use Power-Up",
         "laser-tag": "WASD = Move | Mouse = Aim | Click = Fire | E = Power-Up",
+        "tron": "A/D or Left/Right = Turn | Space = Brake",
     };
 
     // ── Game name display ───────────────────────────────
@@ -110,6 +111,8 @@
         "Platformer": "Platform Racer",
         "laser-tag": "Laser Tag",
         "LaserTag": "Laser Tag",
+        "tron": "Tron",
+        "Tron": "Tron",
     };
 
     // ── State update from WASM ──────────────────────────
