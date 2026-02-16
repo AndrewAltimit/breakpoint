@@ -1,0 +1,56 @@
+[package]
+name = "breakpoint-server"
+description = "Axum host server for Breakpoint"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[features]
+default = ["golf", "platformer", "lasertag"]
+golf = ["dep:breakpoint-golf"]
+platformer = ["dep:breakpoint-platformer"]
+lasertag = ["dep:breakpoint-lasertag"]
+github-poller = ["dep:breakpoint-github"]
+
+[dependencies]
+breakpoint-core = { path = "../breakpoint-core" }
+breakpoint-github = { path = "../adapters/breakpoint-github", optional = true }
+breakpoint-golf = { path = "../games/breakpoint-golf", optional = true }
+breakpoint-platformer = { path = "../games/breakpoint-platformer", optional = true }
+breakpoint-lasertag = { path = "../games/breakpoint-lasertag", optional = true }
+axum = { version = "0.8", features = ["ws"] }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rmp-serde.workspace = true
+rand.workspace = true
+uuid.workspace = true
+tower-http = { version = "0.6", features = ["fs", "cors", "set-header", "compression-full"] }
+bytes = "1"
+futures = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+hmac.workspace = true
+sha2.workspace = true
+hex.workspace = true
+toml.workspace = true
+tokio-stream.workspace = true
+
+[dev-dependencies]
+tokio-tungstenite = "0.26"
+reqwest = { workspace = true }
+hmac.workspace = true
+sha2.workspace = true
+hex.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+breakpoint-golf = { path = "../games/breakpoint-golf" }
+breakpoint-platformer = { path = "../games/breakpoint-platformer" }
+breakpoint-lasertag = { path = "../games/breakpoint-lasertag" }
+breakpoint-core = { path = "../breakpoint-core", features = ["test-helpers"] }
+rmp-serde.workspace = true
+
+[lints]
+workspace = true

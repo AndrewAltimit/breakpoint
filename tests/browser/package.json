@@ -1,0 +1,16 @@
+{
+  "name": "breakpoint-browser-tests",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "npx playwright test",
+    "test:chromium": "npx playwright test --project=chromium",
+    "test:firefox": "npx playwright test --project=firefox",
+    "report": "npx playwright show-report report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "msgpackr": "^1.11.8",
+    "ws": "^8.19.0"
+  }
+}

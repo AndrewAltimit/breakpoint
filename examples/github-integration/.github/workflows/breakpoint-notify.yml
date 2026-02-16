@@ -1,0 +1,78 @@
+---
+name: Breakpoint Notify
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+  pull_request:
+    types: [opened, closed]
+
+jobs:
+  notify:
+    name: Notify Breakpoint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify on workflow completion
+        if: github.event_name == 'workflow_run'
+        run: |
+          STATUS="${{ github.event.workflow_run.conclusion }}"
+          if [ "$STATUS" = "success" ]; then
+            EVENT_TYPE="pipeline.succeeded"
+            PRIORITY="ambient"
+          else
+            EVENT_TYPE="pipeline.failed"
+            PRIORITY="notice"
+          fi
+
+          curl -sf -X POST "${{ secrets.BREAKPOINT_URL }}/api/v1/events" \
+            -H "Authorization: Bearer ${{ secrets.BREAKPOINT_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"id\": \"gh-${{ github.event.workflow_run.id }}\",
+              \"event_type\": \"${EVENT_TYPE}\",
+              \"source\": \"github-actions\",
+              \"priority\": \"${PRIORITY}\",
+              \"title\": \"${{ github.event.workflow_run.name }} ${STATUS} on ${{ github.repository }}\",
+              \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
+              \"url\": \"${{ github.event.workflow_run.html_url }}\",
+              \"actor\": \"${{ github.event.workflow_run.actor.login }}\",
+              \"tags\": [\"ci\"],
+              \"action_required\": $([ \"$STATUS\" = \"failure\" ] && echo true || echo false)
+            }" || echo "::warning::Could not reach Breakpoint server"
+
+      - name: Notify on PR opened
+        if: github.event_name == 'pull_request' && github.event.action == 'opened'
+        run: |
+          curl -sf -X POST "${{ secrets.BREAKPOINT_URL }}/api/v1/events" \
+            -H "Authorization: Bearer ${{ secrets.BREAKPOINT_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"id\": \"gh-pr-${{ github.event.pull_request.number }}\",
+              \"event_type\": \"pr.opened\",
+              \"source\": \"github\",
+              \"priority\": \"notice\",
+              \"title\": \"PR #${{ github.event.pull_request.number }}: ${{ github.event.pull_request.title }}\",
+              \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
+              \"url\": \"${{ github.event.pull_request.html_url }}\",
+              \"actor\": \"${{ github.event.pull_request.user.login }}\",
+              \"tags\": [\"pr\"]
+            }" || echo "::warning::Could not reach Breakpoint server"
+
+      - name: Notify on PR merged
+        if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged
+        run: |
+          curl -sf -X POST "${{ secrets.BREAKPOINT_URL }}/api/v1/events" \
+            -H "Authorization: Bearer ${{ secrets.BREAKPOINT_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"id\": \"gh-pr-${{ github.event.pull_request.number }}-merged\",
+              \"event_type\": \"pr.merged\",
+              \"source\": \"github\",
+              \"priority\": \"ambient\",
+              \"title\": \"PR #${{ github.event.pull_request.number }} merged: ${{ github.event.pull_request.title }}\",
+              \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
+              \"url\": \"${{ github.event.pull_request.html_url }}\",
+              \"actor\": \"${{ github.event.pull_request.merged_by.login }}\",
+              \"tags\": [\"pr\"]
+            }" || echo "::warning::Could not reach Breakpoint server"

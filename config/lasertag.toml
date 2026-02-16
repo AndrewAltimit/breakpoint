@@ -1,0 +1,18 @@
+# Laser Tag game configuration
+# All values shown are the compiled-in defaults.
+# Remove or comment out any value to use its default.
+
+[physics]
+laser_speed = 40.0
+stun_duration = 1.5
+fire_cooldown = 0.4
+rapidfire_cooldown_mult = 0.4
+max_bounces = 2
+player_radius = 0.6
+move_speed = 8.0
+powerup_respawn_time = 15.0
+
+# Round time limit in seconds
+round_duration_secs = 180.0
+# Server tick rate (Hz)
+tick_rate_hz = 20.0

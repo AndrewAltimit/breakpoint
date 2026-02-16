@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Breakpoint Debug</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #111; color: #e0e0e0; font-family: system-ui; }
+        #test-canvas { width: 200px; height: 200px; border: 2px solid red; }
+        #game-canvas { display: block; width: 100vw; height: 100vh; position: fixed; top: 0; left: 0; }
+        #debug-panel {
+            position: fixed; top: 0; right: 0; width: 550px; max-height: 100vh;
+            background: rgba(0,0,0,0.95); color: #0f0; padding: 8px;
+            overflow-y: auto; z-index: 99999; font-family: monospace; font-size: 11px;
+            border-left: 2px solid #0f0;
+            pointer-events: auto;
+        }
+        #debug-panel .e { color: #f44; } #debug-panel .w { color: #ff0; } #debug-panel .i { color: #0ff; }
+        #debug-panel .s { color: #4f4; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <canvas id="game-canvas"></canvas>
+    <div id="debug-panel">
+        <div style="border-bottom: 1px solid #0f0; padding-bottom: 4px; margin-bottom: 4px;">
+            <strong>Breakpoint Debug Console</strong>
+            <button onclick="runWebGLTest()" style="margin-left: 10px;">Re-run WebGL Test</button>
+            <button onclick="loadWasm()" style="margin-left: 10px;">Load WASM</button>
+        </div>
+        <div id="log"></div>
+    </div>
+
+    <script>
+        const logEl = document.getElementById('log');
+        let logCount = 0;
+        function dlog(msg, cls) {
+            logCount++;
+            const d = document.createElement('div');
+            d.className = cls || '';
+            d.textContent = (logCount) + '. ' + performance.now().toFixed(0) + 'ms: ' + msg;
+            logEl.appendChild(d);
+            logEl.parentElement.scrollTop = logEl.parentElement.scrollHeight;
+        }
+
+        // Capture ALL console output
+        ['log','warn','error','info','debug'].forEach(method => {
+            const orig = console[method];
+            console[method] = function() {
+                orig.apply(console, arguments);
+                const cls = method === 'error' ? 'e' : method === 'warn' ? 'w' : 'i';
+                dlog('[' + method + '] ' + Array.from(arguments).map(a => {
+                    try { return typeof a === 'object' ? JSON.stringify(a).substring(0, 300) : String(a); }
+                    catch(e) { return String(a); }
+                }).join(' '), cls);
+            };
+        });
+
+        window.addEventListener('error', e => dlog('UNCAUGHT: ' + e.message + ' @ ' + e.filename + ':' + e.lineno, 'e'));
+        window.addEventListener('unhandledrejection', e => dlog('REJECTION: ' + e.reason, 'e'));
+
+        // =============================================
+        // PHASE 1: Test pure WebGL2 rendering (no Bevy)
+        // =============================================
+        function runWebGLTest() {
+            dlog('=== PHASE 1: Pure WebGL2 Test ===', 's');
+
+            const tc = document.createElement('canvas');
+            tc.width = 64;
+            tc.height = 64;
+            const gl = tc.getContext('webgl2');
+            if (!gl) {
+                dlog('WebGL2 NOT AVAILABLE - this is the problem!', 'e');
+                return false;
+            }
+
+            dlog('WebGL2 RENDERER: ' + gl.getParameter(gl.RENDERER));
+            dlog('WebGL2 VENDOR: ' + gl.getParameter(gl.VENDOR));
+            dlog('WebGL2 VERSION: ' + gl.getParameter(gl.VERSION));
+            dlog('GLSL VERSION: ' + gl.getParameter(gl.SHADING_LANGUAGE_VERSION));
+            dlog('MAX_TEXTURE_SIZE: ' + gl.getParameter(gl.MAX_TEXTURE_SIZE));
+            dlog('MAX_RENDERBUFFER_SIZE: ' + gl.getParameter(gl.MAX_RENDERBUFFER_SIZE));
+
+            // Try to render a solid color
+            gl.clearColor(1.0, 0.0, 0.0, 1.0);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+
+            const px = new Uint8Array(4);
+            gl.readPixels(32, 32, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+            const isRed = px[0] === 255 && px[1] === 0 && px[2] === 0 && px[3] === 255;
+            dlog('Clear to red, read pixel: rgba(' + px.join(',') + ') - ' + (isRed ? 'PASS' : 'FAIL'), isRed ? 's' : 'e');
+
+            // Try to compile a simple shader
+            const vs = gl.createShader(gl.VERTEX_SHADER);
+            gl.shaderSource(vs, `#version 300 es
+                in vec4 a_pos;
+                void main() { gl_Position = a_pos; }`);
+            gl.compileShader(vs);
+            const vsOk = gl.getShaderParameter(vs, gl.COMPILE_STATUS);
+            dlog('Vertex shader compile: ' + (vsOk ? 'PASS' : 'FAIL: ' + gl.getShaderInfoLog(vs)), vsOk ? 's' : 'e');
+
+            const fs = gl.createShader(gl.FRAGMENT_SHADER);
+            gl.shaderSource(fs, `#version 300 es
+                precision highp float;
+                out vec4 fragColor;
+                void main() { fragColor = vec4(0.0, 1.0, 0.0, 1.0); }`);
+            gl.compileShader(fs);
+            const fsOk = gl.getShaderParameter(fs, gl.COMPILE_STATUS);
+            dlog('Fragment shader compile: ' + (fsOk ? 'PASS' : 'FAIL: ' + gl.getShaderInfoLog(fs)), fsOk ? 's' : 'e');
+
+            const prog = gl.createProgram();
+            gl.attachShader(prog, vs);
+            gl.attachShader(prog, fs);
+            gl.linkProgram(prog);
+            const linkOk = gl.getProgramParameter(prog, gl.LINK_STATUS);
+            dlog('Program link: ' + (linkOk ? 'PASS' : 'FAIL: ' + gl.getProgramInfoLog(prog)), linkOk ? 's' : 'e');
+
+            if (linkOk) {
+                // Draw a fullscreen quad
+                gl.useProgram(prog);
+                const buf = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+                const loc = gl.getAttribLocation(prog, 'a_pos');
+                gl.enableVertexAttribArray(loc);
+                gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+                gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+                gl.readPixels(32, 32, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+                const isGreen = px[0] === 0 && px[1] === 255 && px[2] === 0 && px[3] === 255;
+                dlog('Draw green quad, read pixel: rgba(' + px.join(',') + ') - ' + (isGreen ? 'PASS' : 'FAIL'), isGreen ? 's' : 'e');
+            }
+
+            // Check for any GL errors
+            let err = gl.getError();
+            while (err !== gl.NO_ERROR) {
+                dlog('GL error: 0x' + err.toString(16), 'e');
+                err = gl.getError();
+            }
+
+            dlog('SharedArrayBuffer: ' + (typeof SharedArrayBuffer !== 'undefined'));
+            dlog('crossOriginIsolated: ' + self.crossOriginIsolated);
+
+            return true;
+        }
+
+        // Run WebGL test immediately
+        const webglOk = runWebGLTest();
+
+        // =============================================
+        // PHASE 2: Load WASM
+        // =============================================
+        let wasmLoaded = false;
+        async function loadWasm() {
+            if (wasmLoaded) {
+                dlog('WASM already loaded, refresh page to reload', 'w');
+                return;
+            }
+
+            dlog('=== PHASE 2: Loading WASM ===', 's');
+
+            // Monitor requestAnimationFrame
+            let rafCount = 0;
+            const origRaf = window.requestAnimationFrame;
+            window.requestAnimationFrame = function(cb) {
+                rafCount++;
+                if (rafCount <= 3 || rafCount === 10 || rafCount === 60 || rafCount % 300 === 0) {
+                    dlog('rAF #' + rafCount);
+                }
+                return origRaf.call(window, cb);
+            };
+
+            try {
+                dlog('Importing JS module... (WASM is ~120MB in dev mode, be patient)', 'i');
+                const module = await import('./pkg/breakpoint_client.js');
+                dlog('JS module loaded. Calling init()...', 'i');
+                await module.default();
+                dlog('init() returned. Bevy event loop should be running.', 's');
+                wasmLoaded = true;
+
+                // Monitor canvas after WASM loads
+                const canvas = document.getElementById('game-canvas');
+                function checkRendering() {
+                    const size = canvas.width + 'x' + canvas.height;
+                    dlog('Canvas size: ' + size + ' (attr), CSS: ' + canvas.clientWidth + 'x' + canvas.clientHeight);
+
+                    try {
+                        const readGl = canvas.getContext('webgl2');
+                        if (readGl) {
+                            dlog('GL drawingBuffer: ' + readGl.drawingBufferWidth + 'x' + readGl.drawingBufferHeight);
+                            dlog('GL contextLost: ' + readGl.isContextLost());
+
+                            const px = new Uint8Array(4);
+                            // Center pixel
+                            const cx = Math.floor(readGl.drawingBufferWidth / 2);
+                            const cy = Math.floor(readGl.drawingBufferHeight / 2);
+                            readGl.readPixels(cx, cy, 1, 1, readGl.RGBA, readGl.UNSIGNED_BYTE, px);
+                            dlog('Center pixel (' + cx + ',' + cy + '): rgba(' + px.join(',') + ')');
+
+                            // Corner pixels
+                            readGl.readPixels(10, 10, 1, 1, readGl.RGBA, readGl.UNSIGNED_BYTE, px);
+                            dlog('Bottom-left pixel: rgba(' + px.join(',') + ')');
+
+                            readGl.readPixels(readGl.drawingBufferWidth-10, readGl.drawingBufferHeight-10, 1, 1, readGl.RGBA, readGl.UNSIGNED_BYTE, px);
+                            dlog('Top-right pixel: rgba(' + px.join(',') + ')');
+
+                            // Check if all zeros (nothing rendered)
+                            readGl.readPixels(cx, cy, 1, 1, readGl.RGBA, readGl.UNSIGNED_BYTE, px);
+                            if (px[0] === 0 && px[1] === 0 && px[2] === 0 && px[3] === 0) {
+                                dlog('WARNING: Center pixel is transparent black - Bevy may not be rendering', 'w');
+                            } else if (px[0] === 0 && px[1] === 0 && px[2] === 0 && px[3] === 255) {
+                                dlog('Center pixel is opaque black', 'w');
+                            } else {
+                                dlog('Non-black center pixel detected - rendering is happening!', 's');
+                            }
+
+                            // Check for GL errors from Bevy
+                            let err = readGl.getError();
+                            if (err !== readGl.NO_ERROR) {
+                                dlog('GL error after Bevy render: 0x' + err.toString(16), 'e');
+                            }
+                        } else {
+                            dlog('Cannot get WebGL2 context (may be lost)', 'e');
+                        }
+                    } catch(e) {
+                        dlog('Pixel read error: ' + e, 'e');
+                    }
+
+                    dlog('rAF count so far: ' + rafCount);
+                }
+
+                // Check rendering at intervals
+                setTimeout(checkRendering, 500);
+                setTimeout(checkRendering, 1500);
+                setTimeout(checkRendering, 3000);
+                setTimeout(checkRendering, 5000);
+                setTimeout(checkRendering, 10000);
+
+            } catch(e) {
+                dlog('FATAL: ' + e.toString(), 'e');
+                if (e.stack) dlog('Stack: ' + e.stack, 'e');
+            }
+        }
+
+        // Auto-load WASM after WebGL test
+        if (webglOk) {
+            dlog('WebGL2 test passed, auto-loading WASM in 1s...', 'i');
+            setTimeout(loadWasm, 1000);
+        } else {
+            dlog('WebGL2 test FAILED. WASM will not auto-load.', 'e');
+        }
+    </script>
+</body>
+</html>

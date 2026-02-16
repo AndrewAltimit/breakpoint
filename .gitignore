@@ -1,0 +1,51 @@
+# Rust build artifacts
+target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# WASM build output
+web/pkg/
+*.wasm
+
+# Secrets
+*.key
+*.pem
+*.cert
+.env
+*.env.local
+
+# AI agent session/cache directories
+.codex/
+.opencode/
+.claude/
+.gemini/*
+!.gemini/settings.json
+.crush/
+
+# CI review artifacts
+codex-review.md
+gemini-review.md
+
+# Docker overrides
+docker-compose.override.yml
+
+# Node (for agent tooling)
+node_modules/
+
+# Browser test artifacts
+tests/browser/results/
+tests/browser/report/
+tests/browser/test-results/
+
+# Scratch
+scratch/
+.local/
