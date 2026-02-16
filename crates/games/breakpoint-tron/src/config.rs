@@ -51,12 +51,12 @@ pub struct TronConfig {
 impl Default for TronConfig {
     fn default() -> Self {
         Self {
-            base_speed: 20.0,
-            max_speed: 60.0,
-            grind_distance: 6.0,
-            grind_max_multiplier: 2.0,
-            turn_speed_penalty: 0.05,
-            turn_delay: 0.1,
+            base_speed: 50.0,
+            max_speed: 150.0,
+            grind_distance: 8.0,
+            grind_max_multiplier: 2.5,
+            turn_speed_penalty: 0.03,
+            turn_delay: 0.08,
             brake_fuel_max: 3.0,
             brake_drain_rate: 1.0,
             brake_regen_rate: 0.5,

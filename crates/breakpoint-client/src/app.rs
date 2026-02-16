@@ -258,9 +258,17 @@ impl App {
             self.audio_events.clear();
         }
 
-        // Render 3D scene
-        let clear = &self.theme.camera.clear_color;
-        let clear_color = Vec4::new(clear[0], clear[1], clear[2], 1.0);
+        // Render 3D scene — Tron uses pure black background
+        let clear_color = if self
+            .game
+            .as_ref()
+            .is_some_and(|g| g.game_id == GameId::Tron)
+        {
+            Vec4::new(0.0, 0.0, 0.0, 1.0)
+        } else {
+            let clear = &self.theme.camera.clear_color;
+            Vec4::new(clear[0], clear[1], clear[2], 1.0)
+        };
         self.renderer
             .draw(&self.scene, &self.camera, dt, clear_color);
 
@@ -657,7 +665,14 @@ impl App {
             },
             #[cfg(feature = "tron")]
             GameId::Tron => {
-                crate::game::tron_render::sync_tron_scene(&mut self.scene, active, &self.theme, dt);
+                let local_id = self.network_role.as_ref().map(|r| r.local_player_id);
+                crate::game::tron_render::sync_tron_scene(
+                    &mut self.scene,
+                    active,
+                    &self.theme,
+                    dt,
+                    local_id,
+                );
             },
             #[allow(unreachable_patterns)]
             _ => {},
