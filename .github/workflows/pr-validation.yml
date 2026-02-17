@@ -49,7 +49,7 @@ jobs:
     steps:
       - name: Pre-checkout cleanup
         run: |
-          for item in outputs .git/index.lock; do
+          for item in outputs web/pkg tests/browser/node_modules tests/browser/results tests/browser/report .git/index.lock; do
             if [ -d "$item" ] || [ -f "$item" ]; then
               docker run --rm -v "$(pwd):/workspace" busybox:1.36.1 sh -c \
                 "rm -rf /workspace/$item" 2>/dev/null || \
@@ -116,7 +116,7 @@ jobs:
     steps:
       - name: Pre-checkout cleanup
         run: |
-          for item in outputs .git/index.lock; do
+          for item in outputs web/pkg tests/browser/node_modules tests/browser/results tests/browser/report .git/index.lock; do
             if [ -d "$item" ] || [ -f "$item" ]; then
               docker run --rm -v "$(pwd):/workspace" busybox:1.36.1 sh -c \
                 "rm -rf /workspace/$item" 2>/dev/null || true
@@ -186,16 +186,6 @@ jobs:
         if: always()
         run: pkill -f breakpoint-server || true
 
-      - name: Fix test output ownership
-        if: always()
-        run: |
-          for dir in tests/browser/results tests/browser/report tests/browser/node_modules; do
-            if [ -d "$dir" ]; then
-              docker run --rm -v "$(pwd)/$dir:/workspace" busybox:1.36.1 \
-                chown -Rh "$(id -u):$(id -g)" /workspace 2>/dev/null || true
-            fi
-          done
-
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -232,7 +222,7 @@ jobs:
     steps:
       - name: Pre-checkout cleanup
         run: |
-          for item in outputs .git/index.lock; do
+          for item in outputs web/pkg tests/browser/node_modules tests/browser/results tests/browser/report .git/index.lock; do
             if [ -d "$item" ] || [ -f "$item" ]; then
               docker run --rm -v "$(pwd):/workspace" busybox:1.36.1 sh -c \
                 "rm -rf /workspace/$item" 2>/dev/null || \
@@ -330,7 +320,7 @@ jobs:
     steps:
       - name: Pre-checkout cleanup
         run: |
-          for item in outputs .git/index.lock; do
+          for item in outputs web/pkg tests/browser/node_modules tests/browser/results tests/browser/report .git/index.lock; do
             if [ -d "$item" ] || [ -f "$item" ]; then
               docker run --rm -v "$(pwd):/workspace" busybox:1.36.1 sh -c \
                 "rm -rf /workspace/$item" 2>/dev/null || \
@@ -418,7 +408,7 @@ jobs:
     steps:
       - name: Pre-checkout cleanup
         run: |
-          for item in outputs .git/index.lock; do
+          for item in outputs web/pkg tests/browser/node_modules tests/browser/results tests/browser/report .git/index.lock; do
             if [ -d "$item" ] || [ -f "$item" ]; then
               docker run --rm -v "$(pwd):/workspace" busybox:1.36.1 sh -c \
                 "rm -rf /workspace/$item" 2>/dev/null || \
@@ -508,7 +498,7 @@ jobs:
     steps:
       - name: Pre-checkout cleanup
         run: |
-          for item in outputs .git/index.lock; do
+          for item in outputs web/pkg tests/browser/node_modules tests/browser/results tests/browser/report .git/index.lock; do
             if [ -d "$item" ] || [ -f "$item" ]; then
               docker run --rm -v "$(pwd):/workspace" busybox:1.36.1 sh -c \
                 "rm -rf /workspace/$item" 2>/dev/null || \

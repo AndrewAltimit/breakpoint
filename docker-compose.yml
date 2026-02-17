@@ -24,12 +24,14 @@ services:
     build:
       context: .
       dockerfile: docker/playwright.Dockerfile
+    user: "${USER_ID:-1000}:${GROUP_ID:-1000}"
     network_mode: host
     volumes:
       - ./tests/browser:/work
     environment:
       - CI=true
       - PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+      - HOME=/tmp
     working_dir: /work
     profiles:
       - ci
