@@ -58,7 +58,8 @@ pub fn sync_tron_scene(
     );
 
     // Grid lines — hair-thin, dim, semi-transparent (fog handles horizon fade)
-    let grid_spacing = 25.0;
+    // Use wider spacing to reduce draw call count (important for Firefox/Tegra).
+    let grid_spacing = 50.0;
     let grid_height = 0.005;
     let grid_thickness = 0.08;
     let grid_color = Vec4::new(GRID_COLOR.x, GRID_COLOR.y, GRID_COLOR.z, 0.4);
@@ -93,7 +94,7 @@ pub fn sync_tron_scene(
         z += grid_spacing;
     }
 
-    // Arena boundary walls — TronWall with dim color and bright top edge
+    // Arena boundary walls — Glow shader for broad GPU compatibility
     let bwall_height = 8.0;
     let bwall_thickness = 0.5;
     let bwall_color = Vec4::new(BOUNDARY_COLOR.x, BOUNDARY_COLOR.y, BOUNDARY_COLOR.z, 0.8);
@@ -101,7 +102,7 @@ pub fn sync_tron_scene(
     // North wall (z=0)
     scene.add(
         MeshType::Cuboid,
-        MaterialType::TronWall {
+        MaterialType::Glow {
             color: bwall_color,
             intensity: 0.7,
         },
@@ -114,7 +115,7 @@ pub fn sync_tron_scene(
     // South wall (z=depth)
     scene.add(
         MeshType::Cuboid,
-        MaterialType::TronWall {
+        MaterialType::Glow {
             color: bwall_color,
             intensity: 0.7,
         },
@@ -127,7 +128,7 @@ pub fn sync_tron_scene(
     // West wall (x=0)
     scene.add(
         MeshType::Cuboid,
-        MaterialType::TronWall {
+        MaterialType::Glow {
             color: bwall_color,
             intensity: 0.7,
         },
@@ -140,7 +141,7 @@ pub fn sync_tron_scene(
     // East wall (x=width)
     scene.add(
         MeshType::Cuboid,
-        MaterialType::TronWall {
+        MaterialType::Glow {
             color: bwall_color,
             intensity: 0.7,
         },
@@ -159,8 +160,16 @@ pub fn sync_tron_scene(
 
     // Wall trail segments — TronWall shader (dim body + bright top edge).
     // Own walls: short, high intensity. Enemy walls: tall, dimmer.
+    // Cap total wall segments rendered to avoid GPU overload on weaker drivers.
+    let max_wall_segments = 512;
     let trail_thickness = 0.3;
-    for wall in &state.wall_segments {
+    let walls_to_render = if state.wall_segments.len() > max_wall_segments {
+        // Render most recent segments (end of the vec)
+        &state.wall_segments[state.wall_segments.len() - max_wall_segments..]
+    } else {
+        &state.wall_segments[..]
+    };
+    for wall in walls_to_render {
         let dx = wall.x2 - wall.x1;
         let dz = wall.z2 - wall.z1;
         let len = (dx * dx + dz * dz).sqrt();
@@ -191,7 +200,7 @@ pub fn sync_tron_scene(
 
         scene.add(
             MeshType::Cuboid,
-            MaterialType::TronWall {
+            MaterialType::Glow {
                 color: wall_color,
                 intensity,
             },

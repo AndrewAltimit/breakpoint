@@ -98,12 +98,17 @@ input[type="text"] {
     background: #1a1a2e;
     color: #e0e0e0;
     font-size: 1rem;
-    outline: none;
-    transition: border-color 0.2s;
+    outline: 2px solid transparent;
+    outline-offset: 2px;
+    transition: border-color 0.2s, outline-color 0.2s;
 }
 
 input[type="text"]:focus {
     border-color: #7cf;
+}
+
+input[type="text"]:focus-visible {
+    outline-color: #7cf;
 }
 
 /* Game selector */
@@ -479,7 +484,7 @@ input[type="text"]:focus {
 
 .toast-meta {
     font-size: 0.75rem;
-    color: #778;
+    color: #889;
 }
 
 .toast-actions {
@@ -643,5 +648,25 @@ input[type="text"]:focus {
     to {
         opacity: 1;
         transform: translateX(0);
+    }
+}
+
+/* ── Focus indicators ───────────────────────────────── */
+
+.btn:focus-visible,
+.game-btn:focus-visible,
+.icon-btn:focus-visible,
+.toast-claim-btn:focus-visible {
+    outline: 2px solid #7cf;
+    outline-offset: 2px;
+}
+
+/* ── Reduced motion ─────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
     }
 }

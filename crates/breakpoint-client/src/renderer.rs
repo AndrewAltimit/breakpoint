@@ -41,6 +41,7 @@ pub struct Renderer {
     programs: HashMap<&'static str, ShaderProgram>,
     meshes: HashMap<MeshKey, MeshBuffers>,
     time: f32,
+    context_lost: std::cell::Cell<bool>,
 }
 
 /// Key for mesh cache — identifies unique mesh configurations.
@@ -88,6 +89,46 @@ impl Renderer {
         gl.blend_func(GL::SRC_ALPHA, GL::ONE_MINUS_SRC_ALPHA);
         gl.enable(GL::CULL_FACE);
 
+        let context_lost = std::cell::Cell::new(false);
+
+        // Listen for WebGL context loss/restore events
+        {
+            let canvas_el: web_sys::EventTarget = canvas.clone().into();
+
+            let lost_flag = context_lost.clone();
+            let on_lost = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(
+                move |evt: web_sys::Event| {
+                    evt.prevent_default(); // allow context restore
+                    lost_flag.set(true);
+                    web_sys::console::warn_1(&"WebGL context lost".into());
+                },
+            );
+            let _ = canvas_el.add_event_listener_with_callback(
+                "webglcontextlost",
+                on_lost.as_ref().unchecked_ref(),
+            );
+            on_lost.forget(); // lives as long as the canvas
+
+            let restore_flag = context_lost.clone();
+            let gl_restore = gl.clone();
+            let on_restore = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(
+                move |_evt: web_sys::Event| {
+                    restore_flag.set(false);
+                    web_sys::console::log_1(&"WebGL context restored".into());
+                    // Re-enable GL state (programs/meshes rebuilt on next draw)
+                    gl_restore.enable(GL::DEPTH_TEST);
+                    gl_restore.enable(GL::BLEND);
+                    gl_restore.blend_func(GL::SRC_ALPHA, GL::ONE_MINUS_SRC_ALPHA);
+                    gl_restore.enable(GL::CULL_FACE);
+                },
+            );
+            let _ = canvas_el.add_event_listener_with_callback(
+                "webglcontextrestored",
+                on_restore.as_ref().unchecked_ref(),
+            );
+            on_restore.forget(); // lives as long as the canvas
+        }
+
         let mut renderer = Self {
             gl,
             canvas_width: 0,
@@ -96,6 +137,7 @@ impl Renderer {
             programs: HashMap::new(),
             meshes: HashMap::new(),
             time: 0.0,
+            context_lost,
         };
 
         renderer.compile_programs()?;
@@ -103,6 +145,20 @@ impl Renderer {
         renderer.resize();
 
         Ok(renderer)
+    }
+
+    /// Returns true if the WebGL context is currently lost.
+    pub fn is_context_lost(&self) -> bool {
+        self.context_lost.get()
+    }
+
+    /// Rebuild GPU resources after context restore.
+    pub fn rebuild_resources(&mut self) -> Result<(), String> {
+        self.programs.clear();
+        self.meshes.clear();
+        self.compile_programs()?;
+        self.generate_meshes();
+        Ok(())
     }
 
     /// Get the current device pixel ratio.
@@ -179,6 +235,18 @@ impl Renderer {
         fog_density: f32,
     ) {
         self.time += dt;
+
+        // Skip rendering while context is lost; rebuild on restore
+        if self.context_lost.get() {
+            return;
+        }
+        if self.programs.is_empty() {
+            // Context was just restored — rebuild GPU resources
+            if self.rebuild_resources().is_err() {
+                return;
+            }
+        }
+
         self.resize();
 
         let gl = &self.gl;

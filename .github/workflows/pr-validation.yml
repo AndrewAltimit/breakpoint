@@ -49,7 +49,7 @@ jobs:
     steps:
       - name: Pre-checkout cleanup
         run: |
-          for item in outputs .git/index.lock; do
+          for item in outputs web/pkg tests/browser/node_modules tests/browser/results tests/browser/report .git/index.lock; do
             if [ -d "$item" ] || [ -f "$item" ]; then
               docker run --rm -v "$(pwd):/workspace" busybox:1.36.1 sh -c \
                 "rm -rf /workspace/$item" 2>/dev/null || \
@@ -106,6 +106,107 @@ jobs:
             fi
           done
 
+  # ── Browser Tests (Playwright, containerized) ─────────────────
+  browser-tests:
+    name: Browser Tests
+    needs: ci
+    runs-on: self-hosted
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - name: Pre-checkout cleanup
+        run: |
+          for item in outputs web/pkg tests/browser/node_modules tests/browser/results tests/browser/report .git/index.lock; do
+            if [ -d "$item" ] || [ -f "$item" ]; then
+              docker run --rm -v "$(pwd):/workspace" busybox:1.36.1 sh -c \
+                "rm -rf /workspace/$item" 2>/dev/null || true
+            fi
+          done
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.head_ref }}
+
+      - name: Set UID/GID
+        run: |
+          echo "USER_ID=$(id -u)" >> $GITHUB_ENV
+          echo "GROUP_ID=$(id -g)" >> $GITHUB_ENV
+
+      - name: Build CI images
+        run: docker compose --profile ci build
+
+      - name: Build server (release)
+        run: docker compose --profile ci run --rm rust-ci cargo build -p breakpoint-server --release
+
+      - name: Build WASM client
+        run: |
+          docker compose --profile ci run --rm rust-ci \
+            wasm-pack build crates/breakpoint-client --target web --out-dir ../../web/pkg --dev
+
+      - name: Fix Docker file ownership
+        run: |
+          for dir in target web/pkg; do
+            if [ -d "$dir" ]; then
+              docker run --rm -v "$(pwd)/$dir:/workspace" busybox:1.36.1 \
+                chown -Rh "$(id -u):$(id -g)" /workspace 2>/dev/null || true
+            fi
+          done
+
+      - name: Start server
+        run: |
+          # Kill any leftover server from a previous run on this self-hosted runner
+          pkill -f breakpoint-server || true
+          sleep 1
+          ./target/release/breakpoint-server &
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8080/health > /dev/null 2>&1; then
+              echo "Server ready"
+              break
+            fi
+            sleep 0.5
+          done
+
+      - name: Run Playwright tests
+        run: |
+          docker compose --profile ci run --rm playwright \
+            bash -c "npm ci && npx playwright test \
+              startup-health.spec.js \
+              wasm-loading.spec.js \
+              overlay-expanded.spec.js \
+              tron.spec.js \
+              reconnect.spec.js \
+              --project=chromium --reporter=list"
+        timeout-minutes: 20
+
+      - name: Stop server
+        if: always()
+        run: pkill -f breakpoint-server || true
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results-${{ github.run_id }}
+          path: |
+            tests/browser/results/
+            tests/browser/report/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Fix Docker file ownership
+        if: always()
+        run: |
+          for dir in target outputs; do
+            if [ -d "$dir" ]; then
+              docker run --rm -v "$(pwd)/$dir:/workspace" busybox:1.36.1 \
+                chown -Rh "$(id -u):$(id -g)" /workspace 2>/dev/null || true
+            fi
+          done
+
   # ── Gemini AI Code Review ──────────────────────────────────────
   gemini-review:
     name: Gemini AI Code Review
@@ -121,7 +222,7 @@ jobs:
     steps:
       - name: Pre-checkout cleanup
         run: |
-          for item in outputs .git/index.lock; do
+          for item in outputs web/pkg tests/browser/node_modules tests/browser/results tests/browser/report .git/index.lock; do
             if [ -d "$item" ] || [ -f "$item" ]; then
               docker run --rm -v "$(pwd):/workspace" busybox:1.36.1 sh -c \
                 "rm -rf /workspace/$item" 2>/dev/null || \
@@ -219,7 +320,7 @@ jobs:
     steps:
       - name: Pre-checkout cleanup
         run: |
-          for item in outputs .git/index.lock; do
+          for item in outputs web/pkg tests/browser/node_modules tests/browser/results tests/browser/report .git/index.lock; do
             if [ -d "$item" ] || [ -f "$item" ]; then
               docker run --rm -v "$(pwd):/workspace" busybox:1.36.1 sh -c \
                 "rm -rf /workspace/$item" 2>/dev/null || \
@@ -307,7 +408,7 @@ jobs:
     steps:
       - name: Pre-checkout cleanup
         run: |
-          for item in outputs .git/index.lock; do
+          for item in outputs web/pkg tests/browser/node_modules tests/browser/results tests/browser/report .git/index.lock; do
             if [ -d "$item" ] || [ -f "$item" ]; then
               docker run --rm -v "$(pwd):/workspace" busybox:1.36.1 sh -c \
                 "rm -rf /workspace/$item" 2>/dev/null || \
@@ -397,7 +498,7 @@ jobs:
     steps:
       - name: Pre-checkout cleanup
         run: |
-          for item in outputs .git/index.lock; do
+          for item in outputs web/pkg tests/browser/node_modules tests/browser/results tests/browser/report .git/index.lock; do
             if [ -d "$item" ] || [ -f "$item" ]; then
               docker run --rm -v "$(pwd):/workspace" busybox:1.36.1 sh -c \
                 "rm -rf /workspace/$item" 2>/dev/null || \
@@ -458,7 +559,7 @@ jobs:
   # ── PR Status Summary ──────────────────────────────────────────
   pr-status:
     name: PR Status Summary
-    needs: [ci, config, gemini-review, codex-review, agent-review-response, agent-failure-handler]
+    needs: [ci, config, browser-tests, gemini-review, codex-review, agent-review-response, agent-failure-handler]
     if: always()
     runs-on: self-hosted
     steps:
@@ -469,12 +570,13 @@ jobs:
           echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| CI | ${{ needs.ci.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Browser Tests | ${{ needs.browser-tests.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Gemini Review | ${{ needs.gemini-review.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Codex Review | ${{ needs.codex-review.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Review Response | ${{ needs.agent-review-response.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Failure Handler | ${{ needs.agent-failure-handler.result }} |" >> $GITHUB_STEP_SUMMARY
 
-          # CI failure is blocking; reviews are advisory
+          # CI failure is blocking; browser tests are advisory
           if [[ "${{ needs.ci.result }}" == "failure" ]]; then
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "CI failed - please review the logs" >> $GITHUB_STEP_SUMMARY

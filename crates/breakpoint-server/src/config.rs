@@ -40,6 +40,12 @@ pub struct LimitsConfig {
     pub event_batch_limit: usize,
     pub ws_rate_limit_per_sec: f64,
     pub player_message_buffer: usize,
+    /// API endpoint rate limit: max burst tokens per IP.
+    pub api_rate_limit_burst: usize,
+    /// API endpoint rate limit: token refill rate (requests per second) per IP.
+    pub api_rate_limit_per_sec: f64,
+    /// Maximum concurrent WebSocket connections per IP address.
+    pub max_ws_per_ip: usize,
 }
 
 impl Default for LimitsConfig {
@@ -52,6 +58,9 @@ impl Default for LimitsConfig {
             event_batch_limit: 100,
             ws_rate_limit_per_sec: 50.0,
             player_message_buffer: 256,
+            api_rate_limit_burst: 20,
+            api_rate_limit_per_sec: 2.0, // ~120 req/min
+            max_ws_per_ip: 10,
         }
     }
 }

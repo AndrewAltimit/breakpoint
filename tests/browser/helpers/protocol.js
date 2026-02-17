@@ -196,6 +196,41 @@ export function parseLaserTagState(stateData) {
 }
 
 /**
+ * Parse a TronState from raw msgpack state_data bytes.
+ * TronState fields: [players, wall_segments, arena_width, arena_depth,
+ *   round_timer, round_complete, win_zone]
+ * TronCycle fields: [x, z, direction, speed, alive, rubber, brake_fuel, ...]
+ */
+export function parseTronState(stateData) {
+  const raw = unpack(Buffer.from(stateData));
+  return {
+    players: raw[0],
+    wallSegments: raw[1],
+    arenaWidth: raw[2],
+    arenaDepth: raw[3],
+    roundTimer: raw[4],
+    roundComplete: raw[5],
+    winZone: raw[6],
+  };
+}
+
+/**
+ * Encode a TronInput as msgpack (for embedding in PlayerInput.input_data).
+ * TronInput fields: [turn, brake]
+ * turn: "None", "Left", or "Right" (Rust enum serialized as string)
+ */
+export function encodeTronInput(turn, brake) {
+  return Buffer.from(pack([turn, brake]));
+}
+
+/**
+ * Encode a LeaveRoom client message.
+ */
+export function leaveRoomMsg() {
+  return encode(MSG.LEAVE_ROOM, []);
+}
+
+/**
  * Human-readable message type name.
  */
 export function msgTypeName(type) {

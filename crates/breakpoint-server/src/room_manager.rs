@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
+use uuid::Uuid;
 
 use breakpoint_core::game_trait::{GameId, PlayerId};
 use breakpoint_core::net::messages::{JoinRoomResponseMsg, PlayerListMsg, ServerMessage};
@@ -25,22 +27,40 @@ struct ConnectedPlayer {
     sender: PlayerSender,
 }
 
+/// Session record for reconnection. When a player disconnects mid-game,
+/// their session is preserved so they can rejoin within the TTL window.
+struct DisconnectedSession {
+    room_code: String,
+    player_id: PlayerId,
+    disconnected_at: Instant,
+}
+
+/// How long a disconnected session remains valid for reconnection.
+const SESSION_TTL: Duration = Duration::from_secs(60);
+
 /// Manages all active rooms and their connected players.
 pub struct RoomManager {
     rooms: HashMap<String, RoomEntry>,
     next_player_id: PlayerId,
+    /// Maps session_token → disconnected session info.
+    sessions: HashMap<String, DisconnectedSession>,
 }
 
 struct RoomEntry {
     room: Room,
     connections: HashMap<PlayerId, ConnectedPlayer>,
     last_activity: Instant,
+    /// Maps player_id → session_token for connected players.
+    player_sessions: HashMap<PlayerId, String>,
     /// Channel to send commands to the active game tick loop.
     game_command_tx: Option<mpsc::UnboundedSender<GameCommand>>,
     /// Handle for the game tick loop task.
     game_task: Option<JoinHandle<()>>,
     /// Handle for the broadcast forwarder task.
     broadcast_task: Option<JoinHandle<()>>,
+    /// Shared sender map for active game broadcasts. Updated on reconnection
+    /// so the broadcast forwarder can reach reconnected clients.
+    broadcast_senders: Arc<Mutex<HashMap<PlayerId, PlayerSender>>>,
 }
 
 impl Default for RoomManager {
@@ -54,6 +74,7 @@ impl RoomManager {
         Self {
             rooms: HashMap::new(),
             next_player_id: 1,
+            sessions: HashMap::new(),
         }
     }
 
@@ -63,15 +84,20 @@ impl RoomManager {
         id
     }
 
-    /// Create a new room. Returns (room_code, player_id) for the host.
+    fn generate_session_token() -> String {
+        Uuid::new_v4().to_string()
+    }
+
+    /// Create a new room. Returns (room_code, player_id, session_token) for the host.
     pub fn create_room(
         &mut self,
         player_name: String,
         player_color: PlayerColor,
         sender: PlayerSender,
-    ) -> (String, PlayerId) {
+    ) -> (String, PlayerId, String) {
         let code = generate_unique_room_code(&self.rooms);
         let player_id = self.alloc_player_id();
+        let session_token = Self::generate_session_token();
         let player = Player {
             id: player_id,
             display_name: player_name,
@@ -82,21 +108,25 @@ impl RoomManager {
         let room = Room::new(code.clone(), player);
         let mut connections = HashMap::new();
         connections.insert(player_id, ConnectedPlayer { sender });
+        let mut player_sessions = HashMap::new();
+        player_sessions.insert(player_id, session_token.clone());
         self.rooms.insert(
             code.clone(),
             RoomEntry {
                 room,
                 connections,
                 last_activity: Instant::now(),
+                player_sessions,
                 game_command_tx: None,
                 game_task: None,
                 broadcast_task: None,
+                broadcast_senders: Arc::new(Mutex::new(HashMap::new())),
             },
         );
-        (code, player_id)
+        (code, player_id, session_token)
     }
 
-    /// Join an existing room. Returns Ok(player_id) or Err(reason).
+    /// Join an existing room. Returns Ok((player_id, session_token)) or Err(reason).
     /// Players joining mid-game enter as spectators.
     pub fn join_room(
         &mut self,
@@ -104,7 +134,7 @@ impl RoomManager {
         player_name: String,
         player_color: PlayerColor,
         sender: PlayerSender,
-    ) -> Result<PlayerId, String> {
+    ) -> Result<(PlayerId, String), String> {
         // Validate room exists and is joinable
         {
             let entry = self
@@ -118,6 +148,7 @@ impl RoomManager {
         }
 
         let player_id = self.alloc_player_id();
+        let session_token = Self::generate_session_token();
         let Some(entry) = self.rooms.get_mut(room_code) else {
             return Err("Room not found".to_string());
         };
@@ -137,23 +168,105 @@ impl RoomManager {
         entry
             .connections
             .insert(player_id, ConnectedPlayer { sender });
+        entry
+            .player_sessions
+            .insert(player_id, session_token.clone());
 
-        Ok(player_id)
+        Ok((player_id, session_token))
     }
 
-    /// Remove a player from their room. Returns the room code if the room was
-    /// destroyed (empty after leave).
+    /// Attempt to reconnect using a session token. Returns
+    /// Ok((room_code, player_id, new_session_token)) on success.
+    pub fn reconnect(
+        &mut self,
+        session_token: &str,
+        sender: PlayerSender,
+    ) -> Result<(String, PlayerId, String), String> {
+        let session = self
+            .sessions
+            .remove(session_token)
+            .ok_or_else(|| "Invalid or expired session".to_string())?;
+
+        // Check TTL
+        if session.disconnected_at.elapsed() > SESSION_TTL {
+            return Err("Session expired".to_string());
+        }
+
+        let entry = self
+            .rooms
+            .get_mut(&session.room_code)
+            .ok_or_else(|| "Room no longer exists".to_string())?;
+
+        // Verify the player still exists in the room's player list
+        let player_exists = entry.room.players.iter().any(|p| p.id == session.player_id);
+        if !player_exists {
+            return Err("Player slot no longer available".to_string());
+        }
+
+        // Restore connection
+        let new_token = Self::generate_session_token();
+        entry.connections.insert(
+            session.player_id,
+            ConnectedPlayer {
+                sender: sender.clone(),
+            },
+        );
+        entry
+            .player_sessions
+            .insert(session.player_id, new_token.clone());
+        entry.last_activity = Instant::now();
+
+        // Update shared broadcast senders so the game loop can reach this client
+        {
+            let mut senders = entry.broadcast_senders.lock().unwrap();
+            senders.insert(session.player_id, sender);
+        }
+
+        Ok((session.room_code, session.player_id, new_token))
+    }
+
+    /// Remove a player from their room. If the room is mid-game, the player's
+    /// slot is preserved for reconnection via session token.
+    /// Returns the room code if the room was destroyed (empty after leave).
     pub fn leave_room(&mut self, room_code: &str, player_id: PlayerId) -> Option<String> {
         let entry = self.rooms.get_mut(room_code)?;
 
-        // Notify active game session about player leaving
+        let is_in_game = entry.room.state != RoomState::Lobby;
+
+        // Remove the connection (the WebSocket is gone)
+        entry.connections.remove(&player_id);
+        // Also remove from shared broadcast senders
+        {
+            let mut senders = entry.broadcast_senders.lock().unwrap();
+            senders.remove(&player_id);
+        }
+
+        // If room is in-game, preserve the player slot for reconnection
+        if is_in_game && let Some(token) = entry.player_sessions.remove(&player_id) {
+            self.sessions.insert(
+                token,
+                DisconnectedSession {
+                    room_code: room_code.to_string(),
+                    player_id,
+                    disconnected_at: Instant::now(),
+                },
+            );
+            tracing::info!(
+                player_id,
+                room = room_code,
+                "Player disconnected mid-game, session preserved for reconnection"
+            );
+            return None;
+        }
+
+        // Notify active game session about player leaving permanently
         if let Some(ref cmd_tx) = entry.game_command_tx
             && let Err(e) = cmd_tx.send(GameCommand::PlayerLeft { player_id })
         {
             tracing::debug!(player_id, room = room_code, error = %e, "Game session gone");
         }
 
-        entry.connections.remove(&player_id);
+        entry.player_sessions.remove(&player_id);
         entry.room.players.retain(|p| p.id != player_id);
 
         if entry.room.players.is_empty() {
@@ -178,6 +291,19 @@ impl RoomManager {
         }
 
         None
+    }
+
+    /// Clean up expired disconnected sessions. Returns the number removed.
+    pub fn cleanup_expired_sessions(&mut self) -> usize {
+        let before = self.sessions.len();
+        self.sessions
+            .retain(|_, s| s.disconnected_at.elapsed() <= SESSION_TTL);
+
+        // Also remove player slots from rooms for expired sessions
+        // Note: We don't remove player entries from rooms here because the
+        // game session manages its own player lifecycle. The session cleanup
+        // just prevents stale tokens from being used.
+        before - self.sessions.len()
     }
 
     /// Get the list of players in a room.
@@ -263,15 +389,18 @@ impl RoomManager {
         let (cmd_tx, broadcast_rx, game_handle) = spawn_game_session(registry, config)
             .ok_or_else(|| format!("Failed to create game: {game_name}"))?;
 
-        // Spawn a task that reads broadcasts and forwards to all room connections
-        let connections: HashMap<PlayerId, PlayerSender> = entry
-            .connections
-            .iter()
-            .map(|(&id, conn)| (id, conn.sender.clone()))
-            .collect();
+        // Populate shared broadcast senders from current connections
+        {
+            let mut senders = entry.broadcast_senders.lock().unwrap();
+            senders.clear();
+            for (&id, conn) in &entry.connections {
+                senders.insert(id, conn.sender.clone());
+            }
+        }
+        let shared_senders = Arc::clone(&entry.broadcast_senders);
         let room_code_owned = room_code.to_string();
         let broadcast_handle = tokio::spawn(async move {
-            forward_broadcasts(broadcast_rx, connections, &room_code_owned).await;
+            forward_broadcasts(broadcast_rx, shared_senders, &room_code_owned).await;
         });
 
         entry.game_command_tx = Some(cmd_tx);
@@ -398,6 +527,7 @@ impl RoomManager {
         player_id: PlayerId,
         room_code: &str,
         room_state: RoomState,
+        session_token: &str,
     ) -> Result<Vec<u8>, breakpoint_core::net::protocol::ProtocolError> {
         let msg = ServerMessage::JoinRoomResponse(JoinRoomResponseMsg {
             success: true,
@@ -405,6 +535,7 @@ impl RoomManager {
             room_code: Some(room_code.to_string()),
             room_state: Some(room_state),
             error: None,
+            session_token: Some(session_token.to_string()),
         });
         encode_server_message(&msg)
     }
@@ -419,6 +550,7 @@ impl RoomManager {
             room_code: None,
             room_state: None,
             error: Some(error.to_string()),
+            session_token: None,
         });
         encode_server_message(&msg)
     }
@@ -475,15 +607,17 @@ impl RoomManager {
 }
 
 /// Forward game broadcasts to all connected players in a room.
+/// Uses a shared sender map so reconnected clients are included dynamically.
 async fn forward_broadcasts(
     mut broadcast_rx: mpsc::UnboundedReceiver<crate::game_loop::GameBroadcast>,
-    connections: HashMap<PlayerId, PlayerSender>,
+    senders: Arc<Mutex<HashMap<PlayerId, PlayerSender>>>,
     room_code: &str,
 ) {
     while let Some(broadcast) = broadcast_rx.recv().await {
         match broadcast {
             GameBroadcast::EncodedMessage(data) => {
-                for (&player_id, sender) in &connections {
+                let snapshot = senders.lock().unwrap().clone();
+                for (&player_id, sender) in &snapshot {
                     if sender.try_send(data.clone()).is_err() {
                         tracing::debug!(
                             player_id,
@@ -524,9 +658,10 @@ mod tests {
     fn create_room_returns_valid_code() {
         let mut mgr = RoomManager::new();
         let (tx, _rx) = make_sender();
-        let (code, player_id) = mgr.create_room("Alice".into(), PlayerColor::default(), tx);
+        let (code, player_id, token) = mgr.create_room("Alice".into(), PlayerColor::default(), tx);
         assert!(breakpoint_core::room::is_valid_room_code(&code));
         assert_eq!(player_id, 1);
+        assert!(!token.is_empty());
         assert!(mgr.room_exists(&code));
     }
 
@@ -534,7 +669,7 @@ mod tests {
     fn join_room_succeeds() {
         let mut mgr = RoomManager::new();
         let (tx1, _rx1) = make_sender();
-        let (code, _) = mgr.create_room("Alice".into(), PlayerColor::default(), tx1);
+        let (code, ..) = mgr.create_room("Alice".into(), PlayerColor::default(), tx1);
 
         let (tx2, _rx2) = make_sender();
         let result = mgr.join_room(&code, "Bob".into(), PlayerColor::PALETTE[1], tx2);
@@ -556,7 +691,7 @@ mod tests {
     fn join_full_room_fails() {
         let mut mgr = RoomManager::new();
         let (tx1, _rx1) = make_sender();
-        let (code, _) = mgr.create_room("Alice".into(), PlayerColor::default(), tx1);
+        let (code, ..) = mgr.create_room("Alice".into(), PlayerColor::default(), tx1);
 
         // Fill the room (default max_players is 8, host is 1, so 7 more)
         for i in 0..7 {
@@ -576,10 +711,10 @@ mod tests {
     fn leave_room_removes_player() {
         let mut mgr = RoomManager::new();
         let (tx1, _rx1) = make_sender();
-        let (code, leader_id) = mgr.create_room("Alice".into(), PlayerColor::default(), tx1);
+        let (code, leader_id, _) = mgr.create_room("Alice".into(), PlayerColor::default(), tx1);
 
         let (tx2, _rx2) = make_sender();
-        let bob_id = mgr
+        let (bob_id, _) = mgr
             .join_room(&code, "Bob".into(), PlayerColor::default(), tx2)
             .unwrap();
 
@@ -593,7 +728,7 @@ mod tests {
     fn leave_room_destroys_empty_room() {
         let mut mgr = RoomManager::new();
         let (tx, _rx) = make_sender();
-        let (code, leader_id) = mgr.create_room("Alice".into(), PlayerColor::default(), tx);
+        let (code, leader_id, _) = mgr.create_room("Alice".into(), PlayerColor::default(), tx);
 
         let destroyed = mgr.leave_room(&code, leader_id);
         assert!(destroyed.is_some());
@@ -604,10 +739,10 @@ mod tests {
     fn host_migration_on_leave() {
         let mut mgr = RoomManager::new();
         let (tx1, _rx1) = make_sender();
-        let (code, leader_id) = mgr.create_room("Alice".into(), PlayerColor::default(), tx1);
+        let (code, leader_id, _) = mgr.create_room("Alice".into(), PlayerColor::default(), tx1);
 
         let (tx2, _rx2) = make_sender();
-        let bob_id = mgr
+        let (bob_id, _) = mgr
             .join_room(&code, "Bob".into(), PlayerColor::default(), tx2)
             .unwrap();
 
@@ -621,10 +756,10 @@ mod tests {
     fn idle_room_cleanup_removes_stale_rooms() {
         let mut mgr = RoomManager::new();
         let (tx1, _rx1) = make_sender();
-        let (code1, _) = mgr.create_room("Alice".into(), PlayerColor::default(), tx1);
+        let (code1, ..) = mgr.create_room("Alice".into(), PlayerColor::default(), tx1);
 
         let (tx2, _rx2) = make_sender();
-        let (code2, _) = mgr.create_room("Bob".into(), PlayerColor::default(), tx2);
+        let (code2, ..) = mgr.create_room("Bob".into(), PlayerColor::default(), tx2);
 
         // Artificially age the first room
         mgr.rooms.get_mut(&code1).unwrap().last_activity =
@@ -640,7 +775,7 @@ mod tests {
     fn valid_state_transitions() {
         let mut mgr = RoomManager::new();
         let (tx, _rx) = make_sender();
-        let (code, _) = mgr.create_room("Alice".into(), PlayerColor::default(), tx);
+        let (code, ..) = mgr.create_room("Alice".into(), PlayerColor::default(), tx);
 
         assert!(mgr.set_room_state(&code, RoomState::InGame));
         assert_eq!(mgr.get_room_state(&code), Some(RoomState::InGame));
@@ -656,7 +791,7 @@ mod tests {
     fn invalid_state_transition_rejected() {
         let mut mgr = RoomManager::new();
         let (tx, _rx) = make_sender();
-        let (code, _) = mgr.create_room("Alice".into(), PlayerColor::default(), tx);
+        let (code, ..) = mgr.create_room("Alice".into(), PlayerColor::default(), tx);
 
         // Lobby → Lobby is invalid
         assert!(!mgr.set_room_state(&code, RoomState::Lobby));
@@ -675,5 +810,38 @@ mod tests {
                 "Invalid room code: {code}"
             );
         }
+    }
+
+    #[test]
+    fn session_reconnect_restores_player() {
+        let mut mgr = RoomManager::new();
+        let (tx1, _rx1) = make_sender();
+        let (code, pid, token) = mgr.create_room("Alice".into(), PlayerColor::default(), tx1);
+
+        // Set room to InGame so leave preserves the session
+        mgr.set_room_state(&code, RoomState::InGame);
+
+        // Simulate disconnect (leave room mid-game)
+        mgr.leave_room(&code, pid);
+
+        // Session should exist
+        assert!(mgr.sessions.contains_key(&token));
+
+        // Reconnect with the session token
+        let (tx2, _rx2) = make_sender();
+        let result = mgr.reconnect(&token, tx2);
+        assert!(result.is_ok());
+        let (recon_code, recon_pid, new_token) = result.unwrap();
+        assert_eq!(recon_code, code);
+        assert_eq!(recon_pid, pid);
+        assert_ne!(new_token, token); // new token issued
+    }
+
+    #[test]
+    fn session_invalid_token_rejected() {
+        let mut mgr = RoomManager::new();
+        let (tx, _rx) = make_sender();
+        let result = mgr.reconnect("nonexistent-token", tx);
+        assert!(result.is_err());
     }
 }

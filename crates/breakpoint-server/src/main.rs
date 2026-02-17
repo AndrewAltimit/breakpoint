@@ -1,7 +1,9 @@
 use tracing_subscriber::EnvFilter;
 
 use breakpoint_server::config::ServerConfig;
-use breakpoint_server::{build_app, spawn_event_broadcaster, spawn_idle_room_cleanup};
+use breakpoint_server::{
+    build_app, spawn_event_broadcaster, spawn_idle_room_cleanup, spawn_rate_limit_cleanup,
+};
 
 #[tokio::main]
 async fn main() {
@@ -20,6 +22,9 @@ async fn main() {
 
     // Spawn idle room cleanup (removes rooms with no activity for >1 hour)
     spawn_idle_room_cleanup(state.clone());
+
+    // Spawn rate limiter cleanup (removes stale per-IP buckets every 5 minutes)
+    spawn_rate_limit_cleanup(state.clone());
 
     // Conditionally spawn GitHub Actions poller
     #[cfg(feature = "github-poller")]
@@ -40,7 +45,12 @@ async fn main() {
 
     tracing::info!("Breakpoint server listening on {listen_addr}");
 
-    if let Err(e) = axum::serve(listener, app).await {
+    if let Err(e) = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await
+    {
         tracing::error!("Server error: {e}");
         std::process::exit(1);
     }

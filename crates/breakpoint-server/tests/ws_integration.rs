@@ -612,6 +612,7 @@ async fn protocol_version_mismatch_rejected() {
         player_name: "Alice".to_string(),
         player_color: PlayerColor::default(),
         protocol_version: 99,
+        session_token: None,
     });
     let encoded = encode_client_message(&msg).unwrap();
     stream.send(Message::Binary(encoded.into())).await.unwrap();

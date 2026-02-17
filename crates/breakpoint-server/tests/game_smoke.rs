@@ -441,3 +441,124 @@ async fn multi_round_state_resets_golf() {
         "Round should not be complete after re-init"
     );
 }
+
+// ================================================================
+// Phase 6: Tron server integration & concurrent start
+// ================================================================
+
+#[tokio::test]
+async fn tron_input_processed_by_server() {
+    let server = TestServer::new().await;
+    let (_leader, mut client, _leader_id, client_id) = setup_two_player_game(&server, "tron").await;
+
+    // Collect initial GameState from server's game loop
+    let initial_state = loop {
+        let msg = ws_read_server_msg(&mut client).await;
+        if let ServerMessage::GameState(gs) = msg {
+            break gs.state_data;
+        }
+    };
+
+    // Client sends a TronInput with a turn
+    let tron_input = breakpoint_tron::TronInput {
+        turn: breakpoint_tron::TurnDirection::Left,
+        brake: false,
+    };
+    let input_data = rmp_serde::to_vec(&tron_input).unwrap();
+    let msg = ClientMessage::PlayerInput(PlayerInputMsg {
+        player_id: client_id,
+        tick: 1,
+        input_data,
+    });
+    ws_send_client_msg(&mut client, &msg).await;
+
+    // Wait for a GameState where state has changed (input was processed)
+    for _ in 0..50 {
+        let msg = ws_read_server_msg(&mut client).await;
+        if let ServerMessage::GameState(gs) = msg
+            && gs.state_data != initial_state
+        {
+            // Verify we can deserialize and that the cycle is alive
+            let state: breakpoint_tron::TronState = rmp_serde::from_slice(&gs.state_data).unwrap();
+            assert!(
+                state.players.contains_key(&client_id),
+                "Client cycle should exist in state"
+            );
+            return;
+        }
+    }
+    panic!("GameState never reflected the tron input after 50 ticks");
+}
+
+#[tokio::test]
+async fn tron_engine_round_completes() {
+    let mut game = breakpoint_tron::TronCycles::new();
+    let players = make_players(2);
+    game.init(&players, &default_config(60));
+
+    let empty = PlayerInputs {
+        inputs: HashMap::new(),
+    };
+
+    // Run enough ticks for cycles to hit walls or each other
+    let mut round_complete = false;
+    for _ in 0..3000 {
+        let events = game.update(0.05, &empty);
+        if events
+            .iter()
+            .any(|e| matches!(e, breakpoint_core::game_trait::GameEvent::RoundComplete))
+        {
+            round_complete = true;
+            break;
+        }
+    }
+
+    assert!(
+        round_complete,
+        "Tron round should complete as cycles collide"
+    );
+    assert!(game.is_round_complete());
+    let results = game.round_results();
+    assert_eq!(results.len(), 2, "Both players should have results");
+}
+
+#[tokio::test]
+async fn concurrent_game_start_only_one_succeeds() {
+    let server = TestServer::new().await;
+
+    // Create a 2-player room
+    let mut leader = ws_connect(&server.ws_url()).await;
+    let (_leader_resp, room_code) = ws_create_room(&mut leader, "Leader").await;
+    let _ = ws_read_server_msg(&mut leader).await; // PlayerList
+
+    let mut client = ws_connect(&server.ws_url()).await;
+    let _client_resp = ws_join_room(&mut client, &room_code, "Client").await;
+    let _ = ws_read_server_msg(&mut client).await; // PlayerList
+    let _ = ws_read_server_msg(&mut leader).await; // PlayerList
+
+    // Leader sends two game start requests in rapid succession
+    ws_request_game_start(&mut leader, "mini-golf").await;
+    ws_request_game_start(&mut leader, "mini-golf").await;
+
+    // First should succeed — both receive GameStart
+    let msg = ws_read_server_msg(&mut leader).await;
+    assert!(
+        matches!(msg, ServerMessage::GameStart(_)),
+        "First start request should succeed"
+    );
+    let msg = ws_read_server_msg(&mut client).await;
+    assert!(
+        matches!(msg, ServerMessage::GameStart(_)),
+        "Client should receive GameStart"
+    );
+
+    // Second start request should be silently ignored (game already in progress)
+    // Verify by checking that next messages are GameState ticks, not another GameStart
+    for _ in 0..5 {
+        let msg = ws_read_server_msg(&mut leader).await;
+        assert!(
+            !matches!(msg, ServerMessage::GameStart(_)),
+            "Should not receive a second GameStart: {msg:?}"
+        );
+    }
+}

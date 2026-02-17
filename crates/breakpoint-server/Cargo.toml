@@ -41,7 +41,7 @@ toml.workspace = true
 tokio-stream.workspace = true
 
 [dev-dependencies]
-tokio-tungstenite = "0.26"
+tokio-tungstenite = "0.28"
 reqwest = { workspace = true }
 hmac.workspace = true
 sha2.workspace = true
