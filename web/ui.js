@@ -472,13 +472,14 @@
                 // Create new toast
                 const el = document.createElement("div");
                 el.className = `toast priority-${toast.priority}`;
+                el.dataset.testid = `toast-${toast.id}`;
                 el.innerHTML = `
-                    <div class="toast-title">${escapeHtml(toast.title)}</div>
-                    <div class="toast-meta">${escapeHtml(toast.source || "")} ${toast.actor ? "by " + escapeHtml(toast.actor) : ""}</div>
-                    <div class="toast-actions">
+                    <div class="toast-title" data-testid="toast-title">${escapeHtml(toast.title)}</div>
+                    <div class="toast-meta" data-testid="toast-meta">${escapeHtml(toast.source || "")} ${toast.actor ? "by " + escapeHtml(toast.actor) : ""}</div>
+                    <div class="toast-actions" data-testid="toast-actions">
                         ${toast.claimedBy
-                            ? `<span class="toast-claimed">Claimed by ${escapeHtml(toast.claimedBy)}</span>`
-                            : `<button class="toast-claim-btn" data-event-id="${escapeHtml(toast.id)}">Claim</button>`
+                            ? `<span class="toast-claimed" data-testid="toast-claimed">Claimed by ${escapeHtml(toast.claimedBy)}</span>`
+                            : `<button class="toast-claim-btn" data-testid="toast-claim-btn" data-event-id="${escapeHtml(toast.id)}">Claim</button>`
                         }
                     </div>`;
                 // Bind claim button via addEventListener (CSP-safe, no inline onclick)

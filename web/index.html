@@ -18,49 +18,49 @@
 
                 <div class="lobby-section">
                     <label for="player-name">Your Name</label>
-                    <input type="text" id="player-name" maxlength="20" placeholder="Player123" autocomplete="off">
+                    <input type="text" id="player-name" data-testid="player-name" maxlength="20" placeholder="Player123" autocomplete="off">
                 </div>
 
                 <div class="lobby-section">
                     <label id="game-selector-label">Select Game</label>
-                    <div class="game-selector" role="group" aria-labelledby="game-selector-label">
-                        <button class="game-btn selected" data-game="mini-golf" aria-pressed="true">Mini Golf</button>
-                        <button class="game-btn" data-game="platform-racer" aria-pressed="false">Platform Racer</button>
-                        <button class="game-btn" data-game="laser-tag" aria-pressed="false">Laser Tag</button>
-                        <button class="game-btn" data-game="tron" aria-pressed="false">Tron</button>
+                    <div class="game-selector" data-testid="game-selector" role="group" aria-labelledby="game-selector-label">
+                        <button class="game-btn selected" data-testid="game-btn-mini-golf" data-game="mini-golf" aria-pressed="true">Mini Golf</button>
+                        <button class="game-btn" data-testid="game-btn-platform-racer" data-game="platform-racer" aria-pressed="false">Platform Racer</button>
+                        <button class="game-btn" data-testid="game-btn-laser-tag" data-game="laser-tag" aria-pressed="false">Laser Tag</button>
+                        <button class="game-btn" data-testid="game-btn-tron" data-game="tron" aria-pressed="false">Tron</button>
                     </div>
                 </div>
 
                 <div class="lobby-actions">
-                    <button id="btn-create" class="btn btn-primary">Create Room</button>
+                    <button id="btn-create" data-testid="btn-create" class="btn btn-primary">Create Room</button>
                     <div class="join-row">
-                        <input type="text" id="join-code" maxlength="9" placeholder="ABCD-1234" autocomplete="off" aria-label="Room code">
-                        <button id="btn-join" class="btn btn-secondary">Join</button>
+                        <input type="text" id="join-code" data-testid="join-code" maxlength="9" placeholder="ABCD-1234" autocomplete="off" aria-label="Room code">
+                        <button id="btn-join" data-testid="btn-join" class="btn btn-secondary">Join</button>
                     </div>
                 </div>
 
-                <div id="lobby-status" class="status-msg" aria-live="polite"></div>
-                <div id="lobby-error" class="error-msg" role="alert" aria-live="assertive"></div>
+                <div id="lobby-status" data-testid="lobby-status" class="status-msg" aria-live="polite"></div>
+                <div id="lobby-error" data-testid="lobby-error" class="error-msg" role="alert" aria-live="assertive"></div>
 
-                <div id="room-info" class="room-info hidden">
+                <div id="room-info" data-testid="room-info" class="room-info hidden">
                     <div class="room-code-display">
                         <span>Room Code:</span>
-                        <strong id="room-code-value"></strong>
+                        <strong id="room-code-value" data-testid="room-code-value"></strong>
                     </div>
-                    <div id="player-list" class="player-list"></div>
-                    <button id="btn-start" class="btn btn-primary btn-start hidden">Start Game</button>
+                    <div id="player-list" data-testid="player-list" class="player-list"></div>
+                    <button id="btn-start" data-testid="btn-start" class="btn btn-primary btn-start hidden">Start Game</button>
                 </div>
             </div>
         </div>
 
         <!-- Game HUD -->
-        <div id="game-hud" class="screen hidden">
+        <div id="game-hud" data-testid="game-hud" class="screen hidden">
             <div class="hud-top">
-                <span id="hud-game-name" class="hud-label"></span>
-                <span id="hud-round" class="hud-label"></span>
+                <span id="hud-game-name" data-testid="hud-game-name" class="hud-label"></span>
+                <span id="hud-round" data-testid="hud-round" class="hud-label"></span>
             </div>
             <div class="hud-bottom">
-                <span class="hud-hint" id="hud-controls"></span>
+                <span class="hud-hint" id="hud-controls" data-testid="hud-controls"></span>
             </div>
             <!-- Tron-specific HUD overlay -->
             <div id="tron-hud-container"></div>
@@ -82,40 +82,40 @@
         </div>
 
         <!-- Between Rounds -->
-        <div id="between-rounds" class="screen hidden" role="dialog" aria-labelledby="between-rounds-title">
+        <div id="between-rounds" data-testid="between-rounds" class="screen hidden" role="dialog" aria-labelledby="between-rounds-title">
             <div class="modal">
                 <h2 id="between-rounds-title">Round Complete</h2>
-                <div id="round-scores" class="score-table"></div>
-                <p class="round-info" id="round-info"></p>
+                <div id="round-scores" data-testid="round-scores" class="score-table"></div>
+                <p class="round-info" id="round-info" data-testid="round-info"></p>
             </div>
         </div>
 
         <!-- Game Over -->
-        <div id="game-over" class="screen hidden" role="dialog" aria-labelledby="game-over-title">
+        <div id="game-over" data-testid="game-over" class="screen hidden" role="dialog" aria-labelledby="game-over-title">
             <div class="modal">
                 <h2 id="game-over-title">Game Over</h2>
-                <div id="final-scores" class="score-table"></div>
-                <button id="btn-return-lobby" class="btn btn-primary">Return to Lobby</button>
+                <div id="final-scores" data-testid="final-scores" class="score-table"></div>
+                <button id="btn-return-lobby" data-testid="btn-return-lobby" class="btn btn-primary">Return to Lobby</button>
             </div>
         </div>
 
         <!-- Settings toggle -->
-        <button id="btn-mute" class="icon-btn mute-btn" title="Toggle Audio" aria-label="Toggle audio">&#x1f50a;</button>
+        <button id="btn-mute" data-testid="btn-mute" class="icon-btn mute-btn" title="Toggle Audio" aria-label="Toggle audio">&#x1f50a;</button>
 
         <!-- Disconnect banner -->
-        <div id="disconnect-banner" class="disconnect-banner hidden" role="alert" aria-live="assertive">
+        <div id="disconnect-banner" data-testid="disconnect-banner" class="disconnect-banner hidden" role="alert" aria-live="assertive">
             Connection lost. Reconnecting...
         </div>
     </div>
 
     <!-- Overlay: ticker + toasts -->
     <div id="overlay-container">
-        <div id="ticker-bar" class="ticker-bar hidden" role="status" aria-live="polite">
-            <span id="ticker-text"></span>
+        <div id="ticker-bar" data-testid="ticker-bar" class="ticker-bar hidden" role="status" aria-live="polite">
+            <span id="ticker-text" data-testid="ticker-text"></span>
         </div>
-        <div id="toast-container" class="toast-container" aria-live="polite" aria-label="Notifications"></div>
-        <button id="btn-dashboard" class="icon-btn dashboard-btn hidden" title="Dashboard" aria-label="Open dashboard">
-            <span id="badge-count" class="badge hidden">0</span>
+        <div id="toast-container" data-testid="toast-container" class="toast-container" aria-live="polite" aria-label="Notifications"></div>
+        <button id="btn-dashboard" data-testid="btn-dashboard" class="icon-btn dashboard-btn hidden" title="Dashboard" aria-label="Open dashboard">
+            <span id="badge-count" data-testid="badge-count" class="badge hidden">0</span>
             &#x1f4cb;
         </button>
     </div>

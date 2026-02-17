@@ -5,8 +5,12 @@ export default defineConfig({
   testMatch: '*.spec.js',
   timeout: 120_000,
   expect: { timeout: 30_000 },
+  globalSetup: './global-setup.js',
+  // Each test gets its own room, so parallel execution is safe.
+  // Workers = 2 is conservative; increase once stability is confirmed.
   fullyParallel: false,
-  retries: 0,
+  workers: process.env.CI ? 1 : 2,
+  retries: process.env.CI ? 1 : 0,
   reporter: [['list'], ['html', { open: 'never', outputFolder: 'report' }]],
   outputDir: 'results',
   use: {
