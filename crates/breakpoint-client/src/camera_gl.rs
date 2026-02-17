@@ -115,24 +115,25 @@ impl Camera {
                 cycle_pos,
                 direction,
             } => {
-                // Chase camera behind the cycle
-                let cam_height = 18.0;
-                let cam_behind = 25.0;
-                let look_ahead = 15.0;
+                // Low, dramatic chase camera (Armagetron style)
+                let cam_height = 6.0;
+                let cam_behind = 12.0;
+                let look_ahead = 30.0;
+                let look_height = 1.5;
 
                 let dir_x = direction[0];
                 let dir_z = direction[1];
 
-                // Camera behind the cycle
+                // Camera behind and low — dramatic perspective
                 let target_pos = Vec3::new(
                     cycle_pos.x - dir_x * cam_behind,
                     cam_height,
                     cycle_pos.z - dir_z * cam_behind,
                 );
-                // Look ahead of the cycle
+                // Look ahead and slightly above ground level
                 let look_at = Vec3::new(
                     cycle_pos.x + dir_x * look_ahead,
-                    0.0,
+                    look_height,
                     cycle_pos.z + dir_z * look_ahead,
                 );
 

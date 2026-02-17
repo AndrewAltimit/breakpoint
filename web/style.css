@@ -530,6 +530,111 @@ input[type="text"]:focus {
     padding: 0 4px;
 }
 
+/* ── Tron HUD ───────────────────────────────────────── */
+
+#tron-hud-container {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    overflow: hidden;
+}
+
+.tron-player-name {
+    position: absolute;
+    transform: translate(-50%, -100%);
+    font-size: 0.7rem;
+    font-weight: 700;
+    font-family: 'Consolas', 'Monaco', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+    pointer-events: none;
+    text-shadow: 0 0 6px currentColor, 0 0 12px currentColor;
+    opacity: 0.9;
+}
+
+.tron-player-name.dead {
+    opacity: 0.3;
+    text-decoration: line-through;
+}
+
+.tron-player-name.local {
+    font-size: 0.8rem;
+    text-shadow: 0 0 8px currentColor, 0 0 16px currentColor, 0 0 24px currentColor;
+    opacity: 1.0;
+}
+
+#tron-minimap {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 180px;
+    height: 180px;
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 4px;
+    pointer-events: none;
+    display: none;
+}
+
+#tron-minimap.visible {
+    display: block;
+}
+
+.tron-gauges {
+    position: absolute;
+    bottom: 20px;
+    left: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    pointer-events: none;
+}
+
+.tron-gauge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.tron-gauge-label {
+    font-size: 0.6rem;
+    font-family: 'Consolas', 'Monaco', monospace;
+    color: #889;
+    width: 24px;
+    text-align: right;
+}
+
+.tron-gauge-bar {
+    width: 100px;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.tron-gauge-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.1s linear;
+}
+
+.tron-gauge-fill.speed-fill {
+    background: #00d9ff;
+    box-shadow: 0 0 4px #00d9ff;
+}
+
+.tron-gauge-fill.rubber-fill {
+    background: #ff5900;
+    box-shadow: 0 0 4px #ff5900;
+}
+
+.tron-gauge-fill.brake-fill {
+    background: #1aff33;
+    box-shadow: 0 0 4px #1aff33;
+}
+
 @keyframes toast-in {
     from {
         opacity: 0;

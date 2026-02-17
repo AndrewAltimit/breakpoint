@@ -62,6 +62,23 @@
             <div class="hud-bottom">
                 <span class="hud-hint" id="hud-controls"></span>
             </div>
+            <!-- Tron-specific HUD overlay -->
+            <div id="tron-hud-container"></div>
+            <canvas id="tron-minimap" width="200" height="200"></canvas>
+            <div id="tron-gauges" class="tron-gauges hidden">
+                <div class="tron-gauge">
+                    <span class="tron-gauge-label">SPD</span>
+                    <div class="tron-gauge-bar"><div id="tron-speed-fill" class="tron-gauge-fill speed-fill"></div></div>
+                </div>
+                <div class="tron-gauge">
+                    <span class="tron-gauge-label">RBR</span>
+                    <div class="tron-gauge-bar"><div id="tron-rubber-fill" class="tron-gauge-fill rubber-fill"></div></div>
+                </div>
+                <div class="tron-gauge">
+                    <span class="tron-gauge-label">BRK</span>
+                    <div class="tron-gauge-bar"><div id="tron-brake-fill" class="tron-gauge-fill brake-fill"></div></div>
+                </div>
+            </div>
         </div>
 
         <!-- Between Rounds -->
