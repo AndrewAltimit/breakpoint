@@ -190,10 +190,7 @@ async fn session_reconnect_during_game() {
         session_token: None,
     });
     let encoded = encode_client_message(&join_msg).unwrap();
-    client
-        .send(Message::Binary(encoded.into()))
-        .await
-        .unwrap();
+    client.send(Message::Binary(encoded.into())).await.unwrap();
     let data = ws_read_raw(&mut client).await;
     let resp = decode_server_message(&data).unwrap();
     let (client_id, session_token) = match resp {
@@ -235,10 +232,7 @@ async fn session_reconnect_during_game() {
         session_token: Some(token),
     });
     let encoded = encode_client_message(&reconnect_msg).unwrap();
-    client2
-        .send(Message::Binary(encoded.into()))
-        .await
-        .unwrap();
+    client2.send(Message::Binary(encoded.into())).await.unwrap();
 
     let data = ws_read_raw(&mut client2).await;
     let resp = decode_server_message(&data).unwrap();
@@ -298,10 +292,7 @@ async fn invalid_session_token_rejected() {
         session_token: Some("bogus-token-12345".to_string()),
     });
     let encoded = encode_client_message(&reconnect_msg).unwrap();
-    client2
-        .send(Message::Binary(encoded.into()))
-        .await
-        .unwrap();
+    client2.send(Message::Binary(encoded.into())).await.unwrap();
 
     let data = ws_read_raw(&mut client2).await;
     let resp = decode_server_message(&data).unwrap();

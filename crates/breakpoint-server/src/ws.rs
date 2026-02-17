@@ -13,9 +13,7 @@ use futures::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 
 use breakpoint_core::game_trait::PlayerId;
-use breakpoint_core::net::messages::{
-    AlertClaimedMsg, JoinRoomMsg, MessageType, ServerMessage,
-};
+use breakpoint_core::net::messages::{AlertClaimedMsg, JoinRoomMsg, MessageType, ServerMessage};
 use breakpoint_core::net::protocol::{
     PROTOCOL_VERSION, decode_client_message, decode_message_type, encode_server_message,
 };

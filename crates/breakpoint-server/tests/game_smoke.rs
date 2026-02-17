@@ -449,8 +449,7 @@ async fn multi_round_state_resets_golf() {
 #[tokio::test]
 async fn tron_input_processed_by_server() {
     let server = TestServer::new().await;
-    let (_leader, mut client, _leader_id, client_id) =
-        setup_two_player_game(&server, "tron").await;
+    let (_leader, mut client, _leader_id, client_id) = setup_two_player_game(&server, "tron").await;
 
     // Collect initial GameState from server's game loop
     let initial_state = loop {
@@ -480,8 +479,7 @@ async fn tron_input_processed_by_server() {
             && gs.state_data != initial_state
         {
             // Verify we can deserialize and that the cycle is alive
-            let state: breakpoint_tron::TronState =
-                rmp_serde::from_slice(&gs.state_data).unwrap();
+            let state: breakpoint_tron::TronState = rmp_serde::from_slice(&gs.state_data).unwrap();
             assert!(
                 state.players.contains_key(&client_id),
                 "Client cycle should exist in state"
@@ -515,7 +513,10 @@ async fn tron_engine_round_completes() {
         }
     }
 
-    assert!(round_complete, "Tron round should complete as cycles collide");
+    assert!(
+        round_complete,
+        "Tron round should complete as cycles collide"
+    );
     assert!(game.is_round_complete());
     let results = game.round_results();
     assert_eq!(results.len(), 2, "Both players should have results");

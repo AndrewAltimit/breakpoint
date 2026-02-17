@@ -242,9 +242,7 @@ impl RoomManager {
         }
 
         // If room is in-game, preserve the player slot for reconnection
-        if is_in_game
-            && let Some(token) = entry.player_sessions.remove(&player_id)
-        {
+        if is_in_game && let Some(token) = entry.player_sessions.remove(&player_id) {
             self.sessions.insert(
                 token,
                 DisconnectedSession {
@@ -660,8 +658,7 @@ mod tests {
     fn create_room_returns_valid_code() {
         let mut mgr = RoomManager::new();
         let (tx, _rx) = make_sender();
-        let (code, player_id, token) =
-            mgr.create_room("Alice".into(), PlayerColor::default(), tx);
+        let (code, player_id, token) = mgr.create_room("Alice".into(), PlayerColor::default(), tx);
         assert!(breakpoint_core::room::is_valid_room_code(&code));
         assert_eq!(player_id, 1);
         assert!(!token.is_empty());
@@ -714,8 +711,7 @@ mod tests {
     fn leave_room_removes_player() {
         let mut mgr = RoomManager::new();
         let (tx1, _rx1) = make_sender();
-        let (code, leader_id, _) =
-            mgr.create_room("Alice".into(), PlayerColor::default(), tx1);
+        let (code, leader_id, _) = mgr.create_room("Alice".into(), PlayerColor::default(), tx1);
 
         let (tx2, _rx2) = make_sender();
         let (bob_id, _) = mgr
@@ -732,8 +728,7 @@ mod tests {
     fn leave_room_destroys_empty_room() {
         let mut mgr = RoomManager::new();
         let (tx, _rx) = make_sender();
-        let (code, leader_id, _) =
-            mgr.create_room("Alice".into(), PlayerColor::default(), tx);
+        let (code, leader_id, _) = mgr.create_room("Alice".into(), PlayerColor::default(), tx);
 
         let destroyed = mgr.leave_room(&code, leader_id);
         assert!(destroyed.is_some());
@@ -744,8 +739,7 @@ mod tests {
     fn host_migration_on_leave() {
         let mut mgr = RoomManager::new();
         let (tx1, _rx1) = make_sender();
-        let (code, leader_id, _) =
-            mgr.create_room("Alice".into(), PlayerColor::default(), tx1);
+        let (code, leader_id, _) = mgr.create_room("Alice".into(), PlayerColor::default(), tx1);
 
         let (tx2, _rx2) = make_sender();
         let (bob_id, _) = mgr
@@ -822,8 +816,7 @@ mod tests {
     fn session_reconnect_restores_player() {
         let mut mgr = RoomManager::new();
         let (tx1, _rx1) = make_sender();
-        let (code, pid, token) =
-            mgr.create_room("Alice".into(), PlayerColor::default(), tx1);
+        let (code, pid, token) = mgr.create_room("Alice".into(), PlayerColor::default(), tx1);
 
         // Set room to InGame so leave preserves the session
         mgr.set_room_state(&code, RoomState::InGame);

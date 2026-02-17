@@ -428,9 +428,7 @@ impl App {
             return;
         }
 
-        if should_send_join
-            && let Some(recon) = self.reconnect_info.take()
-        {
+        if should_send_join && let Some(recon) = self.reconnect_info.take() {
             self.send_join_room(&recon.room_code, &recon.player_name, recon.color_index);
         }
     }
@@ -442,7 +440,10 @@ impl App {
         use breakpoint_core::player::PlayerColor;
 
         let color = PlayerColor::PALETTE[color_index % PlayerColor::PALETTE.len()];
-        let session_token = self.reconnect_info.as_ref().map(|r| r.session_token.clone());
+        let session_token = self
+            .reconnect_info
+            .as_ref()
+            .map(|r| r.session_token.clone());
         let msg = ClientMessage::JoinRoom(JoinRoomMsg {
             room_code: room_code.to_string(),
             player_name: player_name.to_string(),
