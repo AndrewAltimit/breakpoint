@@ -221,6 +221,7 @@ mod tests {
             player_name: "Alice".to_string(),
             player_color: PlayerColor::default(),
             protocol_version: PROTOCOL_VERSION,
+            session_token: None,
         });
         let encoded = encode_client_message(&msg).unwrap();
         let decoded = decode_client_message(&encoded).unwrap();
@@ -320,6 +321,7 @@ mod tests {
             room_code: Some("ABCD-1234".to_string()),
             room_state: Some(crate::room::RoomState::Lobby),
             error: None,
+            session_token: Some("test-token".to_string()),
         });
         let encoded = encode_server_message(&msg).unwrap();
         let decoded = decode_server_message(&encoded).unwrap();
@@ -449,6 +451,7 @@ mod tests {
             player_name: "Test".to_string(),
             player_color: PlayerColor::default(),
             protocol_version: PROTOCOL_VERSION,
+            session_token: None,
         });
         let encoded = encode_client_message(&msg).unwrap();
         assert_eq!(encoded[0], MessageType::JoinRoom as u8);
@@ -573,6 +576,7 @@ mod tests {
                     player_name: "A".to_string(),
                     player_color: PlayerColor::default(),
                     protocol_version: 0,
+                    session_token: None,
                 }),
                 0x02,
             ),

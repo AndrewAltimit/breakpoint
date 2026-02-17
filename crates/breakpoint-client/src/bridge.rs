@@ -1,5 +1,8 @@
 use crate::app::App;
 
+#[cfg(target_family = "wasm")]
+use wasm_bindgen::JsCast;
+
 /// Push UI state to JavaScript each frame.
 pub fn push_ui_state(app: &App) {
     #[cfg(target_family = "wasm")]
@@ -60,12 +63,7 @@ pub fn push_ui_state(app: &App) {
 
         match serde_json::to_string(&state) {
             Ok(json_str) => {
-                if let Err(e) = js_sys::eval(&format!(
-                    "window._breakpointUpdate && window._breakpointUpdate({})",
-                    json_str
-                )) {
-                    crate::diag::console_warn!("JS bridge _breakpointUpdate failed: {e:?}");
-                }
+                call_window_fn("_breakpointUpdate", Some(&json_str));
             },
             Err(e) => {
                 crate::diag::console_warn!("Failed to serialize UI state: {e}");
@@ -190,23 +188,42 @@ fn build_tron_hud(_app: &App) -> serde_json::Value {
 /// Show disconnect banner via JS.
 pub fn show_disconnect_banner() {
     #[cfg(target_family = "wasm")]
-    {
-        if let Err(e) =
-            js_sys::eval("window._breakpointDisconnect && window._breakpointDisconnect()")
-        {
-            crate::diag::console_warn!("JS bridge _breakpointDisconnect failed: {e:?}");
-        }
-    }
+    call_window_fn("_breakpointDisconnect", None);
 }
 
 /// Hide disconnect banner via JS.
 pub fn hide_disconnect_banner() {
     #[cfg(target_family = "wasm")]
-    {
-        if let Err(e) = js_sys::eval("window._breakpointReconnect && window._breakpointReconnect()")
-        {
-            crate::diag::console_warn!("JS bridge _breakpointReconnect failed: {e:?}");
+    call_window_fn("_breakpointReconnect", None);
+}
+
+/// Call a function on the window object without eval().
+/// If `json_arg` is Some, the JSON string is parsed to a JS object and passed as the argument.
+#[cfg(target_family = "wasm")]
+fn call_window_fn(name: &str, json_arg: Option<&str>) {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let Ok(val) = js_sys::Reflect::get(&window, &wasm_bindgen::JsValue::from_str(name)) else {
+        return;
+    };
+    if !val.is_function() {
+        return;
+    }
+    let func: js_sys::Function = val.unchecked_into();
+    let result = if let Some(json_str) = json_arg {
+        match js_sys::JSON::parse(json_str) {
+            Ok(parsed) => func.call1(&wasm_bindgen::JsValue::NULL, &parsed),
+            Err(e) => {
+                crate::diag::console_warn!("JSON parse failed for {name}: {e:?}");
+                return;
+            },
         }
+    } else {
+        func.call0(&wasm_bindgen::JsValue::NULL)
+    };
+    if let Err(e) = result {
+        crate::diag::console_warn!("JS bridge {name} failed: {e:?}");
     }
 }
 
@@ -395,6 +412,7 @@ pub fn attach_ui_callbacks(app: &std::rc::Rc<std::cell::RefCell<App>>) {
                 player_name: app.lobby.player_name.clone(),
                 player_color: color,
                 protocol_version: PROTOCOL_VERSION,
+                session_token: None,
             });
             match encode_client_message(&msg) {
                 Ok(data) => {
@@ -444,6 +462,7 @@ pub fn attach_ui_callbacks(app: &std::rc::Rc<std::cell::RefCell<App>>) {
                 player_name: app.lobby.player_name.clone(),
                 player_color: color,
                 protocol_version: PROTOCOL_VERSION,
+                session_token: None,
             });
             match encode_client_message(&msg) {
                 Ok(data) => {
@@ -550,6 +569,8 @@ pub fn attach_ui_callbacks(app: &std::rc::Rc<std::cell::RefCell<App>>) {
         let app = Rc::clone(app);
         let closure = Closure::<dyn FnMut()>::new(move || {
             let mut app = app.borrow_mut();
+            app.reconnect_info = None;
+            app.ws.disconnect();
             app.transition_to(AppState::Lobby);
         });
         let _ = js_sys::Reflect::set(

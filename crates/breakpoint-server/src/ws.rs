@@ -1,6 +1,9 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use axum::extract::ConnectInfo;
+use axum::extract::FromRequest;
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{State, WebSocketUpgrade};
 use axum::http::StatusCode;
@@ -10,33 +13,56 @@ use futures::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 
 use breakpoint_core::game_trait::PlayerId;
-use breakpoint_core::net::messages::{AlertClaimedMsg, MessageType, ServerMessage};
+use breakpoint_core::net::messages::{
+    AlertClaimedMsg, JoinRoomMsg, MessageType, ServerMessage,
+};
 use breakpoint_core::net::protocol::{
     PROTOCOL_VERSION, decode_client_message, decode_message_type, encode_server_message,
 };
 use breakpoint_core::room::RoomState;
 
-use crate::state::{AppState, ConnectionGuard};
+use crate::state::{AppState, ConnectionGuard, IpConnectionGuard};
 
 pub async fn ws_handler(
-    ws: WebSocketUpgrade,
     State(state): State<AppState>,
-) -> Result<impl IntoResponse, StatusCode> {
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, StatusCode> {
     let max_ws = state.config.limits.max_ws_connections;
     let current = state.ws_connection_count.load(Ordering::Relaxed);
     if current >= max_ws {
         tracing::warn!(current, max = max_ws, "WS connection limit reached");
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
-    Ok(ws.on_upgrade(move |socket| handle_socket(socket, state)))
+
+    // Per-IP connection limit
+    let ip = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ci| ci.0.ip())
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+    let max_per_ip = state.config.limits.max_ws_per_ip;
+    let ip_guard =
+        IpConnectionGuard::try_acquire(ip, Arc::clone(&state.ws_per_ip), max_per_ip).await;
+    let Some(ip_guard) = ip_guard else {
+        tracing::warn!(%ip, max_per_ip, "Per-IP WS connection limit reached");
+        return Err(StatusCode::TOO_MANY_REQUESTS);
+    };
+
+    // Perform WebSocket upgrade manually
+    let ws = WebSocketUpgrade::from_request(request, &state)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    Ok(ws
+        .on_upgrade(move |socket| handle_socket(socket, state, ip_guard))
+        .into_response())
 }
 
-async fn handle_socket(socket: WebSocket, state: AppState) {
+async fn handle_socket(socket: WebSocket, state: AppState, _ip_guard: IpConnectionGuard) {
     let _guard = ConnectionGuard::new(Arc::clone(&state.ws_connection_count));
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
-    // Wait for the first message: must be a JoinRoom (with room_code empty to create,
-    // or non-empty to join).
+    // Wait for the first message: must be a JoinRoom.
     let first_msg = match ws_receiver.next().await {
         Some(Ok(Message::Binary(data))) => data,
         _ => return,
@@ -46,127 +72,73 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         return;
     };
 
-    let (room_code, player_id) = match client_msg {
-        breakpoint_core::net::messages::ClientMessage::JoinRoom(join) => {
-            // Validate protocol version
-            if join.protocol_version != 0 && join.protocol_version != PROTOCOL_VERSION {
-                if let Ok(response) = crate::room_manager::RoomManager::make_join_error(&format!(
-                    "Protocol version mismatch: client={}, server={}",
-                    join.protocol_version, PROTOCOL_VERSION
-                )) && let Err(e) = ws_sender.send(Message::Binary(response.into())).await
-                {
-                    tracing::warn!(error = %e, "Failed to send protocol mismatch error");
-                }
-                return;
-            }
-
-            // Validate player name
-            let name = join.player_name.trim().to_string();
-            if name.is_empty() || name.len() > 32 || name.chars().any(|c| c.is_control()) {
-                if let Ok(response) =
-                    crate::room_manager::RoomManager::make_join_error("Invalid player name")
-                    && let Err(e) = ws_sender.send(Message::Binary(response.into())).await
-                {
-                    tracing::warn!(error = %e, "Failed to send invalid name error");
-                }
-                return;
-            }
-
-            let (tx, rx) = mpsc::channel::<Bytes>(state.config.limits.player_message_buffer);
-
-            let mut rooms = state.rooms.write().await;
-
-            if join.room_code.is_empty() {
-                // Create new room
-                let (code, pid) = rooms.create_room(name, join.player_color, tx);
-                let Ok(response) = crate::room_manager::RoomManager::make_join_response(
-                    pid,
-                    &code,
-                    RoomState::Lobby,
-                ) else {
-                    tracing::warn!("Failed to encode JoinRoomResponse");
-                    return;
-                };
-                drop(rooms);
-
-                // Send response to this player
-                if ws_sender
-                    .send(Message::Binary(response.into()))
-                    .await
-                    .is_err()
-                {
-                    return;
-                }
-
-                // Broadcast player list
-                let rooms = state.rooms.read().await;
-                rooms.broadcast_player_list(&code);
-                drop(rooms);
-
-                spawn_writer(ws_sender, rx);
-                (code, pid)
-            } else {
-                // Validate room code format before lookup
-                if !breakpoint_core::room::is_valid_room_code(&join.room_code) {
-                    if let Ok(response) =
-                        crate::room_manager::RoomManager::make_join_error("Invalid room code")
-                    {
-                        drop(rooms);
-                        if let Err(e) = ws_sender.send(Message::Binary(response.into())).await {
-                            tracing::warn!(error = %e, "Failed to send invalid room code error");
-                        }
-                    } else {
-                        drop(rooms);
-                    }
-                    return;
-                }
-
-                // Join existing room
-                match rooms.join_room(&join.room_code, name, join.player_color, tx) {
-                    Ok(pid) => {
-                        let room_state = rooms
-                            .get_room_state(&join.room_code)
-                            .unwrap_or(RoomState::Lobby);
-                        let Ok(response) = crate::room_manager::RoomManager::make_join_response(
-                            pid,
-                            &join.room_code,
-                            room_state,
-                        ) else {
-                            tracing::warn!("Failed to encode JoinRoomResponse");
-                            return;
-                        };
-                        let code = join.room_code.clone();
-                        drop(rooms);
-
-                        if ws_sender
-                            .send(Message::Binary(response.into()))
-                            .await
-                            .is_err()
-                        {
-                            return;
-                        }
-
-                        let rooms = state.rooms.read().await;
-                        rooms.broadcast_player_list(&code);
-                        drop(rooms);
-
-                        spawn_writer(ws_sender, rx);
-                        (code, pid)
-                    },
-                    Err(err) => {
-                        if let Ok(response) =
-                            crate::room_manager::RoomManager::make_join_error(&err)
-                            && let Err(e) = ws_sender.send(Message::Binary(response.into())).await
-                        {
-                            tracing::warn!(error = %e, "Failed to send join error response");
-                        }
-                        return;
-                    },
-                }
-            }
-        },
+    let join = match client_msg {
+        breakpoint_core::net::messages::ClientMessage::JoinRoom(j) => j,
         _ => return,
     };
+
+    // Validate protocol version
+    if join.protocol_version != 0 && join.protocol_version != PROTOCOL_VERSION {
+        if let Ok(response) = crate::room_manager::RoomManager::make_join_error(&format!(
+            "Protocol version mismatch: client={}, server={}",
+            join.protocol_version, PROTOCOL_VERSION
+        )) && let Err(e) = ws_sender.send(Message::Binary(response.into())).await
+        {
+            tracing::warn!(error = %e, "Failed to send protocol mismatch error");
+        }
+        return;
+    }
+
+    // Attempt join (reconnect or normal)
+    let result = match attempt_join(&join, &state).await {
+        Some(r) => r,
+        None => {
+            send_join_error(&mut ws_sender, "Invalid player name").await;
+            return;
+        },
+    };
+
+    let (room_code, player_id, rx) = match result {
+        JoinResult::Success {
+            room_code,
+            player_id,
+            session_token,
+            room_state,
+            rx,
+        } => {
+            let Ok(response) = crate::room_manager::RoomManager::make_join_response(
+                player_id,
+                &room_code,
+                room_state,
+                &session_token,
+            ) else {
+                tracing::warn!("Failed to encode JoinRoomResponse");
+                return;
+            };
+
+            if ws_sender
+                .send(Message::Binary(response.into()))
+                .await
+                .is_err()
+            {
+                return;
+            }
+
+            (room_code, player_id, rx)
+        },
+        JoinResult::Error(err) => {
+            send_join_error(&mut ws_sender, &err).await;
+            return;
+        },
+    };
+
+    // Broadcast player list
+    {
+        let rooms = state.rooms.read().await;
+        rooms.broadcast_player_list(&room_code);
+    }
+
+    spawn_writer(ws_sender, rx);
 
     // Read loop: relay incoming messages
     read_loop(&mut ws_receiver, &state, &room_code, player_id).await;
@@ -175,7 +147,6 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     let mut rooms = state.rooms.write().await;
     let destroyed = rooms.leave_room(&room_code, player_id);
     if destroyed.is_none() {
-        // Room still exists, broadcast updated player list
         rooms.broadcast_player_list(&room_code);
     }
     drop(rooms);
@@ -185,6 +156,106 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         room_code = %room_code,
         "Player disconnected"
     );
+}
+
+enum JoinResult {
+    Success {
+        room_code: String,
+        player_id: PlayerId,
+        session_token: String,
+        room_state: RoomState,
+        rx: mpsc::Receiver<Bytes>,
+    },
+    Error(String),
+}
+
+async fn attempt_join(join: &JoinRoomMsg, state: &AppState) -> Option<JoinResult> {
+    // Try session-based reconnection first
+    if let Some(ref token) = join.session_token {
+        let (tx, rx) = mpsc::channel::<Bytes>(state.config.limits.player_message_buffer);
+        let mut rooms = state.rooms.write().await;
+        match rooms.reconnect(token, tx) {
+            Ok((code, pid, new_token)) => {
+                let room_state = rooms.get_room_state(&code).unwrap_or(RoomState::Lobby);
+                drop(rooms);
+                tracing::info!(player_id = pid, room = %code, "Player reconnected via session");
+                return Some(JoinResult::Success {
+                    room_code: code,
+                    player_id: pid,
+                    session_token: new_token,
+                    room_state,
+                    rx,
+                });
+            },
+            Err(e) => {
+                drop(rooms);
+                tracing::debug!(error = %e, "Session reconnect failed, trying normal join");
+            },
+        }
+    }
+
+    // Normal join path
+    let (tx, rx) = mpsc::channel::<Bytes>(state.config.limits.player_message_buffer);
+
+    // Validate player name
+    let name = join.player_name.trim().to_string();
+    if name.is_empty() || name.len() > 32 || name.chars().any(|c| c.is_control()) {
+        return None; // signals name validation failure
+    }
+
+    let mut rooms = state.rooms.write().await;
+
+    if join.room_code.is_empty() {
+        // Create new room
+        let (code, pid, token) = rooms.create_room(name, join.player_color, tx);
+        drop(rooms);
+        Some(JoinResult::Success {
+            room_code: code,
+            player_id: pid,
+            session_token: token,
+            room_state: RoomState::Lobby,
+            rx,
+        })
+    } else {
+        // Validate room code format before lookup
+        if !breakpoint_core::room::is_valid_room_code(&join.room_code) {
+            drop(rooms);
+            return Some(JoinResult::Error("Invalid room code".to_string()));
+        }
+
+        // Join existing room
+        match rooms.join_room(&join.room_code, name, join.player_color, tx) {
+            Ok((pid, token)) => {
+                let room_state = rooms
+                    .get_room_state(&join.room_code)
+                    .unwrap_or(RoomState::Lobby);
+                let code = join.room_code.clone();
+                drop(rooms);
+                Some(JoinResult::Success {
+                    room_code: code,
+                    player_id: pid,
+                    session_token: token,
+                    room_state,
+                    rx,
+                })
+            },
+            Err(err) => {
+                drop(rooms);
+                Some(JoinResult::Error(err))
+            },
+        }
+    }
+}
+
+async fn send_join_error(
+    ws_sender: &mut futures::stream::SplitSink<WebSocket, Message>,
+    error: &str,
+) {
+    if let Ok(response) = crate::room_manager::RoomManager::make_join_error(error)
+        && let Err(e) = ws_sender.send(Message::Binary(response.into())).await
+    {
+        tracing::warn!(error = %e, "Failed to send join error response");
+    }
 }
 
 fn spawn_writer(

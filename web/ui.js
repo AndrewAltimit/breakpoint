@@ -42,8 +42,12 @@
 
     gameBtns.forEach((btn) => {
         btn.addEventListener("click", () => {
-            gameBtns.forEach((b) => b.classList.remove("selected"));
+            gameBtns.forEach((b) => {
+                b.classList.remove("selected");
+                b.setAttribute("aria-pressed", "false");
+            });
             btn.classList.add("selected");
+            btn.setAttribute("aria-pressed", "true");
             selectedGame = btn.dataset.game;
             if (window._bpSelectGame) window._bpSelectGame(selectedGame);
         });
@@ -198,7 +202,9 @@
         // Highlight selected game button
         const sel = lobby.selectedGame || selectedGame;
         gameBtns.forEach((btn) => {
-            btn.classList.toggle("selected", btn.dataset.game === sel);
+            const isSelected = btn.dataset.game === sel;
+            btn.classList.toggle("selected", isSelected);
+            btn.setAttribute("aria-pressed", String(isSelected));
         });
     }
 
@@ -472,9 +478,17 @@
                     <div class="toast-actions">
                         ${toast.claimedBy
                             ? `<span class="toast-claimed">Claimed by ${escapeHtml(toast.claimedBy)}</span>`
-                            : `<button class="toast-claim-btn" onclick="window._bpClaimAlert && window._bpClaimAlert('${escapeAttr(toast.id)}')">Claim</button>`
+                            : `<button class="toast-claim-btn" data-event-id="${escapeHtml(toast.id)}">Claim</button>`
                         }
                     </div>`;
+                // Bind claim button via addEventListener (CSP-safe, no inline onclick)
+                const claimBtn = el.querySelector(".toast-claim-btn");
+                if (claimBtn) {
+                    const eventId = toast.id;
+                    claimBtn.addEventListener("click", () => {
+                        if (window._bpClaimAlert) window._bpClaimAlert(eventId);
+                    });
+                }
                 toastContainer.appendChild(el);
                 activeToasts.set(toast.id, el);
             }
@@ -486,9 +500,11 @@
         if (state.muted) {
             btnMute.classList.add("muted");
             btnMute.innerHTML = "&#x1f507;";
+            btnMute.setAttribute("aria-label", "Unmute audio");
         } else {
             btnMute.classList.remove("muted");
             btnMute.innerHTML = "&#x1f50a;";
+            btnMute.setAttribute("aria-label", "Mute audio");
         }
     }
 
@@ -498,8 +514,4 @@
         return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     }
 
-    function escapeAttr(str) {
-        if (!str) return "";
-        return str.replace(/'/g, "\\'").replace(/\\/g, "\\\\");
-    }
 })();

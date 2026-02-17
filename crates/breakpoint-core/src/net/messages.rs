@@ -74,6 +74,9 @@ pub struct JoinRoomMsg {
     /// backwards compatibility with clients that don't send this field.
     #[serde(default)]
     pub protocol_version: u8,
+    /// Session token from a previous connection, used for reconnection.
+    #[serde(default)]
+    pub session_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -83,6 +86,10 @@ pub struct JoinRoomResponseMsg {
     pub room_code: Option<String>,
     pub room_state: Option<RoomState>,
     pub error: Option<String>,
+    /// Session token for reconnection. Clients should store this and send
+    /// it back in JoinRoomMsg to reclaim their player slot.
+    #[serde(default)]
+    pub session_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

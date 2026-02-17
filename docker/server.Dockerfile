@@ -19,10 +19,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo install wasm-pack --locked
 
-# Install patch-crate for dependency patching
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    cargo install patch-crate --locked
-
 WORKDIR /build
 
 # Copy workspace manifests first for better layer caching
@@ -34,10 +30,8 @@ COPY crates/breakpoint-relay/Cargo.toml crates/breakpoint-relay/Cargo.toml
 COPY crates/games/breakpoint-golf/Cargo.toml crates/games/breakpoint-golf/Cargo.toml
 COPY crates/games/breakpoint-platformer/Cargo.toml crates/games/breakpoint-platformer/Cargo.toml
 COPY crates/games/breakpoint-lasertag/Cargo.toml crates/games/breakpoint-lasertag/Cargo.toml
+COPY crates/games/breakpoint-tron/Cargo.toml crates/games/breakpoint-tron/Cargo.toml
 COPY crates/adapters/breakpoint-github/Cargo.toml crates/adapters/breakpoint-github/Cargo.toml
-
-# Copy patch files for dependency patching
-COPY patches/ patches/
 
 # Create stub lib.rs files so cargo can resolve the workspace
 RUN mkdir -p crates/breakpoint-core/src && echo "" > crates/breakpoint-core/src/lib.rs && \
@@ -47,11 +41,8 @@ RUN mkdir -p crates/breakpoint-core/src && echo "" > crates/breakpoint-core/src/
     mkdir -p crates/games/breakpoint-golf/src && echo "" > crates/games/breakpoint-golf/src/lib.rs && \
     mkdir -p crates/games/breakpoint-platformer/src && echo "" > crates/games/breakpoint-platformer/src/lib.rs && \
     mkdir -p crates/games/breakpoint-lasertag/src && echo "" > crates/games/breakpoint-lasertag/src/lib.rs && \
+    mkdir -p crates/games/breakpoint-tron/src && echo "" > crates/games/breakpoint-tron/src/lib.rs && \
     mkdir -p crates/adapters/breakpoint-github/src && echo "" > crates/adapters/breakpoint-github/src/lib.rs
-
-# Apply dependency patches (winit DPR fix)
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    cargo patch-crate
 
 # Pre-build dependencies (cached layer — stubs may cause warnings, but deps are compiled)
 RUN --mount=type=cache,target=/usr/local/cargo/registry \

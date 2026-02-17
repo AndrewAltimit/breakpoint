@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <canvas id="game-canvas"></canvas>
+    <canvas id="game-canvas" role="img" aria-label="Game canvas"></canvas>
 
     <div id="ui-root">
         <!-- Lobby Screen -->
@@ -22,25 +22,25 @@
                 </div>
 
                 <div class="lobby-section">
-                    <label>Select Game</label>
-                    <div class="game-selector">
-                        <button class="game-btn selected" data-game="mini-golf">Mini Golf</button>
-                        <button class="game-btn" data-game="platform-racer">Platform Racer</button>
-                        <button class="game-btn" data-game="laser-tag">Laser Tag</button>
-                        <button class="game-btn" data-game="tron">Tron</button>
+                    <label id="game-selector-label">Select Game</label>
+                    <div class="game-selector" role="group" aria-labelledby="game-selector-label">
+                        <button class="game-btn selected" data-game="mini-golf" aria-pressed="true">Mini Golf</button>
+                        <button class="game-btn" data-game="platform-racer" aria-pressed="false">Platform Racer</button>
+                        <button class="game-btn" data-game="laser-tag" aria-pressed="false">Laser Tag</button>
+                        <button class="game-btn" data-game="tron" aria-pressed="false">Tron</button>
                     </div>
                 </div>
 
                 <div class="lobby-actions">
                     <button id="btn-create" class="btn btn-primary">Create Room</button>
                     <div class="join-row">
-                        <input type="text" id="join-code" maxlength="9" placeholder="ABCD-1234" autocomplete="off">
+                        <input type="text" id="join-code" maxlength="9" placeholder="ABCD-1234" autocomplete="off" aria-label="Room code">
                         <button id="btn-join" class="btn btn-secondary">Join</button>
                     </div>
                 </div>
 
-                <div id="lobby-status" class="status-msg"></div>
-                <div id="lobby-error" class="error-msg"></div>
+                <div id="lobby-status" class="status-msg" aria-live="polite"></div>
+                <div id="lobby-error" class="error-msg" role="alert" aria-live="assertive"></div>
 
                 <div id="room-info" class="room-info hidden">
                     <div class="room-code-display">
@@ -82,48 +82,45 @@
         </div>
 
         <!-- Between Rounds -->
-        <div id="between-rounds" class="screen hidden">
+        <div id="between-rounds" class="screen hidden" role="dialog" aria-labelledby="between-rounds-title">
             <div class="modal">
-                <h2>Round Complete</h2>
+                <h2 id="between-rounds-title">Round Complete</h2>
                 <div id="round-scores" class="score-table"></div>
                 <p class="round-info" id="round-info"></p>
             </div>
         </div>
 
         <!-- Game Over -->
-        <div id="game-over" class="screen hidden">
+        <div id="game-over" class="screen hidden" role="dialog" aria-labelledby="game-over-title">
             <div class="modal">
-                <h2>Game Over</h2>
+                <h2 id="game-over-title">Game Over</h2>
                 <div id="final-scores" class="score-table"></div>
                 <button id="btn-return-lobby" class="btn btn-primary">Return to Lobby</button>
             </div>
         </div>
 
         <!-- Settings toggle -->
-        <button id="btn-mute" class="icon-btn mute-btn" title="Toggle Audio">&#x1f50a;</button>
+        <button id="btn-mute" class="icon-btn mute-btn" title="Toggle Audio" aria-label="Toggle audio">&#x1f50a;</button>
 
         <!-- Disconnect banner -->
-        <div id="disconnect-banner" class="disconnect-banner hidden">
+        <div id="disconnect-banner" class="disconnect-banner hidden" role="alert" aria-live="assertive">
             Connection lost. Reconnecting...
         </div>
     </div>
 
     <!-- Overlay: ticker + toasts -->
     <div id="overlay-container">
-        <div id="ticker-bar" class="ticker-bar hidden">
+        <div id="ticker-bar" class="ticker-bar hidden" role="status" aria-live="polite">
             <span id="ticker-text"></span>
         </div>
-        <div id="toast-container" class="toast-container"></div>
-        <button id="btn-dashboard" class="icon-btn dashboard-btn hidden" title="Dashboard">
+        <div id="toast-container" class="toast-container" aria-live="polite" aria-label="Notifications"></div>
+        <button id="btn-dashboard" class="icon-btn dashboard-btn hidden" title="Dashboard" aria-label="Open dashboard">
             <span id="badge-count" class="badge hidden">0</span>
             &#x1f4cb;
         </button>
     </div>
 
     <script src="ui.js"></script>
-    <script type="module">
-        import init from './pkg/breakpoint_client.js';
-        await init();
-    </script>
+    <script type="module" src="init.js"></script>
 </body>
 </html>

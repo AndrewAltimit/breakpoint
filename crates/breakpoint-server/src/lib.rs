@@ -4,13 +4,17 @@ pub mod config;
 pub mod error;
 pub mod event_store;
 pub mod game_loop;
+pub mod rate_limit;
 pub mod room_manager;
 pub mod sse;
 pub mod state;
 pub mod webhooks;
 pub mod ws;
 
+use std::net::SocketAddr;
+
 use axum::Router;
+use axum::extract::ConnectInfo;
 use axum::http::HeaderValue;
 use axum::middleware;
 use tower_http::compression::CompressionLayer;
@@ -29,7 +33,7 @@ pub fn build_app(config: ServerConfig) -> (Router<()>, AppState) {
     let web_root = config.web_root.clone();
     let state = AppState::new(config);
 
-    // API routes (behind bearer auth middleware)
+    // API routes (behind bearer auth + rate limiting)
     let api_routes = Router::new()
         .route("/events", axum::routing::post(api::post_events))
         .route(
@@ -41,13 +45,22 @@ pub fn build_app(config: ServerConfig) -> (Router<()>, AppState) {
         .layer(middleware::from_fn_with_state(
             state.clone(),
             bearer_auth_layer,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            api_rate_limit_layer,
         ));
 
-    // Webhook routes (NOT behind bearer auth — uses its own HMAC verification)
-    let webhook_routes = Router::new().route(
-        "/github",
-        axum::routing::post(webhooks::github::github_webhook),
-    );
+    // Webhook routes (NOT behind bearer auth — uses its own HMAC verification + rate limiting)
+    let webhook_routes = Router::new()
+        .route(
+            "/github",
+            axum::routing::post(webhooks::github::github_webhook),
+        )
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            api_rate_limit_layer,
+        ));
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -79,6 +92,21 @@ pub fn build_app(config: ServerConfig) -> (Router<()>, AppState) {
         .layer(SetResponseHeaderLayer::overriding(
             axum::http::header::HeaderName::from_static("x-xss-protection"),
             HeaderValue::from_static("0"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(
+                "default-src 'self'; \
+                 script-src 'self'; \
+                 style-src 'self'; \
+                 connect-src 'self' wss: ws:; \
+                 img-src 'self' data:; \
+                 font-src 'self'; \
+                 object-src 'none'; \
+                 base-uri 'self'; \
+                 form-action 'self'; \
+                 frame-ancestors 'none'",
+            ),
         ))
         .with_state(state.clone());
 
@@ -179,4 +207,36 @@ async fn bearer_auth_layer(
 ) -> Result<axum::response::Response, axum::http::StatusCode> {
     request.extensions_mut().insert(state.auth.clone());
     auth::bearer_auth_middleware(request.headers().clone(), request, next).await
+}
+
+/// Middleware that enforces per-IP rate limiting on API endpoints.
+async fn api_rate_limit_layer(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> Result<axum::response::Response, axum::http::StatusCode> {
+    let ip = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ci| ci.0.ip())
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+    if !state.api_rate_limiter.check_rate_limit(ip).await {
+        tracing::warn!(%ip, "API rate limit exceeded");
+        return Err(axum::http::StatusCode::TOO_MANY_REQUESTS);
+    }
+    Ok(next.run(request).await)
+}
+
+/// Background task that periodically cleans up stale rate limiter entries.
+pub fn spawn_rate_limit_cleanup(state: AppState) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+        loop {
+            interval.tick().await;
+            state
+                .api_rate_limiter
+                .cleanup(std::time::Duration::from_secs(300))
+                .await;
+        }
+    });
 }

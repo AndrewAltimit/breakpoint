@@ -2,7 +2,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 #[cfg(target_family = "wasm")]
-use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
+#[cfg(target_family = "wasm")]
+use wasm_bindgen::closure::Closure;
 
 /// Buffer for messages received from the WebSocket.
 #[derive(Default)]
@@ -10,11 +12,24 @@ struct MessageBuffer {
     messages: Vec<Vec<u8>>,
 }
 
+/// Stored WebSocket event handler closures.
+/// Prevents the `.forget()` memory leak — closures are dropped when the
+/// connection is closed via [`WsClient::disconnect`].
+#[cfg(target_family = "wasm")]
+struct WsClosures {
+    _onmessage: Closure<dyn FnMut(web_sys::MessageEvent)>,
+    _onopen: Closure<dyn FnMut()>,
+    _onerror: Closure<dyn FnMut(web_sys::ErrorEvent)>,
+    _onclose: Closure<dyn FnMut(web_sys::CloseEvent)>,
+}
+
 /// WebSocket client.
 /// Uses Rc<RefCell> because WASM is single-threaded.
 pub struct WsClient {
     #[cfg(target_family = "wasm")]
     ws: Option<web_sys::WebSocket>,
+    #[cfg(target_family = "wasm")]
+    closures: Option<WsClosures>,
     buffer: Rc<RefCell<MessageBuffer>>,
     connected: Rc<RefCell<bool>>,
     #[cfg(target_family = "wasm")]
@@ -32,6 +47,8 @@ impl WsClient {
         Self {
             #[cfg(target_family = "wasm")]
             ws: None,
+            #[cfg(target_family = "wasm")]
+            closures: None,
             buffer: Rc::new(RefCell::new(MessageBuffer::default())),
             connected: Rc::new(RefCell::new(false)),
             #[cfg(target_family = "wasm")]
@@ -41,9 +58,13 @@ impl WsClient {
 
     #[cfg(target_family = "wasm")]
     pub fn connect(&mut self, url: &str) -> Result<(), String> {
+        // Clean up any existing connection first
+        self.disconnect();
+
         let ws = web_sys::WebSocket::new(url).map_err(|e| format!("WebSocket error: {e:?}"))?;
         ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
 
+        // onmessage: push binary data into the shared buffer
         let buffer = Rc::clone(&self.buffer);
         let onmessage =
             Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |evt: web_sys::MessageEvent| {
@@ -58,8 +79,8 @@ impl WsClient {
                 }
             });
         ws.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
-        onmessage.forget();
 
+        // onopen: mark connected and flush queued messages
         let connected = Rc::clone(&self.connected);
         let queue = Rc::clone(&self.outbound_queue);
         let ws_clone = ws.clone();
@@ -85,8 +106,8 @@ impl WsClient {
             }
         });
         ws.set_onopen(Some(onopen.as_ref().unchecked_ref()));
-        onopen.forget();
 
+        // onerror
         let connected_err = Rc::clone(&self.connected);
         let onerror =
             Closure::<dyn FnMut(web_sys::ErrorEvent)>::new(move |evt: web_sys::ErrorEvent| {
@@ -94,8 +115,8 @@ impl WsClient {
                 web_sys::console::error_1(&format!("WebSocket error: {}", evt.message()).into());
             });
         ws.set_onerror(Some(onerror.as_ref().unchecked_ref()));
-        onerror.forget();
 
+        // onclose
         let connected_close = Rc::clone(&self.connected);
         let onclose =
             Closure::<dyn FnMut(web_sys::CloseEvent)>::new(move |evt: web_sys::CloseEvent| {
@@ -110,7 +131,14 @@ impl WsClient {
                 );
             });
         ws.set_onclose(Some(onclose.as_ref().unchecked_ref()));
-        onclose.forget();
+
+        // Store closures instead of .forget() — they are dropped in disconnect()
+        self.closures = Some(WsClosures {
+            _onmessage: onmessage,
+            _onopen: onopen,
+            _onerror: onerror,
+            _onclose: onclose,
+        });
 
         self.ws = Some(ws);
         Ok(())
@@ -120,6 +148,28 @@ impl WsClient {
     pub fn connect(&mut self, _url: &str) -> Result<(), String> {
         *self.connected.borrow_mut() = true;
         Ok(())
+    }
+
+    /// Cleanly close the WebSocket and free event handler closures.
+    #[cfg(target_family = "wasm")]
+    pub fn disconnect(&mut self) {
+        *self.connected.borrow_mut() = false;
+        if let Some(ws) = self.ws.take() {
+            // Clear handlers before closing to prevent callbacks during teardown
+            ws.set_onmessage(None);
+            ws.set_onopen(None);
+            ws.set_onerror(None);
+            ws.set_onclose(None);
+            let _ = ws.close();
+        }
+        // Drop closures (frees WASM-JS trampolines)
+        self.closures = None;
+        self.outbound_queue.borrow_mut().clear();
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    pub fn disconnect(&mut self) {
+        *self.connected.borrow_mut() = false;
     }
 
     #[cfg(target_family = "wasm")]

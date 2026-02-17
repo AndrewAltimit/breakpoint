@@ -46,6 +46,8 @@ pub struct LobbyState {
     pub selected_game: GameId,
     pub join_code_input: String,
     pub status_message: Option<String>,
+    /// Session token from the server for reconnection support.
+    pub session_token: Option<String>,
 }
 
 /// Active game instance.
@@ -93,6 +95,27 @@ impl RoundTracker {
     }
 }
 
+/// Reconnection state for automatic reconnect after disconnect.
+pub struct ReconnectInfo {
+    pub attempt: u32,
+    pub next_attempt_at: f64,
+    pub room_code: String,
+    pub player_name: String,
+    pub color_index: usize,
+    pub session_token: String,
+}
+
+const MAX_RECONNECT_ATTEMPTS: u32 = 10;
+
+fn reconnect_delay(attempt: u32) -> f64 {
+    let base = 1000.0; // 1 second
+    let max_delay = 30_000.0; // 30 seconds
+    let delay = base * 2.0_f64.powi(attempt as i32);
+    let delay = delay.min(max_delay);
+    // ±25% jitter
+    delay * (0.75 + fastrand::f64() * 0.5)
+}
+
 /// Central application struct holding all state.
 pub struct App {
     pub state: AppState,
@@ -114,6 +137,7 @@ pub struct App {
     pub registry: GameRegistry,
     pub screen_shake: ScreenShake,
     pub was_connected: bool,
+    pub reconnect_info: Option<ReconnectInfo>,
     prev_timestamp: f64,
 }
 
@@ -204,6 +228,7 @@ impl App {
             registry,
             screen_shake: ScreenShake::default(),
             was_connected: false,
+            reconnect_info: None,
             prev_timestamp: 0.0,
         }
     }
@@ -226,7 +251,7 @@ impl App {
         }
 
         // Process network messages
-        self.process_network();
+        self.process_network(timestamp);
 
         // Process overlay events
         self.overlay
@@ -283,16 +308,49 @@ impl App {
         self.input.end_frame();
     }
 
-    fn process_network(&mut self) {
+    fn process_network(&mut self, timestamp: f64) {
         // Connection monitoring
         let connected = self.ws.is_connected();
+
+        // Detect disconnect — start reconnection if we were in a room
         if self.was_connected && !connected && self.ws.has_connection() {
             bridge::show_disconnect_banner();
+            if !self.lobby.room_code.is_empty() && self.reconnect_info.is_none() {
+                let recon = ReconnectInfo {
+                    attempt: 0,
+                    next_attempt_at: timestamp,
+                    room_code: self.lobby.room_code.clone(),
+                    player_name: self.lobby.player_name.clone(),
+                    color_index: self.lobby.color_index,
+                    session_token: self.lobby.session_token.clone().unwrap_or_default(),
+                };
+                self.ws.disconnect();
+                self.lobby.connected = false;
+                // Transition to lobby so existing JoinRoom flow handles reconnect
+                if self.state != AppState::Lobby {
+                    let old_state = self.state;
+                    self.state = AppState::Lobby;
+                    // Clean up game state (same as transition_to Lobby body)
+                    if old_state == AppState::InGame
+                        || old_state == AppState::BetweenRounds
+                        || old_state == AppState::GameOver
+                    {
+                        self.scene.clear();
+                        self.game = None;
+                        self.network_role = None;
+                        self.round_tracker = None;
+                    }
+                }
+                self.reconnect_info = Some(recon);
+            }
         }
         if connected && !self.was_connected {
             bridge::hide_disconnect_banner();
         }
         self.was_connected = connected;
+
+        // Drive reconnection attempts
+        self.drive_reconnection(timestamp);
 
         let messages = self.ws.drain_messages();
         for data in messages {
@@ -318,6 +376,90 @@ impl App {
         }
     }
 
+    /// Attempt reconnection on schedule.
+    fn drive_reconnection(&mut self, timestamp: f64) {
+        let should_give_up;
+        let should_send_join;
+
+        {
+            let Some(ref mut recon) = self.reconnect_info else {
+                return;
+            };
+            let connected = self.ws.is_connected();
+
+            if !connected {
+                if self.ws.has_connection() {
+                    // Connection attempt in progress, wait
+                    should_give_up = false;
+                    should_send_join = false;
+                } else if timestamp >= recon.next_attempt_at {
+                    if recon.attempt >= MAX_RECONNECT_ATTEMPTS {
+                        should_give_up = true;
+                        should_send_join = false;
+                    } else {
+                        let url = self.lobby.ws_url.clone();
+                        match self.ws.connect(&url) {
+                            Ok(()) => {
+                                // Wait for onopen
+                            },
+                            Err(_) => {
+                                recon.attempt += 1;
+                                recon.next_attempt_at = timestamp + reconnect_delay(recon.attempt);
+                            },
+                        }
+                        should_give_up = false;
+                        should_send_join = false;
+                    }
+                } else {
+                    should_give_up = false;
+                    should_send_join = false;
+                }
+            } else {
+                // Connected — re-send JoinRoom to rejoin the room
+                should_give_up = false;
+                should_send_join = true;
+            }
+        }
+
+        if should_give_up {
+            self.reconnect_info = None;
+            self.lobby.error_message = Some("Connection lost. Please rejoin.".to_string());
+            self.lobby.status_message = self.lobby.error_message.clone();
+            return;
+        }
+
+        if should_send_join
+            && let Some(recon) = self.reconnect_info.take()
+        {
+            self.send_join_room(&recon.room_code, &recon.player_name, recon.color_index);
+        }
+    }
+
+    /// Send a JoinRoom message (used for both initial join and reconnection).
+    pub fn send_join_room(&self, room_code: &str, player_name: &str, color_index: usize) {
+        use breakpoint_core::net::messages::{ClientMessage, JoinRoomMsg};
+        use breakpoint_core::net::protocol::{PROTOCOL_VERSION, encode_client_message};
+        use breakpoint_core::player::PlayerColor;
+
+        let color = PlayerColor::PALETTE[color_index % PlayerColor::PALETTE.len()];
+        let session_token = self.reconnect_info.as_ref().map(|r| r.session_token.clone());
+        let msg = ClientMessage::JoinRoom(JoinRoomMsg {
+            room_code: room_code.to_string(),
+            player_name: player_name.to_string(),
+            player_color: color,
+            protocol_version: PROTOCOL_VERSION,
+            session_token,
+        });
+        match encode_client_message(&msg) {
+            Ok(data) => {
+                if let Err(e) = self.ws.send(&data) {
+                    crate::diag::console_warn!("Failed to send JoinRoom: {e}");
+                }
+            },
+            Err(e) => crate::diag::console_warn!("Failed to encode JoinRoom: {e}"),
+        }
+    }
+
     fn process_lobby_message(&mut self, data: &[u8], msg_type: MessageType) {
         use breakpoint_core::net::messages::ServerMessage;
 
@@ -339,6 +481,7 @@ impl App {
                     if let Some(code) = &resp.room_code {
                         self.lobby.room_code = code.clone();
                     }
+                    self.lobby.session_token = resp.session_token;
                     self.lobby.connected = true;
                     self.lobby.error_message = None;
                     self.overlay.local_player_id = resp.player_id;
@@ -789,8 +932,9 @@ pub fn run() {
             window.request_animation_frame(g.borrow().as_ref().unwrap().as_ref().unchecked_ref());
     }
 
-    // Prevent the closure from being dropped
-    std::mem::forget(app);
+    // The rAF closure captures `app_loop` (Rc clone), keeping App alive.
+    // The closure self-references through `f`, keeping itself alive via the rAF chain.
+    // No std::mem::forget needed — that would leak an extra Rc reference.
 }
 
 #[cfg(test)]
