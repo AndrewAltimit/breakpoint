@@ -97,7 +97,7 @@ pub fn build_app(config: ServerConfig) -> (Router<()>, AppState) {
             axum::http::header::CONTENT_SECURITY_POLICY,
             HeaderValue::from_static(
                 "default-src 'self'; \
-                 script-src 'self'; \
+                 script-src 'self' 'wasm-unsafe-eval'; \
                  style-src 'self'; \
                  connect-src 'self' wss: ws:; \
                  img-src 'self' data:; \
