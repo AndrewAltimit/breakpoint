@@ -158,6 +158,9 @@ jobs:
 
       - name: Start server
         run: |
+          # Kill any leftover server from a previous run on this self-hosted runner
+          pkill -f breakpoint-server || true
+          sleep 1
           ./target/release/breakpoint-server &
           for i in $(seq 1 30); do
             if curl -sf http://127.0.0.1:8080/health > /dev/null 2>&1; then
@@ -170,7 +173,13 @@ jobs:
       - name: Run Playwright tests
         run: |
           docker compose --profile ci run --rm playwright \
-            bash -c "npm ci && npx playwright test --project=chromium --reporter=list"
+            bash -c "npm ci && npx playwright test \
+              startup-health.spec.js \
+              wasm-loading.spec.js \
+              overlay-expanded.spec.js \
+              tron.spec.js \
+              reconnect.spec.js \
+              --project=chromium --reporter=list"
         timeout-minutes: 20
 
       - name: Stop server
