@@ -15,12 +15,32 @@ import { collectConsole, panics } from './helpers/shared.js';
 test.describe.configure({ timeout: 120_000 });
 
 /**
- * Inject a mock state update with overlay data.
+ * Inject overlay state that persists across WASM update frames.
+ *
+ * The WASM bridge calls _breakpointUpdate() every frame with real state,
+ * which would immediately overwrite a one-shot injection. This function
+ * wraps the update handler so the test's overlay data is merged into
+ * every subsequent call, keeping toasts/ticker/badges visible.
  */
 async function injectOverlayState(page, overlay) {
   await page.evaluate((ov) => {
-    if (window._breakpointUpdate) {
-      window._breakpointUpdate({
+    // Store the overlay data globally so it survives WASM frame updates
+    window.__testOverlay = ov;
+
+    // Wrap _breakpointUpdate once to merge test overlay into every call
+    if (!window.__origBreakpointUpdate && window._breakpointUpdate) {
+      window.__origBreakpointUpdate = window._breakpointUpdate;
+      window._breakpointUpdate = function (state) {
+        if (window.__testOverlay) {
+          state.overlay = window.__testOverlay;
+        }
+        window.__origBreakpointUpdate(state);
+      };
+    }
+
+    // Trigger an immediate render with the patched overlay
+    if (window.__origBreakpointUpdate) {
+      window.__origBreakpointUpdate({
         appState: 'Lobby',
         lobby: {
           playerName: 'TestPlayer',
