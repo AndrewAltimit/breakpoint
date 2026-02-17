@@ -122,6 +122,7 @@
         updateScreens(state);
         updateLobby(state);
         updateHud(state);
+        updateTronHud(state);
         updateScoreScreens(state);
         updateOverlay(state);
         updateMuteBtn(state);
@@ -214,6 +215,153 @@
             hudRound.classList.remove("hidden");
         } else {
             hudRound.classList.add("hidden");
+        }
+    }
+
+    // ── Tron HUD (player names, minimap, gauges) ────────
+    const tronHudContainer = $("tron-hud-container");
+    const tronMinimap      = $("tron-minimap");
+    const tronGauges       = $("tron-gauges");
+    const tronSpeedFill    = $("tron-speed-fill");
+    const tronRubberFill   = $("tron-rubber-fill");
+    const tronBrakeFill    = $("tron-brake-fill");
+    const tronMinimapCtx   = tronMinimap ? tronMinimap.getContext("2d") : null;
+    let tronNameEls        = new Map();
+    let tronMinimapFrame   = 0;
+
+    const PLAYER_COLORS_CSS = [
+        "#00d9ff", "#ffcc00", "#1aff33", "#ff0099",
+        "#9933ff", "#ff5900", "#00ffb3", "#ff1a1a",
+    ];
+
+    function updateTronHud(state) {
+        const hud = state.tronHud;
+        if (!hud || !hud.players) {
+            // Hide tron HUD elements
+            if (tronHudContainer) tronHudContainer.innerHTML = "";
+            if (tronMinimap) tronMinimap.classList.remove("visible");
+            if (tronGauges) tronGauges.classList.add("hidden");
+            tronNameEls.clear();
+            return;
+        }
+
+        updateTronPlayerNames(hud.players);
+        updateTronGauges(hud.players);
+
+        // Minimap — update every 5th frame for performance
+        tronMinimapFrame++;
+        if (tronMinimapFrame % 5 === 0) {
+            updateTronMinimap(hud);
+        }
+    }
+
+    function updateTronPlayerNames(players) {
+        if (!tronHudContainer) return;
+
+        const currentIds = new Set();
+        for (const p of players) {
+            const key = p.name + p.color;
+            currentIds.add(key);
+
+            let el = tronNameEls.get(key);
+            if (!el) {
+                el = document.createElement("div");
+                el.className = "tron-player-name";
+                tronHudContainer.appendChild(el);
+                tronNameEls.set(key, el);
+            }
+
+            el.textContent = p.name;
+            el.style.color = p.color;
+            el.style.left = p.screenX + "px";
+            el.style.top = (p.screenY - 10) + "px";
+            el.classList.toggle("dead", !p.alive);
+            el.classList.toggle("local", p.isLocal);
+
+            // Hide if offscreen
+            const visible = p.screenX > -50 && p.screenX < window.innerWidth + 50
+                         && p.screenY > -50 && p.screenY < window.innerHeight + 50;
+            el.style.display = visible ? "" : "none";
+        }
+
+        // Remove stale labels
+        for (const [key, el] of tronNameEls) {
+            if (!currentIds.has(key)) {
+                el.remove();
+                tronNameEls.delete(key);
+            }
+        }
+    }
+
+    function updateTronGauges(players) {
+        if (!tronGauges) return;
+
+        const local = players.find((p) => p.isLocal);
+        if (!local) {
+            tronGauges.classList.add("hidden");
+            return;
+        }
+
+        tronGauges.classList.remove("hidden");
+        // Speed: 0-150 range
+        const speedPct = Math.min(local.speed / 150, 1) * 100;
+        tronSpeedFill.style.width = speedPct + "%";
+        // Rubber: 0-1 range (consumed = 1 - rubber/max)
+        const rubberPct = Math.min(local.rubber / 10, 1) * 100;
+        tronRubberFill.style.width = rubberPct + "%";
+        // Brake fuel: 0-1 range
+        const brakePct = Math.min(local.brakeFuel / 5, 1) * 100;
+        tronBrakeFill.style.width = brakePct + "%";
+    }
+
+    function updateTronMinimap(hud) {
+        if (!tronMinimapCtx || !tronMinimap) return;
+
+        tronMinimap.classList.add("visible");
+        const ctx = tronMinimapCtx;
+        const w = tronMinimap.width;
+        const h = tronMinimap.height;
+        const aw = hud.arenaWidth || 1;
+        const ad = hud.arenaDepth || 1;
+
+        ctx.clearRect(0, 0, w, h);
+
+        // Arena border
+        ctx.strokeStyle = "rgba(255,255,255,0.2)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(1, 1, w - 2, h - 2);
+
+        // Scale helper
+        const sx = (x) => (x / aw) * w;
+        const sy = (z) => (z / ad) * h;
+
+        // Draw wall segments
+        if (hud.minimapWalls) {
+            ctx.lineWidth = 1;
+            for (const seg of hud.minimapWalls) {
+                ctx.strokeStyle = PLAYER_COLORS_CSS[seg[4]] || "#fff";
+                ctx.globalAlpha = 0.6;
+                ctx.beginPath();
+                ctx.moveTo(sx(seg[0]), sy(seg[1]));
+                ctx.lineTo(sx(seg[2]), sy(seg[3]));
+                ctx.stroke();
+            }
+            ctx.globalAlpha = 1.0;
+        }
+
+        // Draw cycles as bright dots
+        if (hud.minimapCycles) {
+            for (const cyc of hud.minimapCycles) {
+                if (!cyc[3]) continue; // skip dead
+                const color = PLAYER_COLORS_CSS[cyc[2]] || "#fff";
+                ctx.fillStyle = color;
+                ctx.shadowColor = color;
+                ctx.shadowBlur = 4;
+                ctx.beginPath();
+                ctx.arc(sx(cyc[0]), sy(cyc[1]), 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.shadowBlur = 0;
         }
     }
 

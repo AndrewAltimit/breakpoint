@@ -22,6 +22,8 @@ struct ShaderProgram {
     u_ring_count: Option<WebGlUniformLocation>,
     u_speed: Option<WebGlUniformLocation>,
     u_intensity: Option<WebGlUniformLocation>,
+    u_camera_pos: Option<WebGlUniformLocation>,
+    u_fog_density: Option<WebGlUniformLocation>,
 }
 
 /// Cached mesh GPU buffers.
@@ -152,8 +154,30 @@ impl Renderer {
         }
     }
 
+    /// Project a world-space position to screen-space (CSS pixels).
+    /// Returns `None` if the point is behind the camera.
+    pub fn world_to_screen(&self, world_pos: Vec3, vp: &Mat4) -> Option<(f32, f32)> {
+        let clip = *vp * world_pos.extend(1.0);
+        if clip.w <= 0.0 {
+            return None;
+        }
+        let ndc_x = clip.x / clip.w;
+        let ndc_y = clip.y / clip.w;
+        let (vw, vh) = self.viewport_size();
+        let sx = (ndc_x * 0.5 + 0.5) * vw;
+        let sy = (1.0 - (ndc_y * 0.5 + 0.5)) * vh;
+        Some((sx, sy))
+    }
+
     /// Render the scene with the given camera.
-    pub fn draw(&mut self, scene: &Scene, camera: &Camera, dt: f32, clear_color: Vec4) {
+    pub fn draw(
+        &mut self,
+        scene: &Scene,
+        camera: &Camera,
+        dt: f32,
+        clear_color: Vec4,
+        fog_density: f32,
+    ) {
         self.time += dt;
         self.resize();
 
@@ -172,6 +196,7 @@ impl Renderer {
                 MaterialType::Gradient { .. } => "gradient",
                 MaterialType::Ripple { .. } => "ripple",
                 MaterialType::Glow { .. } => "glow",
+                MaterialType::TronWall { .. } => "tronwall",
             };
 
             let Some(prog) = self.programs.get(program_name) else {
@@ -182,6 +207,8 @@ impl Renderer {
             // Common uniforms
             set_mat4(gl, &prog.u_mvp, &mvp);
             set_mat4(gl, &prog.u_model, &model);
+            set_vec3(gl, &prog.u_camera_pos, &camera.position);
+            set_f32(gl, &prog.u_fog_density, fog_density);
 
             // Material-specific uniforms
             match &obj.material {
@@ -203,6 +230,10 @@ impl Renderer {
                     set_f32(gl, &prog.u_speed, *speed);
                 },
                 MaterialType::Glow { color, intensity } => {
+                    set_vec4(gl, &prog.u_color, color);
+                    set_f32(gl, &prog.u_intensity, *intensity);
+                },
+                MaterialType::TronWall { color, intensity } => {
                     set_vec4(gl, &prog.u_color, color);
                     set_f32(gl, &prog.u_intensity, *intensity);
                 },
@@ -228,6 +259,7 @@ impl Renderer {
             ("gradient", include_str!("shaders_gl/gradient.frag")),
             ("ripple", include_str!("shaders_gl/ripple.frag")),
             ("glow", include_str!("shaders_gl/glow.frag")),
+            ("tronwall", include_str!("shaders_gl/tronwall.frag")),
         ];
 
         for (name, frag_src) in configs {
@@ -243,6 +275,8 @@ impl Renderer {
                 u_ring_count: self.gl.get_uniform_location(&program, "u_ring_count"),
                 u_speed: self.gl.get_uniform_location(&program, "u_speed"),
                 u_intensity: self.gl.get_uniform_location(&program, "u_intensity"),
+                u_camera_pos: self.gl.get_uniform_location(&program, "u_camera_pos"),
+                u_fog_density: self.gl.get_uniform_location(&program, "u_fog_density"),
                 program,
             };
             self.programs.insert(name, sp);
@@ -304,6 +338,12 @@ impl Renderer {
 fn set_mat4(gl: &GL, loc: &Option<WebGlUniformLocation>, m: &Mat4) {
     if let Some(loc) = loc {
         gl.uniform_matrix4fv_with_f32_array(Some(loc), false, m.as_ref());
+    }
+}
+
+fn set_vec3(gl: &GL, loc: &Option<WebGlUniformLocation>, v: &Vec3) {
+    if let Some(loc) = loc {
+        gl.uniform3f(Some(loc), v.x, v.y, v.z);
     }
 }
 

@@ -57,21 +57,18 @@ pub fn sync_tron_scene(
             .with_scale(Vec3::new(arena_w, 1.0, arena_d)),
     );
 
-    // Grid lines — subtle dark lines on the black floor (Armagetron style)
+    // Grid lines — hair-thin, dim, semi-transparent (fog handles horizon fade)
     let grid_spacing = 25.0;
-    let grid_height = 0.01;
-    let grid_thickness = 0.25;
-    let grid_intensity = 0.5;
+    let grid_height = 0.005;
+    let grid_thickness = 0.08;
+    let grid_color = Vec4::new(GRID_COLOR.x, GRID_COLOR.y, GRID_COLOR.z, 0.4);
 
     // Vertical grid lines (along Z axis)
     let mut x = grid_spacing;
     while x < arena_w {
         scene.add(
             MeshType::Cuboid,
-            MaterialType::Glow {
-                color: GRID_COLOR,
-                intensity: grid_intensity,
-            },
+            MaterialType::Unlit { color: grid_color },
             Transform::from_xyz(x, grid_height, arena_d / 2.0).with_scale(Vec3::new(
                 grid_thickness,
                 0.02,
@@ -86,10 +83,7 @@ pub fn sync_tron_scene(
     while z < arena_d {
         scene.add(
             MeshType::Cuboid,
-            MaterialType::Glow {
-                color: GRID_COLOR,
-                intensity: grid_intensity,
-            },
+            MaterialType::Unlit { color: grid_color },
             Transform::from_xyz(arena_w / 2.0, grid_height, z).with_scale(Vec3::new(
                 arena_w,
                 0.02,
@@ -99,23 +93,17 @@ pub fn sync_tron_scene(
         z += grid_spacing;
     }
 
-    // Arena boundary walls — gradient from dim base to transparent top
-    let bwall_height = 12.0;
+    // Arena boundary walls — TronWall with dim color and bright top edge
+    let bwall_height = 8.0;
     let bwall_thickness = 0.5;
-    let bwall_start = Vec4::new(BOUNDARY_COLOR.x, BOUNDARY_COLOR.y, BOUNDARY_COLOR.z, 0.7);
-    let bwall_end = Vec4::new(
-        BOUNDARY_COLOR.x * 0.2,
-        BOUNDARY_COLOR.y * 0.2,
-        BOUNDARY_COLOR.z * 0.2,
-        0.02,
-    );
+    let bwall_color = Vec4::new(BOUNDARY_COLOR.x, BOUNDARY_COLOR.y, BOUNDARY_COLOR.z, 0.8);
 
     // North wall (z=0)
     scene.add(
         MeshType::Cuboid,
-        MaterialType::Gradient {
-            start: bwall_start,
-            end: bwall_end,
+        MaterialType::TronWall {
+            color: bwall_color,
+            intensity: 0.7,
         },
         Transform::from_xyz(arena_w / 2.0, bwall_height / 2.0, 0.0).with_scale(Vec3::new(
             arena_w + bwall_thickness,
@@ -126,9 +114,9 @@ pub fn sync_tron_scene(
     // South wall (z=depth)
     scene.add(
         MeshType::Cuboid,
-        MaterialType::Gradient {
-            start: bwall_start,
-            end: bwall_end,
+        MaterialType::TronWall {
+            color: bwall_color,
+            intensity: 0.7,
         },
         Transform::from_xyz(arena_w / 2.0, bwall_height / 2.0, arena_d).with_scale(Vec3::new(
             arena_w + bwall_thickness,
@@ -139,9 +127,9 @@ pub fn sync_tron_scene(
     // West wall (x=0)
     scene.add(
         MeshType::Cuboid,
-        MaterialType::Gradient {
-            start: bwall_start,
-            end: bwall_end,
+        MaterialType::TronWall {
+            color: bwall_color,
+            intensity: 0.7,
         },
         Transform::from_xyz(0.0, bwall_height / 2.0, arena_d / 2.0).with_scale(Vec3::new(
             bwall_thickness,
@@ -152,9 +140,9 @@ pub fn sync_tron_scene(
     // East wall (x=width)
     scene.add(
         MeshType::Cuboid,
-        MaterialType::Gradient {
-            start: bwall_start,
-            end: bwall_end,
+        MaterialType::TronWall {
+            color: bwall_color,
+            intensity: 0.7,
         },
         Transform::from_xyz(arena_w, bwall_height / 2.0, arena_d / 2.0).with_scale(Vec3::new(
             bwall_thickness,
@@ -169,8 +157,8 @@ pub fn sync_tron_scene(
         player_index.insert(pid, i);
     }
 
-    // Wall trail segments — gradient walls (bright base fading upward).
-    // Own walls: shorter, more solid/opaque. Enemy walls: tall, fading.
+    // Wall trail segments — TronWall shader (dim body + bright top edge).
+    // Own walls: short, high intensity. Enemy walls: tall, dimmer.
     let trail_thickness = 0.3;
     for wall in &state.wall_segments {
         let dx = wall.x2 - wall.x1;
@@ -189,22 +177,9 @@ pub fn sync_tron_scene(
 
         let is_own = local_player_id == Some(wall.owner_id);
 
-        // Own walls: cycle-height, solid. Enemy walls: tall and fading.
-        let trail_height = if is_own { 2.5 } else { 10.0 };
-        let (start, end) = if is_own {
-            // Own wall: fully opaque, barely fades — strong and visible
-            (
-                Vec4::new(color.x, color.y, color.z, 1.0),
-                Vec4::new(color.x * 0.7, color.y * 0.7, color.z * 0.7, 0.6),
-            )
-        } else {
-            // Enemy walls: bright base fading upward
-            let base_alpha = if wall.is_active { 1.0 } else { 0.9 };
-            (
-                Vec4::new(color.x, color.y, color.z, base_alpha),
-                Vec4::new(color.x * 0.3, color.y * 0.3, color.z * 0.3, 0.05),
-            )
-        };
+        // Own walls: cycle-height, bright. Enemy walls: tall, slightly dimmer.
+        let (trail_height, intensity) = if is_own { (3.0, 2.0) } else { (5.0, 1.5) };
+        let wall_color = Vec4::new(color.x, color.y, color.z, 1.0);
 
         // Determine if horizontal or vertical
         let is_horizontal = dz.abs() < 0.1;
@@ -216,7 +191,10 @@ pub fn sync_tron_scene(
 
         scene.add(
             MeshType::Cuboid,
-            MaterialType::Gradient { start, end },
+            MaterialType::TronWall {
+                color: wall_color,
+                intensity,
+            },
             Transform::from_xyz(cx, trail_height / 2.0, cz).with_scale(scale),
         );
     }
@@ -237,24 +215,24 @@ pub fn sync_tron_scene(
             breakpoint_tron::Direction::West => Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
         };
 
-        // Elongated cycle body (arrow-like shape: longer in direction of travel)
+        // Elongated cycle body (sleeker, smaller)
         scene.add(
             MeshType::Cuboid,
             MaterialType::Glow {
                 color,
                 intensity: 5.0,
             },
-            Transform::from_xyz(cycle.x, 1.5, cycle.z)
+            Transform::from_xyz(cycle.x, 1.0, cycle.z)
                 .with_rotation(rotation)
-                .with_scale(Vec3::new(1.2, 2.5, 3.0)),
+                .with_scale(Vec3::new(0.8, 1.5, 2.0)),
         );
 
-        // Small bright "nose" at the front for the arrow shape
+        // Small bright "nose" at the front
         let (front_dx, front_dz) = match cycle.direction {
-            breakpoint_tron::Direction::North => (0.0, -1.8),
-            breakpoint_tron::Direction::South => (0.0, 1.8),
-            breakpoint_tron::Direction::East => (1.8, 0.0),
-            breakpoint_tron::Direction::West => (-1.8, 0.0),
+            breakpoint_tron::Direction::North => (0.0, -1.2),
+            breakpoint_tron::Direction::South => (0.0, 1.2),
+            breakpoint_tron::Direction::East => (1.2, 0.0),
+            breakpoint_tron::Direction::West => (-1.2, 0.0),
         };
         scene.add(
             MeshType::Cuboid,
@@ -262,9 +240,9 @@ pub fn sync_tron_scene(
                 color,
                 intensity: 6.0,
             },
-            Transform::from_xyz(cycle.x + front_dx, 1.5, cycle.z + front_dz)
+            Transform::from_xyz(cycle.x + front_dx, 1.0, cycle.z + front_dz)
                 .with_rotation(rotation)
-                .with_scale(Vec3::new(0.6, 1.8, 1.0)),
+                .with_scale(Vec3::new(0.4, 1.0, 0.8)),
         );
 
         // Grinding spark effect — bright flash near the cycle when speed > base

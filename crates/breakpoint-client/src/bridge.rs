@@ -55,6 +55,7 @@ pub fn push_ui_state(app: &App) {
             }),
             "connected": app.ws.is_connected(),
             "muted": app.audio_settings.muted,
+            "tronHud": build_tron_hud(app),
         });
 
         match serde_json::to_string(&state) {
@@ -73,6 +74,117 @@ pub fn push_ui_state(app: &App) {
     }
     #[cfg(not(target_family = "wasm"))]
     let _ = app;
+}
+
+/// Build Tron HUD data (player name positions, minimap walls, gauges).
+#[cfg(target_family = "wasm")]
+fn build_tron_hud(app: &App) -> serde_json::Value {
+    {
+        use breakpoint_core::game_trait::GameId;
+
+        use crate::app::AppState;
+
+        // Only active during Tron InGame
+        if app.state != AppState::InGame {
+            return serde_json::Value::Null;
+        }
+        let Some(ref active) = app.game else {
+            return serde_json::Value::Null;
+        };
+        if active.game_id != GameId::Tron {
+            return serde_json::Value::Null;
+        }
+
+        let state: Option<breakpoint_tron::TronState> = crate::game::read_game_state(active);
+        let Some(state) = state else {
+            return serde_json::Value::Null;
+        };
+
+        let local_id = app.network_role.as_ref().map(|r| r.local_player_id);
+        let vp = app.camera.view_projection();
+
+        // Player colors (same order as tron_render)
+        const PLAYER_COLORS_HEX: [&str; 8] = [
+            "#00d9ff", "#ffcc00", "#1aff33", "#ff0099", "#9933ff", "#ff5900", "#00ffb3", "#ff1a1a",
+        ];
+
+        // Build player index for color mapping
+        let mut player_index: std::collections::HashMap<u64, usize> =
+            std::collections::HashMap::new();
+        for (i, (&pid, _)) in state.players.iter().enumerate() {
+            player_index.insert(pid, i);
+        }
+
+        // Player name labels with screen positions
+        let mut players_json = Vec::new();
+        for (&pid, cycle) in &state.players {
+            let color_idx = player_index.get(&pid).copied().unwrap_or(0) % 8;
+            let color_hex = PLAYER_COLORS_HEX[color_idx];
+
+            // Find display name from lobby players
+            let name = app
+                .lobby
+                .players
+                .iter()
+                .find(|p| p.id == pid)
+                .map(|p| p.display_name.as_str())
+                .unwrap_or("Player");
+
+            let is_local = local_id == Some(pid);
+
+            // Project cycle position to screen (above the cycle)
+            let world_pos = glam::Vec3::new(cycle.x, 3.0, cycle.z);
+            let (screen_x, screen_y) = app
+                .renderer
+                .world_to_screen(world_pos, &vp)
+                .unwrap_or((-999.0, -999.0));
+
+            players_json.push(serde_json::json!({
+                "name": name,
+                "screenX": screen_x,
+                "screenY": screen_y,
+                "color": color_hex,
+                "alive": cycle.alive,
+                "speed": cycle.speed,
+                "rubber": cycle.rubber,
+                "brakeFuel": cycle.brake_fuel,
+                "isLocal": is_local,
+            }));
+        }
+
+        // Minimap data — wall segments + cycle positions (compact)
+        let minimap_walls: Vec<serde_json::Value> = state
+            .wall_segments
+            .iter()
+            .map(|w| {
+                let cidx = player_index.get(&w.owner_id).copied().unwrap_or(0) % 8;
+                serde_json::json!([w.x1, w.z1, w.x2, w.z2, cidx])
+            })
+            .collect();
+
+        let minimap_cycles: Vec<serde_json::Value> = state
+            .players
+            .iter()
+            .map(|(&pid, c)| {
+                let cidx = player_index.get(&pid).copied().unwrap_or(0) % 8;
+                serde_json::json!([c.x, c.z, cidx, c.alive])
+            })
+            .collect();
+
+        serde_json::json!({
+            "players": players_json,
+            "arenaWidth": state.arena_width,
+            "arenaDepth": state.arena_depth,
+            "minimapWalls": minimap_walls,
+            "minimapCycles": minimap_cycles,
+        })
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[allow(dead_code)]
+fn build_tron_hud(_app: &App) -> serde_json::Value {
+    serde_json::Value::Null
 }
 
 /// Show disconnect banner via JS.

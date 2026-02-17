@@ -116,10 +116,10 @@ impl Camera {
                 direction,
             } => {
                 // Low, dramatic chase camera (Armagetron style)
-                let cam_height = 10.0;
-                let cam_behind = 16.0;
-                let look_ahead = 20.0;
-                let look_height = 2.0;
+                let cam_height = 6.0;
+                let cam_behind = 12.0;
+                let look_ahead = 30.0;
+                let look_height = 1.5;
 
                 let dir_x = direction[0];
                 let dir_z = direction[1];

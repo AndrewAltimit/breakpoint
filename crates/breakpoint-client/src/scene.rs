@@ -80,6 +80,10 @@ pub enum MaterialType {
         color: Vec4,
         intensity: f32,
     },
+    TronWall {
+        color: Vec4,
+        intensity: f32,
+    },
 }
 
 /// A renderable object in the scene.

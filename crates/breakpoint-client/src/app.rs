@@ -258,19 +258,23 @@ impl App {
             self.audio_events.clear();
         }
 
-        // Render 3D scene — Tron uses pure black background
-        let clear_color = if self
+        // Render 3D scene — Tron uses pure black background + fog
+        let is_tron = self
             .game
             .as_ref()
-            .is_some_and(|g| g.game_id == GameId::Tron)
-        {
+            .is_some_and(|g| g.game_id == GameId::Tron);
+        let clear_color = if is_tron {
             Vec4::new(0.0, 0.0, 0.0, 1.0)
         } else {
             let clear = &self.theme.camera.clear_color;
             Vec4::new(clear[0], clear[1], clear[2], 1.0)
         };
+        let fog_density = if is_tron { 1.0 } else { 0.0 };
+        if is_tron {
+            self.camera.fov = 70_f32.to_radians();
+        }
         self.renderer
-            .draw(&self.scene, &self.camera, dt, clear_color);
+            .draw(&self.scene, &self.camera, dt, clear_color, fog_density);
 
         // Push UI state to JS
         bridge::push_ui_state(self);
