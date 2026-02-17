@@ -106,7 +106,7 @@ jobs:
             fi
           done
 
-  # ── Browser Tests (Playwright) ─────────────────────────────────
+  # ── Browser Tests (Playwright, containerized) ─────────────────
   browser-tests:
     name: Browser Tests
     needs: ci
@@ -119,8 +119,7 @@ jobs:
           for item in outputs .git/index.lock; do
             if [ -d "$item" ] || [ -f "$item" ]; then
               docker run --rm -v "$(pwd):/workspace" busybox:1.36.1 sh -c \
-                "rm -rf /workspace/$item" 2>/dev/null || \
-                sudo rm -rf "$item" 2>/dev/null || true
+                "rm -rf /workspace/$item" 2>/dev/null || true
             fi
           done
 
@@ -136,6 +135,9 @@ jobs:
         run: |
           echo "USER_ID=$(id -u)" >> $GITHUB_ENV
           echo "GROUP_ID=$(id -g)" >> $GITHUB_ENV
+
+      - name: Build CI images
+        run: docker compose --profile ci build
 
       - name: Build server (release)
         run: docker compose --profile ci run --rm rust-ci cargo build -p breakpoint-server --release
@@ -154,21 +156,9 @@ jobs:
             fi
           done
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Install Playwright dependencies
-        working-directory: tests/browser
-        run: |
-          npm ci
-          npx playwright install --with-deps chromium
-
       - name: Start server
         run: |
           ./target/release/breakpoint-server &
-          # Poll /health until server is ready (max 15s)
           for i in $(seq 1 30); do
             if curl -sf http://127.0.0.1:8080/health > /dev/null 2>&1; then
               echo "Server ready"
@@ -177,14 +167,25 @@ jobs:
             sleep 0.5
           done
 
-      - name: Run Playwright tests (Chromium only)
-        working-directory: tests/browser
-        run: npx playwright test --project=chromium --reporter=list
+      - name: Run Playwright tests
+        run: |
+          docker compose --profile ci run --rm playwright \
+            bash -c "npm ci && npx playwright test --project=chromium --reporter=list"
         timeout-minutes: 20
 
       - name: Stop server
         if: always()
         run: pkill -f breakpoint-server || true
+
+      - name: Fix test output ownership
+        if: always()
+        run: |
+          for dir in tests/browser/results tests/browser/report tests/browser/node_modules; do
+            if [ -d "$dir" ]; then
+              docker run --rm -v "$(pwd)/$dir:/workspace" busybox:1.36.1 \
+                chown -Rh "$(id -u):$(id -g)" /workspace 2>/dev/null || true
+            fi
+          done
 
       - name: Upload test results
         if: always()
