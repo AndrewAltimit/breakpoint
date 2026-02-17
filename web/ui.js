@@ -466,7 +466,7 @@
                 const el = activeToasts.get(toast.id);
                 const actions = el.querySelector(".toast-actions");
                 if (toast.claimedBy && actions) {
-                    actions.innerHTML = `<span class="toast-claimed">Claimed by ${escapeHtml(toast.claimedBy)}</span>`;
+                    actions.innerHTML = `<span class="toast-claimed" data-testid="toast-claimed">Claimed by ${escapeHtml(toast.claimedBy)}</span>`;
                 }
             } else {
                 // Create new toast
