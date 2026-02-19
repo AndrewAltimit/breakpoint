@@ -679,6 +679,13 @@ impl RoomManager {
         before - self.rooms.len()
     }
 
+    /// Return (active_room_count, total_player_count) for health reporting.
+    pub fn stats(&self) -> (usize, usize) {
+        let rooms = self.rooms.len();
+        let players: usize = self.rooms.values().map(|e| e.connections.len()).sum();
+        (rooms, players)
+    }
+
     /// Check if a room exists.
     #[cfg(test)]
     pub fn room_exists(&self, room_code: &str) -> bool {

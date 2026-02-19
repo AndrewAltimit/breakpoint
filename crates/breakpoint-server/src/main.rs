@@ -7,9 +7,20 @@ use breakpoint_server::{
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
+    let json_logs = std::env::var("BREAKPOINT_LOG_FORMAT")
+        .map(|v| v.eq_ignore_ascii_case("json"))
+        .unwrap_or(false);
+
+    if json_logs {
+        tracing_subscriber::fmt()
+            .with_env_filter(EnvFilter::from_default_env())
+            .json()
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(EnvFilter::from_default_env())
+            .init();
+    }
 
     let config = ServerConfig::load();
     config.validate();
@@ -30,9 +41,16 @@ async fn main() {
     #[cfg(feature = "github-poller")]
     if let Some(ref gh) = state.config.github
         && gh.enabled
-        && gh.token.is_some()
     {
-        spawn_github_poller(&state, gh);
+        if gh.token.is_some() {
+            spawn_github_poller(&state, gh);
+        } else {
+            tracing::warn!(
+                "GitHub poller is enabled but no token is configured; \
+                 skipping poller startup. Set BREAKPOINT_GITHUB_TOKEN or \
+                 github.token in breakpoint.toml."
+            );
+        }
     }
 
     let listener = match tokio::net::TcpListener::bind(&listen_addr).await {
@@ -45,15 +63,47 @@ async fn main() {
 
     tracing::info!("Breakpoint server listening on {listen_addr}");
 
+    let shutdown_token = state.shutdown.clone();
     if let Err(e) = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
+    .with_graceful_shutdown(shutdown_signal(shutdown_token))
     .await
     {
         tracing::error!("Server error: {e}");
         std::process::exit(1);
     }
+
+    tracing::info!("Server shutdown complete");
+}
+
+/// Wait for SIGINT (Ctrl-C) or SIGTERM, then trigger cancellation.
+async fn shutdown_signal(token: tokio_util::sync::CancellationToken) {
+    let ctrl_c = tokio::signal::ctrl_c();
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {
+            tracing::info!("Received SIGINT, initiating graceful shutdown...");
+        }
+        _ = terminate => {
+            tracing::info!("Received SIGTERM, initiating graceful shutdown...");
+        }
+    }
+
+    // Signal all background tasks to stop
+    token.cancel();
 }
 
 /// Spawn the GitHub Actions polling monitor as a background task.

@@ -44,6 +44,7 @@ hex = "0.4"
 reqwest = { version = "0.12", features = ["json"] }
 toml = "0.8"
 tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-util = "0.7"
 tracing = "0.1"
 futures = "0.3"
 proptest = "1"

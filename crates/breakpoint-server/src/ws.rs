@@ -523,3 +523,43 @@ async fn read_loop(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn rate_limiter_allows_burst() {
+        let mut rl = RateLimiter::new(5.0, 1.0);
+        for i in 0..5 {
+            assert!(rl.allow(), "Call {i} within burst should be allowed");
+        }
+    }
+
+    #[tokio::test]
+    async fn rate_limiter_rejects_after_burst() {
+        let mut rl = RateLimiter::new(3.0, 1.0);
+        assert!(rl.allow(), "Call 0 should succeed");
+        assert!(rl.allow(), "Call 1 should succeed");
+        assert!(rl.allow(), "Call 2 should succeed");
+        assert!(!rl.allow(), "Call 3 should be rejected (burst exhausted)");
+    }
+
+    #[tokio::test]
+    async fn rate_limiter_refills_over_time() {
+        let mut rl = RateLimiter::new(1.0, 100.0);
+
+        // Exhaust the single token
+        assert!(rl.allow(), "First call should succeed");
+        assert!(!rl.allow(), "Second call should be rejected (no tokens)");
+
+        // Simulate time passing by backdating last_refill.
+        // At 100 tokens/sec, 100ms yields 10 tokens, capped at max_tokens=1.
+        rl.last_refill -= std::time::Duration::from_millis(100);
+
+        assert!(
+            rl.allow(),
+            "Should succeed after time passes and tokens refill"
+        );
+    }
+}

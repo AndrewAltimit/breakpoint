@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tokio::sync::{Mutex, RwLock};
+use tokio_util::sync::CancellationToken;
 
 use crate::auth::AuthConfig;
 use crate::config::ServerConfig;
@@ -26,6 +27,7 @@ pub struct AppState {
     pub sse_subscriber_count: Arc<AtomicUsize>,
     pub api_rate_limiter: Arc<IpRateLimiter>,
     pub ws_per_ip: Arc<Mutex<HashMap<IpAddr, usize>>>,
+    pub shutdown: CancellationToken,
 }
 
 impl AppState {
@@ -53,6 +55,7 @@ impl AppState {
             sse_subscriber_count: Arc::new(AtomicUsize::new(0)),
             api_rate_limiter,
             ws_per_ip: Arc::new(Mutex::new(HashMap::new())),
+            shutdown: CancellationToken::new(),
         }
     }
 }
@@ -114,5 +117,78 @@ impl Drop for IpConnectionGuard {
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn connection_guard_increments_and_decrements() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        assert_eq!(counter.load(Ordering::Relaxed), 0);
+
+        let guard = ConnectionGuard::new(Arc::clone(&counter));
+        assert_eq!(counter.load(Ordering::Relaxed), 1);
+
+        drop(guard);
+        assert_eq!(counter.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn ip_guard_acquires_and_rejects_at_limit() {
+        let ws_per_ip: Arc<Mutex<HashMap<IpAddr, usize>>> = Arc::new(Mutex::new(HashMap::new()));
+        let ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        let max_per_ip = 2;
+
+        let guard1 = IpConnectionGuard::try_acquire(ip, Arc::clone(&ws_per_ip), max_per_ip).await;
+        assert!(guard1.is_some(), "First acquire should succeed");
+
+        let guard2 = IpConnectionGuard::try_acquire(ip, Arc::clone(&ws_per_ip), max_per_ip).await;
+        assert!(guard2.is_some(), "Second acquire should succeed");
+
+        let guard3 = IpConnectionGuard::try_acquire(ip, Arc::clone(&ws_per_ip), max_per_ip).await;
+        assert!(
+            guard3.is_none(),
+            "Third acquire should be rejected at limit"
+        );
+
+        // Keep guards alive so they aren't dropped early
+        drop(guard1);
+        drop(guard2);
+    }
+
+    #[tokio::test]
+    async fn ip_guard_drop_decrements_counter() {
+        let ws_per_ip: Arc<Mutex<HashMap<IpAddr, usize>>> = Arc::new(Mutex::new(HashMap::new()));
+        let ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
+
+        let guard = IpConnectionGuard::try_acquire(ip, Arc::clone(&ws_per_ip), 5)
+            .await
+            .unwrap();
+
+        // Verify counter is 1
+        {
+            let map = ws_per_ip.lock().await;
+            assert_eq!(*map.get(&ip).unwrap(), 1);
+        }
+
+        // Drop the guard — its Drop impl spawns a task
+        drop(guard);
+
+        // Yield to let the spawned decrement task run
+        tokio::task::yield_now().await;
+        tokio::task::yield_now().await;
+
+        // Counter should be 0 and the entry removed
+        {
+            let map = ws_per_ip.lock().await;
+            assert!(
+                map.get(&ip).is_none(),
+                "Entry should be removed after last guard is dropped"
+            );
+        }
     }
 }

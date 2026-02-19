@@ -3,13 +3,27 @@ services:
     build:
       context: ..
       dockerfile: docker/server.Dockerfile
-    image: ghcr.io/andrewaltimit/breakpoint:latest
+    image: ghcr.io/andrewaltimit/breakpoint:${BREAKPOINT_VERSION:-latest}
     ports:
       - "8080:8080"
     environment:
       BREAKPOINT_API_TOKEN: ${BREAKPOINT_API_TOKEN:-changeme}
       BREAKPOINT_GITHUB_SECRET: ${BREAKPOINT_GITHUB_SECRET:-}
+      BREAKPOINT_LOG_FORMAT: ${BREAKPOINT_LOG_FORMAT:-text}
       RUST_LOG: ${RUST_LOG:-info}
     volumes:
       - ./breakpoint.toml:/app/breakpoint.toml:ro
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 512M
+        reservations:
+          cpus: "0.5"
+          memory: 128M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -161,8 +161,10 @@ async fn health_endpoint() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
-    let body = resp.text().await.unwrap();
-    assert_eq!(body, "ok");
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "healthy");
+    assert!(body["connections"]["websocket"].is_number());
+    assert!(body["rooms"]["active"].is_number());
 }
 
 #[tokio::test]

@@ -1920,6 +1920,253 @@ mod tests {
         );
     }
 
+    // ================================================================
+    // Multi-team mode hardening tests
+    // ================================================================
+
+    /// Helper: build a config for 3-team mode.
+    fn teams_3_config() -> GameConfig {
+        let mut config = default_config(180);
+        config.custom.insert(
+            "team_mode".to_string(),
+            serde_json::Value::String("teams_3".to_string()),
+        );
+        config
+    }
+
+    /// Helper: build a config for 4-team mode.
+    fn teams_4_config() -> GameConfig {
+        let mut config = default_config(180);
+        config.custom.insert(
+            "team_mode".to_string(),
+            serde_json::Value::String("teams_4".to_string()),
+        );
+        config
+    }
+
+    #[test]
+    fn three_team_mode_assignment() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(6);
+        game.init(&players, &teams_3_config());
+
+        // Verify team mode is set correctly
+        assert_eq!(
+            game.state.team_mode,
+            TeamMode::Teams { team_count: 3 },
+            "Team mode should be 3 teams"
+        );
+
+        // All 6 players should be assigned to teams
+        assert_eq!(
+            game.state.teams.len(),
+            6,
+            "All 6 players should have team assignments"
+        );
+
+        // Each team (0, 1, 2) should have exactly 2 players (6 / 3 = 2 each)
+        for team_id in 0..3u8 {
+            let count = game.state.teams.values().filter(|&&t| t == team_id).count();
+            assert_eq!(
+                count, 2,
+                "Team {team_id} should have 2 players, got {count}"
+            );
+        }
+
+        // Verify round-robin assignment: player IDs 1-6 map to teams 0,1,2,0,1,2
+        assert_eq!(game.state.teams[&1], 0);
+        assert_eq!(game.state.teams[&2], 1);
+        assert_eq!(game.state.teams[&3], 2);
+        assert_eq!(game.state.teams[&4], 0);
+        assert_eq!(game.state.teams[&5], 1);
+        assert_eq!(game.state.teams[&6], 2);
+    }
+
+    #[test]
+    fn four_team_mode_assignment() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(8);
+        game.init(&players, &teams_4_config());
+
+        // Verify team mode is set correctly
+        assert_eq!(
+            game.state.team_mode,
+            TeamMode::Teams { team_count: 4 },
+            "Team mode should be 4 teams"
+        );
+
+        // All 8 players should be assigned to teams
+        assert_eq!(
+            game.state.teams.len(),
+            8,
+            "All 8 players should have team assignments"
+        );
+
+        // Each team (0, 1, 2, 3) should have exactly 2 players (8 / 4 = 2 each)
+        for team_id in 0..4u8 {
+            let count = game.state.teams.values().filter(|&&t| t == team_id).count();
+            assert_eq!(
+                count, 2,
+                "Team {team_id} should have 2 players, got {count}"
+            );
+        }
+
+        // Verify round-robin: players 1-8 map to teams 0,1,2,3,0,1,2,3
+        assert_eq!(game.state.teams[&1], 0);
+        assert_eq!(game.state.teams[&2], 1);
+        assert_eq!(game.state.teams[&3], 2);
+        assert_eq!(game.state.teams[&4], 3);
+        assert_eq!(game.state.teams[&5], 0);
+        assert_eq!(game.state.teams[&6], 1);
+        assert_eq!(game.state.teams[&7], 2);
+        assert_eq!(game.state.teams[&8], 3);
+    }
+
+    #[test]
+    fn cross_team_hit_detection() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(4);
+        game.init(&players, &teams_config());
+
+        // teams_config() uses teams_2, round-robin:
+        //   Player 1 (idx 0) -> team 0
+        //   Player 2 (idx 1) -> team 1
+        //   Player 3 (idx 2) -> team 0
+        //   Player 4 (idx 3) -> team 1
+        assert_eq!(game.state.teams[&1], 0, "Player 1 should be on team 0");
+        assert_eq!(game.state.teams[&2], 1, "Player 2 should be on team 1");
+
+        // Position player 1 (team 0) to fire at player 2 (team 1)
+        game.state.players.get_mut(&1).unwrap().x = 5.0;
+        game.state.players.get_mut(&1).unwrap().z = 10.0;
+        game.state.players.get_mut(&1).unwrap().aim_angle = 0.0; // aiming +X
+        game.state.players.get_mut(&1).unwrap().fire_cooldown = 0.0;
+        game.state.players.get_mut(&1).unwrap().stun_remaining = 0.0;
+
+        // Place player 2 (team 1) directly in line of fire
+        game.state.players.get_mut(&2).unwrap().x = 10.0;
+        game.state.players.get_mut(&2).unwrap().z = 10.0;
+        game.state.players.get_mut(&2).unwrap().stun_remaining = 0.0;
+
+        // Move other players far away so they can't interfere
+        game.state.players.get_mut(&3).unwrap().x = 5.0;
+        game.state.players.get_mut(&3).unwrap().z = 45.0;
+        game.state.players.get_mut(&4).unwrap().x = 5.0;
+        game.state.players.get_mut(&4).unwrap().z = 45.0;
+
+        // Player 1 fires at player 2 (cross-team)
+        let input = LaserTagInput {
+            move_x: 0.0,
+            move_z: 0.0,
+            aim_angle: 0.0,
+            fire: true,
+            use_powerup: false,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        let events = game.update(0.05, &inputs);
+
+        // Player 2 (enemy team) SHOULD be stunned
+        assert!(
+            game.state.players[&2].is_stunned(),
+            "Cross-team target should be stunned"
+        );
+
+        // Player 1 should have 1 tag scored
+        assert_eq!(
+            game.state.tags_scored[&1], 1,
+            "Cross-team hit should award a tag"
+        );
+
+        // ScoreUpdate event should be emitted
+        let has_score_event = events.iter().any(|e| {
+            matches!(
+                e,
+                GameEvent::ScoreUpdate {
+                    player_id: 1,
+                    score: 1
+                }
+            )
+        });
+        assert!(
+            has_score_event,
+            "ScoreUpdate event should be emitted for cross-team hit"
+        );
+    }
+
+    #[test]
+    fn same_team_no_friendly_fire() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(4);
+        game.init(&players, &teams_config());
+
+        // teams_config() uses teams_2, round-robin:
+        //   Player 1 (idx 0) -> team 0
+        //   Player 3 (idx 2) -> team 0
+        assert_eq!(game.state.teams[&1], 0, "Player 1 should be on team 0");
+        assert_eq!(game.state.teams[&3], 0, "Player 3 should be on team 0");
+
+        // Position player 1 (team 0) to fire at player 3 (same team 0)
+        game.state.players.get_mut(&1).unwrap().x = 5.0;
+        game.state.players.get_mut(&1).unwrap().z = 10.0;
+        game.state.players.get_mut(&1).unwrap().aim_angle = 0.0; // aiming +X
+        game.state.players.get_mut(&1).unwrap().fire_cooldown = 0.0;
+        game.state.players.get_mut(&1).unwrap().stun_remaining = 0.0;
+
+        // Place teammate (player 3) directly in line of fire
+        game.state.players.get_mut(&3).unwrap().x = 10.0;
+        game.state.players.get_mut(&3).unwrap().z = 10.0;
+        game.state.players.get_mut(&3).unwrap().stun_remaining = 0.0;
+
+        // Move other players far away
+        game.state.players.get_mut(&2).unwrap().x = 5.0;
+        game.state.players.get_mut(&2).unwrap().z = 45.0;
+        game.state.players.get_mut(&4).unwrap().x = 5.0;
+        game.state.players.get_mut(&4).unwrap().z = 45.0;
+
+        // Player 1 fires at player 3 (same team)
+        let input = LaserTagInput {
+            move_x: 0.0,
+            move_z: 0.0,
+            aim_angle: 0.0,
+            fire: true,
+            use_powerup: false,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        let events = game.update(0.05, &inputs);
+
+        // Teammate (player 3) should NOT be stunned
+        assert!(
+            !game.state.players[&3].is_stunned(),
+            "Same-team target should not be stunned (no friendly fire)"
+        );
+
+        // Player 1 should have 0 tags scored
+        assert_eq!(
+            game.state.tags_scored[&1], 0,
+            "No tag should be scored for friendly fire attempt"
+        );
+
+        // No ScoreUpdate events for player 1
+        let score_events: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, GameEvent::ScoreUpdate { player_id: 1, .. }))
+            .collect();
+        assert!(
+            score_events.is_empty(),
+            "No score event should be emitted for same-team hit attempt"
+        );
+    }
+
     #[test]
     fn nan_inputs_sanitized() {
         let mut game = LaserTagArena::new();

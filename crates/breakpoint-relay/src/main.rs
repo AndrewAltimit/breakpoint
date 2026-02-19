@@ -38,6 +38,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/relay", axum::routing::get(relay_ws_handler))
+        .route("/health", axum::routing::get(health_handler))
         .with_state(state);
 
     let addr = format!("0.0.0.0:{port}");
@@ -50,6 +51,10 @@ async fn main() {
     axum::serve(listener, app)
         .await
         .expect("Relay server error");
+}
+
+async fn health_handler() -> &'static str {
+    "ok"
 }
 
 async fn relay_ws_handler(

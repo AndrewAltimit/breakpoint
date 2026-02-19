@@ -49,3 +49,31 @@ pub async fn event_stream(
 
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use crate::state::ConnectionGuard;
+
+    #[test]
+    fn sse_guard_tracks_subscriber_count() {
+        let sse_subscriber_count = Arc::new(AtomicUsize::new(0));
+
+        // Simulate two SSE subscribers connecting
+        let guard1 = ConnectionGuard::new(Arc::clone(&sse_subscriber_count));
+        assert_eq!(sse_subscriber_count.load(Ordering::Relaxed), 1);
+
+        let guard2 = ConnectionGuard::new(Arc::clone(&sse_subscriber_count));
+        assert_eq!(sse_subscriber_count.load(Ordering::Relaxed), 2);
+
+        // First subscriber disconnects
+        drop(guard1);
+        assert_eq!(sse_subscriber_count.load(Ordering::Relaxed), 1);
+
+        // Second subscriber disconnects
+        drop(guard2);
+        assert_eq!(sse_subscriber_count.load(Ordering::Relaxed), 0);
+    }
+}
