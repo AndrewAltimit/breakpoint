@@ -93,3 +93,106 @@ impl TronConfig {
         Self::default()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_has_sensible_values() {
+        let config = TronConfig::default();
+        assert!(config.base_speed > 0.0, "base_speed must be positive");
+        assert!(config.turn_delay > 0.0, "turn_delay must be positive");
+        assert!(config.arena_width > 0.0, "arena_width must be positive");
+        assert!(config.arena_depth > 0.0, "arena_depth must be positive");
+        assert!(
+            config.collision_distance > 0.0,
+            "collision_distance must be positive"
+        );
+        assert!(
+            config.grind_distance > 0.0,
+            "grind_distance must be positive"
+        );
+        assert!(
+            config.brake_drain_rate > 0.0,
+            "brake_drain_rate must be positive"
+        );
+        assert!(
+            config.brake_speed_mult > 0.0,
+            "brake_speed_mult must be positive"
+        );
+    }
+
+    #[test]
+    fn config_field_count() {
+        let config = TronConfig::default();
+        // Verify all major physics constants are accessible and non-zero
+        assert!(config.max_speed > 0.0, "max_speed must be positive");
+        assert!(
+            config.grind_max_multiplier > 0.0,
+            "grind_max_multiplier must be positive"
+        );
+        assert!(
+            config.turn_speed_penalty > 0.0,
+            "turn_speed_penalty must be positive"
+        );
+        assert!(
+            config.brake_fuel_max > 0.0,
+            "brake_fuel_max must be positive"
+        );
+        assert!(
+            config.brake_regen_rate > 0.0,
+            "brake_regen_rate must be positive"
+        );
+        assert!(config.rubber_max > 0.0, "rubber_max must be positive");
+        assert!(
+            config.rubber_drain_rate > 0.0,
+            "rubber_drain_rate must be positive"
+        );
+        assert!(
+            config.round_duration_secs > 0.0,
+            "round_duration_secs must be positive"
+        );
+        assert!(config.round_count > 0, "round_count must be positive");
+        assert!(
+            config.win_zone_delay > 0.0,
+            "win_zone_delay must be positive"
+        );
+        assert!(
+            config.win_zone_death_delay > 0.0,
+            "win_zone_death_delay must be positive"
+        );
+        assert!(
+            config.win_zone_expand_rate > 0.0,
+            "win_zone_expand_rate must be positive"
+        );
+        assert!(
+            config.speed_decay_rate > 0.0,
+            "speed_decay_rate must be positive"
+        );
+        // Verify physical relationships make sense
+        assert!(
+            config.max_speed > config.base_speed,
+            "max_speed should exceed base_speed"
+        );
+        assert!(
+            config.grind_distance > config.collision_distance,
+            "grind_distance should exceed collision_distance"
+        );
+    }
+
+    #[test]
+    fn load_falls_back_to_default() {
+        // When no config file or env var exists, load() should return defaults
+        let loaded = TronConfig::load();
+        let default = TronConfig::default();
+        assert!(
+            (loaded.base_speed - default.base_speed).abs() < f32::EPSILON,
+            "load() should fall back to default config"
+        );
+        assert!(
+            (loaded.arena_width - default.arena_width).abs() < f32::EPSILON,
+            "load() should fall back to default config"
+        );
+    }
+}

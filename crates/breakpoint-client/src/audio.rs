@@ -1,6 +1,5 @@
 /// Audio events that game systems can emit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum AudioEvent {
     NoticeChime,
     UrgentAttention,
@@ -12,6 +11,9 @@ pub enum AudioEvent {
     PlatformerFinish,
     LaserFire,
     LaserHit,
+    TronCrash,
+    TronGrind,
+    TronWin,
 }
 
 /// Queue of audio events to be processed each frame.
@@ -46,6 +48,9 @@ impl AudioEventQueue {
                 },
                 AudioEvent::LaserFire => (1800.0, 0.06, WaveType::Sawtooth, SoundCategory::Game),
                 AudioEvent::LaserHit => (200.0, 0.15, WaveType::Square, SoundCategory::Game),
+                AudioEvent::TronCrash => (300.0, 0.3, WaveType::Square, SoundCategory::Game),
+                AudioEvent::TronGrind => (1500.0, 0.05, WaveType::Sawtooth, SoundCategory::Game),
+                AudioEvent::TronWin => (1000.0, 0.5, WaveType::Triangle, SoundCategory::Game),
             };
 
             let category_vol = match vol_category {

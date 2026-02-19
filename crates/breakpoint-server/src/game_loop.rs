@@ -87,6 +87,11 @@ impl ServerGameRegistry {
     pub fn create(&self, game_id: GameId) -> Option<Box<dyn BreakpointGame>> {
         self.factories.get(&game_id).map(|f| f())
     }
+
+    /// Return the number of registered game types.
+    pub fn available_games(&self) -> usize {
+        self.factories.len()
+    }
 }
 
 /// Configuration for a game session spawned by the server.
@@ -148,8 +153,11 @@ async fn run_game_tick_loop(
         players: config.players.clone(),
         leader_id: config.leader_id,
     });
-    if let Ok(data) = encode_server_message(&start_msg) {
-        let _ = broadcast_tx.send(GameBroadcast::EncodedMessage(Bytes::from(data)));
+    match encode_server_message(&start_msg) {
+        Ok(data) => {
+            let _ = broadcast_tx.send(GameBroadcast::EncodedMessage(Bytes::from(data)));
+        },
+        Err(e) => tracing::error!(error = %e, "Failed to encode GameStart"),
     }
 
     let tick_rate = game.tick_rate();
@@ -205,8 +213,15 @@ async fn run_game_tick_loop(
                     tick,
                     state_data: state_buf.clone(),
                 });
-                if let Ok(data) = encode_server_message(&gs_msg) {
-                    let _ = broadcast_tx.send(GameBroadcast::EncodedMessage(Bytes::from(data)));
+                match encode_server_message(&gs_msg) {
+                    Ok(data) => {
+                        let _ = broadcast_tx.send(GameBroadcast::EncodedMessage(
+                            Bytes::from(data),
+                        ));
+                    },
+                    Err(e) => tracing::error!(
+                        tick, error = %e, "Failed to encode GameState"
+                    ),
                 }
 
                 // Check for round completion
@@ -238,10 +253,15 @@ async fn run_game_tick_loop(
                             })
                             .collect();
                         let end_msg = ServerMessage::GameEnd(GameEndMsg { final_scores });
-                        if let Ok(data) = encode_server_message(&end_msg) {
-                            let _ = broadcast_tx.send(GameBroadcast::EncodedMessage(
-                                Bytes::from(data),
-                            ));
+                        match encode_server_message(&end_msg) {
+                            Ok(data) => {
+                                let _ = broadcast_tx.send(
+                                    GameBroadcast::EncodedMessage(Bytes::from(data)),
+                                );
+                            },
+                            Err(e) => tracing::error!(
+                                error = %e, "Failed to encode GameEnd"
+                            ),
                         }
                         break;
                     }
@@ -252,10 +272,17 @@ async fn run_game_tick_loop(
                         scores,
                         between_round_secs: config.between_round_duration.as_secs() as u16,
                     });
-                    if let Ok(data) = encode_server_message(&round_end_msg) {
-                        let _ = broadcast_tx.send(GameBroadcast::EncodedMessage(
-                            Bytes::from(data),
-                        ));
+                    match encode_server_message(&round_end_msg) {
+                        Ok(data) => {
+                            let _ = broadcast_tx.send(
+                                GameBroadcast::EncodedMessage(Bytes::from(data)),
+                            );
+                        },
+                        Err(e) => tracing::error!(
+                            round = current_round,
+                            error = %e,
+                            "Failed to encode RoundEnd"
+                        ),
                     }
 
                     // Pause between rounds (drain commands but don't tick)
@@ -314,10 +341,17 @@ async fn run_game_tick_loop(
                         players: players.clone(),
                         leader_id: config.leader_id,
                     });
-                    if let Ok(data) = encode_server_message(&next_start) {
-                        let _ = broadcast_tx.send(GameBroadcast::EncodedMessage(
-                            Bytes::from(data),
-                        ));
+                    match encode_server_message(&next_start) {
+                        Ok(data) => {
+                            let _ = broadcast_tx.send(
+                                GameBroadcast::EncodedMessage(Bytes::from(data)),
+                            );
+                        },
+                        Err(e) => tracing::error!(
+                            round = current_round,
+                            error = %e,
+                            "Failed to encode GameStart for next round"
+                        ),
                     }
 
                     // Reset interval for clean timing
@@ -571,6 +605,218 @@ mod tests {
             }
         }
         assert!(got_ended, "Game should end when all players leave");
+        let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn registry_creates_tron() {
+        let registry = ServerGameRegistry::new();
+        let game = registry.create(GameId::Tron);
+        assert!(game.is_some(), "Tron should be registered");
+    }
+
+    #[tokio::test]
+    async fn registry_returns_none_for_unknown() {
+        let registry = ServerGameRegistry::new();
+        assert_eq!(
+            registry.available_games(),
+            4,
+            "All 4 default games should be registered"
+        );
+    }
+
+    #[tokio::test]
+    async fn stop_command_ends_game_cleanly() {
+        let registry = ServerGameRegistry::new();
+        let players = make_test_players(2);
+
+        let config = GameSessionConfig {
+            game_id: GameId::Golf,
+            players,
+            leader_id: 1,
+            round_count: 1,
+            round_duration: Duration::from_secs(90),
+            between_round_duration: Duration::from_secs(1),
+            custom: HashMap::new(),
+        };
+
+        let (cmd_tx, mut broadcast_rx, handle) =
+            spawn_game_session(&registry, config).expect("should spawn");
+
+        // Consume GameStart
+        let _ = broadcast_rx.recv().await;
+
+        // Send Stop
+        let _ = cmd_tx.send(GameCommand::Stop);
+
+        // Should receive GameEnded broadcast
+        let mut got_ended = false;
+        for _ in 0..10 {
+            match tokio::time::timeout(Duration::from_millis(500), broadcast_rx.recv()).await {
+                Ok(Some(GameBroadcast::GameEnded)) => {
+                    got_ended = true;
+                    break;
+                },
+                Ok(Some(_)) => continue,
+                _ => break,
+            }
+        }
+        assert!(got_ended, "Stop command should produce GameEnded broadcast");
+        let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn player_join_during_game() {
+        let registry = ServerGameRegistry::new();
+        let players = make_test_players(1);
+
+        let config = GameSessionConfig {
+            game_id: GameId::Golf,
+            players,
+            leader_id: 1,
+            round_count: 1,
+            round_duration: Duration::from_secs(90),
+            between_round_duration: Duration::from_secs(1),
+            custom: HashMap::new(),
+        };
+
+        let (cmd_tx, mut broadcast_rx, handle) =
+            spawn_game_session(&registry, config).expect("should spawn");
+
+        // Consume GameStart
+        let _ = broadcast_rx.recv().await;
+
+        // New player joins mid-game
+        let new_player = Player {
+            id: 2,
+            display_name: "LateJoiner".to_string(),
+            color: PlayerColor::PALETTE[1],
+            is_leader: false,
+            is_spectator: false,
+            is_bot: false,
+        };
+        let _ = cmd_tx.send(GameCommand::PlayerJoined {
+            player_id: 2,
+            player: new_player,
+        });
+
+        // Game should continue producing ticks without panic
+        let msg = tokio::time::timeout(Duration::from_millis(500), broadcast_rx.recv()).await;
+        assert!(
+            msg.is_ok(),
+            "Game should continue after mid-game player join"
+        );
+
+        let _ = cmd_tx.send(GameCommand::Stop);
+        let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn broadcast_encoding_produces_valid_msgpack() {
+        let registry = ServerGameRegistry::new();
+        let players = make_test_players(2);
+
+        let config = GameSessionConfig {
+            game_id: GameId::Golf,
+            players,
+            leader_id: 1,
+            round_count: 1,
+            round_duration: Duration::from_secs(90),
+            between_round_duration: Duration::from_secs(1),
+            custom: HashMap::new(),
+        };
+
+        let (cmd_tx, mut broadcast_rx, handle) =
+            spawn_game_session(&registry, config).expect("should spawn");
+
+        // Receive GameStart and verify it decodes
+        let msg = broadcast_rx.recv().await.expect("should receive GameStart");
+        match msg {
+            GameBroadcast::EncodedMessage(data) => {
+                let decoded = breakpoint_core::net::protocol::decode_server_message(&data);
+                assert!(
+                    decoded.is_ok(),
+                    "GameStart bytes should decode: {:?}",
+                    decoded.err()
+                );
+            },
+            other => panic!("Expected EncodedMessage for GameStart, got: {other:?}"),
+        }
+
+        // Receive at least one GameState tick and verify it decodes
+        let msg = tokio::time::timeout(Duration::from_millis(500), broadcast_rx.recv())
+            .await
+            .expect("should receive tick within timeout")
+            .expect("channel should not be closed");
+        match msg {
+            GameBroadcast::EncodedMessage(data) => {
+                let decoded = breakpoint_core::net::protocol::decode_server_message(&data);
+                assert!(
+                    decoded.is_ok(),
+                    "GameState bytes should decode: {:?}",
+                    decoded.err()
+                );
+            },
+            other => panic!("Expected EncodedMessage for GameState, got: {other:?}"),
+        }
+
+        let _ = cmd_tx.send(GameCommand::Stop);
+        let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn game_session_with_platformer() {
+        let registry = ServerGameRegistry::new();
+        let players = make_test_players(2);
+
+        let config = GameSessionConfig {
+            game_id: GameId::Platformer,
+            players: players.clone(),
+            leader_id: 1,
+            round_count: 1,
+            round_duration: Duration::from_secs(90),
+            between_round_duration: Duration::from_secs(1),
+            custom: HashMap::new(),
+        };
+
+        let (cmd_tx, mut broadcast_rx, handle) =
+            spawn_game_session(&registry, config).expect("should spawn");
+
+        // First message should be GameStart with Platformer
+        let msg = broadcast_rx.recv().await.expect("should receive broadcast");
+        match msg {
+            GameBroadcast::EncodedMessage(data) => {
+                let decoded = breakpoint_core::net::protocol::decode_server_message(&data)
+                    .expect("should decode");
+                match decoded {
+                    ServerMessage::GameStart(gs) => {
+                        assert_eq!(gs.game_name, "platform-racer");
+                        assert_eq!(gs.players.len(), 2);
+                    },
+                    other => panic!("Expected GameStart, got: {other:?}"),
+                }
+            },
+            other => panic!("Expected EncodedMessage, got: {other:?}"),
+        }
+
+        // Should receive GameState ticks
+        let msg = tokio::time::timeout(Duration::from_millis(500), broadcast_rx.recv())
+            .await
+            .expect("should receive tick within timeout")
+            .expect("channel should not be closed");
+        match msg {
+            GameBroadcast::EncodedMessage(data) => {
+                let decoded = breakpoint_core::net::protocol::decode_server_message(&data)
+                    .expect("should decode");
+                assert!(
+                    matches!(decoded, ServerMessage::GameState(_)),
+                    "Should receive GameState tick, got: {decoded:?}"
+                );
+            },
+            other => panic!("Expected GameState tick, got: {other:?}"),
+        }
+
+        let _ = cmd_tx.send(GameCommand::Stop);
         let _ = handle.await;
     }
 }

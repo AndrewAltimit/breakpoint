@@ -544,6 +544,16 @@ input[type="text"]:focus-visible {
     pointer-events: auto;
 }
 
+.dc-rejoin-btn {
+    margin-left: 8px;
+    padding: 4px 12px;
+    border: 1px solid #fff;
+    border-radius: 4px;
+    background: transparent;
+    color: #fff;
+    cursor: pointer;
+}
+
 /* ── Overlay ─────────────────────────────────────────── */
 
 #overlay-container {
@@ -866,6 +876,231 @@ input[type="text"]:focus-visible {
     outline-offset: 2px;
 }
 
+/* ── Loading overlay ────────────────────────────────── */
+
+#loading-overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #0d0d1a;
+    z-index: 9999;
+}
+
+.loading-content {
+    text-align: center;
+}
+
+.loading-spinner {
+    width: 40px;
+    height: 40px;
+    margin: 24px auto;
+    border: 3px solid #223;
+    border-top-color: #7cf;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.loading-text {
+    color: #889;
+    font-size: 0.85rem;
+}
+
+/* ── Fatal error overlay ───────────────────────────── */
+
+#fatal-error {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #0d0d1a;
+    z-index: 9999;
+}
+
+.fatal-error-content {
+    text-align: center;
+    max-width: 480px;
+    padding: 0 20px;
+}
+
+.fatal-error-logo {
+    color: #f77;
+}
+
+.fatal-error-msg {
+    color: #f77;
+    font-size: 0.95rem;
+    margin-bottom: 24px;
+    line-height: 1.5;
+}
+
+/* ── Noscript fallback ───────────────────────────── */
+
+.noscript-overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #0d0d1a;
+    color: #e0e0e0;
+    font-family: system-ui, sans-serif;
+    text-align: center;
+    z-index: 9999;
+}
+
+.noscript-title {
+    color: #7cf;
+    font-size: 2rem;
+    margin-bottom: 16px;
+}
+
+/* ── Toast animations ──────────────────────────────── */
+
+.toast.dismissing {
+    animation: toast-out 0.3s ease-in forwards;
+}
+
+@keyframes toast-out {
+    from { opacity: 1; transform: translateX(0); }
+    to { opacity: 0; transform: translateX(20px); }
+}
+
+.toast-overflow-indicator {
+    text-align: center;
+    font-size: 0.75rem;
+    color: #889;
+    padding: 4px;
+}
+
+/* ── Game descriptions ─────────────────────────────── */
+
+.game-desc {
+    font-size: 0.65rem;
+    color: #667;
+    margin-top: 4px;
+    line-height: 1.3;
+}
+
+.game-btn.selected .game-desc {
+    color: #89b;
+}
+
+/* ── Copy room code button ─────────────────────────── */
+
+.room-code-copy {
+    padding: 4px 10px;
+    border: 1px solid #334;
+    border-radius: 4px;
+    background: transparent;
+    color: #889;
+    font-size: 0.7rem;
+    cursor: pointer;
+    margin-left: 8px;
+    transition: all 0.15s;
+    vertical-align: middle;
+}
+
+.room-code-copy:hover {
+    border-color: #7cf;
+    color: #7cf;
+}
+
+.room-code-copy.copied {
+    border-color: #5a5;
+    color: #5a5;
+}
+
+/* ── Spectator badge ───────────────────────────────── */
+
+.spectator-badge {
+    position: absolute;
+    top: 12px;
+    right: 16px;
+    background: rgba(255, 153, 0, 0.15);
+    border: 1px solid #f93;
+    color: #f93;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    padding: 4px 12px;
+    border-radius: 4px;
+    pointer-events: none;
+}
+
+/* ── Disabled button states ────────────────────────── */
+
+.btn:disabled,
+.game-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.btn-primary:disabled:hover {
+    transform: none;
+}
+
+/* ── Countdown progress bar ────────────────────────── */
+
+.countdown-bar {
+    width: 100%;
+    height: 4px;
+    background: #223;
+    border-radius: 2px;
+    margin-top: 8px;
+    overflow: hidden;
+}
+
+.countdown-bar-fill {
+    height: 100%;
+    background: #7cf;
+    border-radius: 2px;
+    transition: width 0.5s linear;
+}
+
+/* ── Kill feed ─────────────────────────────────────── */
+
+.kill-feed {
+    position: absolute;
+    top: 48px;
+    left: 16px;
+    pointer-events: none;
+    font-size: 0.7rem;
+}
+
+.kill-feed-entry {
+    background: rgba(13, 13, 26, 0.75);
+    padding: 3px 8px;
+    border-radius: 4px;
+    margin-bottom: 3px;
+    color: #ccd;
+    animation: toast-in 0.3s ease-out;
+}
+
+/* ── Tron eliminated overlay ───────────────────────── */
+
+.tron-eliminated {
+    position: absolute;
+    top: 40%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 2.5rem;
+    font-weight: 800;
+    color: #f44;
+    text-shadow: 0 0 20px rgba(255, 68, 68, 0.5);
+    pointer-events: none;
+    opacity: 0.8;
+    letter-spacing: 0.1em;
+}
+
 /* ── Reduced motion ─────────────────────────────────── */
 
 @media (prefers-reduced-motion: reduce) {
@@ -873,5 +1108,88 @@ input[type="text"]:focus-visible {
         animation-duration: 0.01ms !important;
         animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important;
+    }
+}
+
+/* ── Mobile responsiveness ─────────────────────────── */
+
+@media (max-width: 600px) {
+    .game-selector {
+        flex-wrap: wrap;
+    }
+
+    .game-btn {
+        flex: 1 1 calc(50% - 4px);
+        min-width: calc(50% - 4px);
+        min-height: 44px;
+        font-size: 0.75rem;
+    }
+
+    .game-desc {
+        display: none;
+    }
+
+    .hud-top {
+        top: 8px;
+    }
+
+    .hud-label {
+        font-size: 0.75rem;
+        padding: 4px 10px;
+    }
+
+    .hud-bottom {
+        bottom: 8px;
+    }
+
+    .hud-hint {
+        font-size: 0.65rem;
+    }
+
+    .game-specific-hud {
+        top: 40px;
+        right: 8px;
+        min-width: 140px;
+        padding: 8px 10px;
+        font-size: 0.75rem;
+    }
+
+    .toast-container {
+        width: min(320px, 90vw);
+        right: 8px;
+    }
+
+    .tron-gauges {
+        left: 8px;
+        bottom: 12px;
+    }
+
+    .tron-gauge-bar {
+        width: 70px;
+    }
+
+    #tron-minimap {
+        width: 120px;
+        height: 120px;
+    }
+
+    .modal {
+        padding: 24px 20px;
+        min-width: auto;
+        width: 95vw;
+    }
+
+    .score-row {
+        font-size: 0.85rem;
+        padding: 6px 8px;
+    }
+
+    .icon-btn {
+        min-width: 44px;
+        min-height: 44px;
+    }
+
+    .disconnect-banner {
+        font-size: 0.75rem;
     }
 }

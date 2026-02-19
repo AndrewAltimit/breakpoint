@@ -412,10 +412,29 @@ fn build_tron_hud(_app: &App) -> serde_json::Value {
     serde_json::Value::Null
 }
 
-/// Show disconnect banner via JS.
-pub fn show_disconnect_banner() {
+/// Show fatal error overlay via JS (WebGL2 failure, unrecoverable errors).
+#[cfg(target_family = "wasm")]
+pub fn show_fatal_error(msg: &str) {
+    let json = serde_json::json!(msg).to_string();
+    call_window_fn("_breakpointFatalError", Some(&json));
+}
+
+/// Show disconnect banner via JS with reconnect info.
+pub fn show_disconnect_banner(attempt: u32, max_attempts: u32, next_retry_secs: f64) {
     #[cfg(target_family = "wasm")]
-    call_window_fn("_breakpointDisconnect", None);
+    {
+        let json = serde_json::json!({
+            "attempt": attempt,
+            "maxAttempts": max_attempts,
+            "nextRetrySecs": next_retry_secs.ceil() as u32,
+        })
+        .to_string();
+        call_window_fn("_breakpointDisconnect", Some(&json));
+    }
+    #[cfg(not(target_family = "wasm"))]
+    {
+        let _ = (attempt, max_attempts, next_retry_secs);
+    }
 }
 
 /// Hide disconnect banner via JS.

@@ -1460,6 +1460,68 @@ mod tests {
         );
     }
 
+    #[test]
+    fn checkpoint_advances_on_checkpoint_tile() {
+        let mut game = PlatformRacer::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(120));
+
+        let pid = 1u64;
+
+        // Find the first Checkpoint tile in the generated course
+        let mut checkpoint_tile: Option<(u32, u32)> = None;
+        for y in 0..game.course.height {
+            for x in 0..game.course.width {
+                if game.course.get_tile(x as i32, y as i32) == course_gen::Tile::Checkpoint {
+                    checkpoint_tile = Some((x, y));
+                    break;
+                }
+            }
+            if checkpoint_tile.is_some() {
+                break;
+            }
+        }
+        let (cx, cy) = checkpoint_tile.expect("Course should have at least one Checkpoint tile");
+
+        // Record initial checkpoint position
+        let initial_cp_x = game.state.players[&pid].last_checkpoint_x;
+
+        // The checkpoint tile world position is at tile (cx, cy).
+        // check_tile_effects uses floor(player.x / TILE_SIZE) to determine tile.
+        // Place player so their tile coordinates match the checkpoint tile and
+        // player.x > last_checkpoint_x (so the forward-only guard passes).
+        let world_x = cx as f32 * physics::TILE_SIZE + physics::TILE_SIZE / 2.0;
+        let world_y = cy as f32 * physics::TILE_SIZE + physics::TILE_SIZE / 2.0;
+
+        // Ensure the checkpoint is actually forward from the player's current checkpoint
+        assert!(
+            world_x > initial_cp_x,
+            "Checkpoint tile x ({world_x}) should be ahead of initial checkpoint ({initial_cp_x})"
+        );
+
+        // Teleport player to the checkpoint tile position
+        let player = game.state.players.get_mut(&pid).unwrap();
+        player.x = world_x;
+        player.y = world_y;
+
+        // Run a game tick to trigger check_tile_effects through the physics substeps
+        game.update(1.0 / 15.0, &empty_inputs());
+
+        let player = &game.state.players[&pid];
+        assert!(
+            player.last_checkpoint_x > initial_cp_x,
+            "Checkpoint should have advanced: initial={initial_cp_x}, current={}",
+            player.last_checkpoint_x
+        );
+        // Verify the checkpoint position corresponds to the tile center
+        let expected_cp_x = cx as f32 * physics::TILE_SIZE + physics::TILE_SIZE / 2.0;
+        assert!(
+            (player.last_checkpoint_x - expected_cp_x).abs() < 0.1,
+            "Checkpoint x should be at tile center ({expected_cp_x}), got {}",
+            player.last_checkpoint_x
+        );
+    }
+
     // P1-5: Course always has reachable finish for multiple seeds
     #[test]
     fn course_always_has_finish_tile() {

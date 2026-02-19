@@ -60,7 +60,7 @@
         window.addEventListener('unhandledrejection', e => dlog('REJECTION: ' + e.reason, 'e'));
 
         // =============================================
-        // PHASE 1: Test pure WebGL2 rendering (no Bevy)
+        // PHASE 1: Test pure WebGL2 rendering
         // =============================================
         function runWebGLTest() {
             dlog('=== PHASE 1: Pure WebGL2 Test ===', 's');
@@ -175,7 +175,7 @@
                 const module = await import('./pkg/breakpoint_client.js');
                 dlog('JS module loaded. Calling init()...', 'i');
                 await module.default();
-                dlog('init() returned. Bevy event loop should be running.', 's');
+                dlog('init() returned. WASM render loop should be running.', 's');
                 wasmLoaded = true;
 
                 // Monitor canvas after WASM loads
@@ -207,14 +207,14 @@
                             // Check if all zeros (nothing rendered)
                             readGl.readPixels(cx, cy, 1, 1, readGl.RGBA, readGl.UNSIGNED_BYTE, px);
                             if (px[0] === 0 && px[1] === 0 && px[2] === 0 && px[3] === 0) {
-                                dlog('WARNING: Center pixel is transparent black - Bevy may not be rendering', 'w');
+                                dlog('WARNING: Center pixel is transparent black - renderer may not be active', 'w');
                             } else if (px[0] === 0 && px[1] === 0 && px[2] === 0 && px[3] === 255) {
                                 dlog('Center pixel is opaque black', 'w');
                             } else {
                                 dlog('Non-black center pixel detected - rendering is happening!', 's');
                             }
 
-                            // Check for GL errors from Bevy
+                            // Check for GL errors from renderer
                             let err = readGl.getError();
                             if (err !== readGl.NO_ERROR) {
                                 dlog('GL error after Bevy render: 0x' + err.toString(16), 'e');

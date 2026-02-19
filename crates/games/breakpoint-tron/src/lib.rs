@@ -938,4 +938,123 @@ mod tests {
         );
         assert!(events.is_empty(), "No events after round complete");
     }
+
+    // ================================================================
+    // Additional game logic edge cases
+    // ================================================================
+
+    #[test]
+    fn max_player_count_game() {
+        let mut game = TronCycles::new();
+        let players = make_players(8);
+        game.init(&players, &default_config(120));
+
+        assert_eq!(
+            game.state.players.len(),
+            8,
+            "All 8 players should be initialized"
+        );
+        assert_eq!(game.state.alive_count, 8);
+
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+
+        // Run several ticks -- must not panic
+        for _ in 0..50 {
+            game.update(0.05, &inputs);
+            if game.state.round_complete {
+                break;
+            }
+        }
+
+        // Game should still be in a valid state
+        assert!(game.state.round_timer > 0.0, "Timer should have advanced");
+    }
+
+    #[test]
+    fn bot_surrounded_does_not_panic() {
+        let mut game = TronCycles::default();
+        let players = make_players(4);
+        game.init(&players, &default_config(120));
+
+        let config = game.config().clone();
+        let empty = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+
+        // Run many ticks with bot AI driving all players to create enclosed situations
+        for _ in 0..500 {
+            let state_bytes = game.serialize_state();
+            let state: TronState = rmp_serde::from_slice(&state_bytes).unwrap();
+
+            for pid in 1..=4 {
+                let bot_input = bot::generate_bot_input(&state, pid, &config);
+                let input_bytes = rmp_serde::to_vec(&bot_input).unwrap();
+                game.apply_input(pid, &input_bytes);
+            }
+
+            game.update(0.05, &empty);
+
+            if game.state.round_complete {
+                break;
+            }
+        }
+        // The key assertion is that we reach here without panic
+    }
+
+    #[test]
+    fn simultaneous_deaths_in_same_tick() {
+        let mut game = TronCycles::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(120));
+
+        // Place both players near opposing arena boundaries heading outward
+        // so they both die on the next tick from boundary collision.
+        let cycle1 = game.state.players.get_mut(&1).unwrap();
+        cycle1.x = 0.05;
+        cycle1.z = 250.0;
+        cycle1.direction = Direction::West;
+        // Close any active wall to avoid self-collision noise
+        for wall in &mut game.state.wall_segments {
+            if wall.owner_id == 1 && wall.is_active {
+                wall.x2 = 0.05;
+                wall.z2 = 250.0;
+            }
+        }
+
+        let cycle2 = game.state.players.get_mut(&2).unwrap();
+        cycle2.x = 499.95;
+        cycle2.z = 250.0;
+        cycle2.direction = Direction::East;
+        for wall in &mut game.state.wall_segments {
+            if wall.owner_id == 2 && wall.is_active {
+                wall.x2 = 499.95;
+                wall.z2 = 250.0;
+            }
+        }
+
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(0.05, &inputs);
+
+        // Both players should be dead
+        assert!(
+            !game.state.players[&1].alive,
+            "Player 1 should be eliminated after hitting west boundary"
+        );
+        assert!(
+            !game.state.players[&2].alive,
+            "Player 2 should be eliminated after hitting east boundary"
+        );
+        assert_eq!(
+            game.state.alive_count, 0,
+            "No players should be alive after simultaneous boundary deaths"
+        );
+        assert!(
+            game.state.round_complete,
+            "Round should be complete when all players are dead"
+        );
+    }
 }

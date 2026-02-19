@@ -117,6 +117,18 @@ pub fn sync_lasertag_scene(scene: &mut Scene, active: &ActiveGame, theme: &Theme
             MaterialType::Unlit { color },
             Transform::from_xyz(player.x, 0.75, player.z).with_scale(Vec3::new(0.5, 1.5, 0.5)),
         );
+
+        // Hit flash — white glow sphere when just stunned
+        if player.stun_remaining > 0.0 && player.stun_remaining < 0.3 {
+            scene.add(
+                MeshType::Sphere { segments: 12 },
+                MaterialType::Glow {
+                    color: Vec4::new(1.0, 1.0, 1.0, 1.0),
+                    intensity: 3.0,
+                },
+                Transform::from_xyz(player.x, 0.75, player.z).with_scale(Vec3::splat(2.0)),
+            );
+        }
     }
 
     // Laser trails

@@ -208,6 +208,22 @@ pub fn sync_tron_scene(
         );
     }
 
+    // Crash explosion — glow sphere at dead cycle positions
+    for (&pid, cycle) in &state.players {
+        if !cycle.alive {
+            let color_idx = player_index.get(&pid).copied().unwrap_or(0) % PLAYER_COLORS.len();
+            let color = PLAYER_COLORS[color_idx];
+            scene.add(
+                MeshType::Sphere { segments: 12 },
+                MaterialType::Glow {
+                    color: Vec4::new(color.x, color.y, color.z, 0.9),
+                    intensity: 4.0,
+                },
+                Transform::from_xyz(cycle.x, 1.0, cycle.z).with_scale(Vec3::splat(3.0)),
+            );
+        }
+    }
+
     // Cycle heads — oriented arrow-like shapes at the head of each trail
     for (&pid, cycle) in &state.players {
         if !cycle.alive {
