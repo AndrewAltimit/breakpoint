@@ -10,7 +10,7 @@ pub const HOLE_RADIUS: f32 = 0.6;
 /// At 10 Hz with 0.95 friction, a min-power ball stops in ~7s, max-power in ~12s.
 pub const FRICTION: f32 = 0.95;
 /// Maximum power a stroke can impart.
-pub const MAX_POWER: f32 = 25.0;
+pub const MAX_POWER: f32 = 5.0;
 /// Minimum velocity magnitude; below this the ball is considered stopped.
 pub const MIN_VELOCITY: f32 = 0.1;
 /// Maximum ball speed that allows sinking into the hole.
@@ -609,7 +609,7 @@ mod tests {
 
     #[test]
     fn velocity_magnitude_equals_power_across_angles() {
-        let power = 10.0;
+        let power = MAX_POWER * 0.5;
         let angles = [
             -std::f32::consts::PI,
             -std::f32::consts::FRAC_PI_2,

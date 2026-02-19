@@ -75,8 +75,18 @@ impl Renderer {
             .dyn_into::<web_sys::HtmlCanvasElement>()
             .map_err(|_| "Not a canvas element")?;
 
+        // Explicit context attributes — required for Firefox compatibility.
+        // Chrome auto-defaults these, but Firefox may crash or fail without them.
+        let attrs = web_sys::WebGlContextAttributes::new();
+        attrs.set_antialias(true);
+        attrs.set_depth(true);
+        attrs.set_stencil(false);
+        attrs.set_alpha(true);
+        attrs.set_premultiplied_alpha(true);
+        attrs.set_preserve_drawing_buffer(false);
+
         let gl = canvas
-            .get_context("webgl2")
+            .get_context_with_context_options("webgl2", &attrs)
             .map_err(|e| format!("getContext failed: {e:?}"))?
             .ok_or("WebGL2 not supported")?
             .dyn_into::<GL>()
@@ -444,6 +454,7 @@ fn compile_shader(gl: &GL, shader_type: u32, source: &str) -> Result<WebGlShader
         Ok(shader)
     } else {
         let log = gl.get_shader_info_log(&shader).unwrap_or_default();
+        web_sys::console::error_1(&format!("Shader compile error: {log}").into());
         gl.delete_shader(Some(&shader));
         Err(format!("Shader compile error: {log}"))
     }
@@ -470,6 +481,7 @@ fn link_program(gl: &GL, vert_src: &str, frag_src: &str) -> Result<WebGlProgram,
         Ok(program)
     } else {
         let log = gl.get_program_info_log(&program).unwrap_or_default();
+        web_sys::console::error_1(&format!("Program link error: {log}").into());
         gl.delete_program(Some(&program));
         Err(format!("Program link error: {log}"))
     }

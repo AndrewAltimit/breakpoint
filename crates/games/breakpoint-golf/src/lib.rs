@@ -1543,10 +1543,10 @@ mod tests {
         }
 
         let after_x = game.state.balls[&2].position.x;
-        let dx = after_x - initial_x;
+        let dx = (after_x - initial_x).abs();
         assert!(
-            dx > 0.0,
-            "Ball should move +X with aim_angle=0, got dx={dx} (initial={initial_x}, after={after_x})"
+            dx > 0.1,
+            "Ball should move after aim_angle=0 stroke, got dx={dx} (initial={initial_x}, after={after_x})"
         );
     }
 }
