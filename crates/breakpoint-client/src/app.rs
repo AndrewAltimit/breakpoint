@@ -48,6 +48,8 @@ pub struct LobbyState {
     pub status_message: Option<String>,
     /// Session token from the server for reconnection support.
     pub session_token: Option<String>,
+    /// Per-game custom settings set in the lobby UI.
+    pub game_settings: HashMap<String, serde_json::Value>,
 }
 
 /// Active game instance.
@@ -73,6 +75,8 @@ pub struct RoundTracker {
     pub current_round: u8,
     pub total_rounds: u8,
     pub cumulative_scores: HashMap<PlayerId, i32>,
+    /// Per-round score history: round_scores[i] = scores for round i+1.
+    pub round_scores: Vec<HashMap<PlayerId, i32>>,
 }
 
 impl RoundTracker {
@@ -81,13 +85,17 @@ impl RoundTracker {
             current_round: 1,
             total_rounds,
             cumulative_scores: HashMap::new(),
+            round_scores: Vec::new(),
         }
     }
 
     pub fn record_round(&mut self, scores: &[PlayerScore]) {
+        let mut round_map = HashMap::new();
         for s in scores {
             *self.cumulative_scores.entry(s.player_id).or_insert(0) += s.score;
+            round_map.insert(s.player_id, s.score);
         }
+        self.round_scores.push(round_map);
     }
 
     pub fn is_final_round(&self) -> bool {
@@ -138,7 +146,11 @@ pub struct App {
     pub screen_shake: ScreenShake,
     pub was_connected: bool,
     pub reconnect_info: Option<ReconnectInfo>,
-    prev_timestamp: f64,
+    /// Timestamp (ms) when between-round countdown expires.
+    pub between_round_end_time: Option<f64>,
+    /// Timestamp (ms) when game-over was entered (for auto-return countdown).
+    pub game_over_timestamp: Option<f64>,
+    pub(crate) prev_timestamp: f64,
 }
 
 impl App {
@@ -229,6 +241,8 @@ impl App {
             screen_shake: ScreenShake::default(),
             was_connected: false,
             reconnect_info: None,
+            between_round_end_time: None,
+            game_over_timestamp: None,
             prev_timestamp: 0.0,
         }
     }
@@ -263,7 +277,16 @@ impl App {
             AppState::InGame => {
                 self.update_game(dt);
             },
-            AppState::BetweenRounds | AppState::GameOver => {},
+            AppState::BetweenRounds => {},
+            AppState::GameOver => {
+                // Auto-return to lobby after 30s
+                if let Some(start) = self.game_over_timestamp {
+                    let elapsed = (timestamp - start) / 1000.0;
+                    if elapsed >= 30.0 {
+                        self.transition_to(AppState::Lobby);
+                    }
+                }
+            },
         }
 
         // Update camera
@@ -368,9 +391,11 @@ impl App {
             match self.state {
                 AppState::Lobby => self.process_lobby_message(&data, msg_type),
                 AppState::InGame => self.process_game_message(&data, msg_type),
-                AppState::BetweenRounds | AppState::GameOver => {
-                    // Forward alerts
-                    self.process_alert_message(&data, msg_type);
+                AppState::BetweenRounds => {
+                    self.process_between_rounds_message(&data, msg_type);
+                },
+                AppState::GameOver => {
+                    self.process_game_over_message(&data, msg_type);
                 },
             }
         }
@@ -573,6 +598,10 @@ impl App {
                     if let Some(ref mut tracker) = self.round_tracker {
                         tracker.record_round(&scores);
                     }
+                    if re.between_round_secs > 0 {
+                        self.between_round_end_time =
+                            Some(self.prev_timestamp + (re.between_round_secs as f64 * 1000.0));
+                    }
                     self.transition_to(AppState::BetweenRounds);
                 },
                 Err(e) => {
@@ -596,6 +625,7 @@ impl App {
                     if let Some(ref mut tracker) = self.round_tracker {
                         tracker.record_round(&scores);
                     }
+                    self.game_over_timestamp = Some(self.prev_timestamp);
                     self.transition_to(AppState::GameOver);
                 },
                 Err(e) => {
@@ -660,6 +690,63 @@ impl App {
                 _ => {},
             },
             _ => {},
+        }
+    }
+
+    fn process_between_rounds_message(&mut self, data: &[u8], msg_type: MessageType) {
+        use breakpoint_core::net::messages::ServerMessage;
+
+        match msg_type {
+            MessageType::GameStart => {
+                if let Ok(ServerMessage::GameStart(gs)) = decode_server_message(data) {
+                    self.lobby.selected_game =
+                        GameId::from_str_opt(&gs.game_name).unwrap_or_default();
+                    if let Some(ref mut tracker) = self.round_tracker {
+                        tracker.current_round += 1;
+                    }
+                    self.transition_to(AppState::InGame);
+                }
+            },
+            MessageType::GameState => {
+                // Implicit round start — server is sending game state
+                if let Some(ref mut tracker) = self.round_tracker {
+                    tracker.current_round += 1;
+                }
+                self.transition_to(AppState::InGame);
+                // Re-process this message as InGame
+                self.process_game_message(data, msg_type);
+            },
+            MessageType::GameEnd => {
+                self.process_game_message(data, msg_type);
+            },
+            MessageType::PlayerList => {
+                self.process_lobby_message(data, msg_type);
+            },
+            _ => {
+                self.process_alert_message(data, msg_type);
+            },
+        }
+    }
+
+    fn process_game_over_message(&mut self, data: &[u8], msg_type: MessageType) {
+        use breakpoint_core::net::messages::ServerMessage;
+
+        match msg_type {
+            MessageType::PlayerList => {
+                // Server reset room to Lobby — update player list
+                self.process_lobby_message(data, msg_type);
+            },
+            MessageType::GameStart => {
+                // Leader started another game immediately
+                if let Ok(ServerMessage::GameStart(gs)) = decode_server_message(data) {
+                    self.lobby.selected_game =
+                        GameId::from_str_opt(&gs.game_name).unwrap_or_default();
+                    self.transition_to(AppState::InGame);
+                }
+            },
+            _ => {
+                self.process_alert_message(data, msg_type);
+            },
         }
     }
 
@@ -836,11 +923,24 @@ impl App {
             (AppState::Lobby, AppState::InGame) => {
                 self.setup_game();
             },
+            (AppState::BetweenRounds, AppState::InGame)
+            | (AppState::GameOver, AppState::InGame) => {
+                // New round or new game — clear scene for fresh render
+                self.scene.clear();
+                self.between_round_end_time = None;
+                self.game_over_timestamp = None;
+                // Re-init game instance if needed (e.g., starting fresh from GameOver)
+                if self.game.is_none() {
+                    self.setup_game();
+                }
+            },
             (AppState::InGame, AppState::Lobby) | (_, AppState::Lobby) => {
                 self.scene.clear();
                 self.game = None;
                 self.network_role = None;
                 self.round_tracker = None;
+                self.between_round_end_time = None;
+                self.game_over_timestamp = None;
             },
             _ => {},
         }

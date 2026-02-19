@@ -97,6 +97,7 @@ pub struct GameSessionConfig {
     pub round_count: u8,
     pub round_duration: Duration,
     pub between_round_duration: Duration,
+    pub custom: HashMap<String, serde_json::Value>,
 }
 
 /// Spawn a game tick loop as a tokio task.
@@ -137,7 +138,7 @@ async fn run_game_tick_loop(
     let game_config = GameConfig {
         round_count,
         round_duration: config.round_duration,
-        custom: HashMap::new(),
+        custom: config.custom.clone(),
     };
     game.init(&config.players, &game_config);
 
@@ -249,6 +250,7 @@ async fn run_game_tick_loop(
                     let round_end_msg = ServerMessage::RoundEnd(RoundEndMsg {
                         round: current_round,
                         scores,
+                        between_round_secs: config.between_round_duration.as_secs() as u16,
                     });
                     if let Ok(data) = encode_server_message(&round_end_msg) {
                         let _ = broadcast_tx.send(GameBroadcast::EncodedMessage(
@@ -294,7 +296,7 @@ async fn run_game_tick_loop(
                         p.is_spectator = false;
                     }
 
-                    let mut custom = HashMap::new();
+                    let mut custom = config.custom.clone();
                     custom.insert(
                         "hole_index".to_string(),
                         serde_json::json!(current_round - 1),
@@ -404,6 +406,7 @@ mod tests {
             round_count: 1,
             round_duration: Duration::from_secs(90),
             between_round_duration: Duration::from_secs(1),
+            custom: HashMap::new(),
         };
 
         let (cmd_tx, mut broadcast_rx, handle) =
@@ -454,6 +457,7 @@ mod tests {
             round_count: 1,
             round_duration: Duration::from_secs(90),
             between_round_duration: Duration::from_secs(1),
+            custom: HashMap::new(),
         };
 
         let (cmd_tx, mut broadcast_rx, handle) =
@@ -510,6 +514,7 @@ mod tests {
             round_count: 1,
             round_duration: Duration::from_secs(90),
             between_round_duration: Duration::from_secs(1),
+            custom: HashMap::new(),
         };
 
         let (cmd_tx, mut broadcast_rx, handle) =
@@ -541,6 +546,7 @@ mod tests {
             round_count: 1,
             round_duration: Duration::from_secs(90),
             between_round_duration: Duration::from_secs(1),
+            custom: HashMap::new(),
         };
 
         let (cmd_tx, mut broadcast_rx, handle) =

@@ -117,6 +117,8 @@ pub struct ChatMessageMsg {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RequestGameStartMsg {
     pub game_name: String,
+    #[serde(default)]
+    pub custom: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -161,6 +163,9 @@ pub struct GameStartMsg {
 pub struct RoundEndMsg {
     pub round: u8,
     pub scores: Vec<PlayerScoreEntry>,
+    /// Seconds until the next round starts.
+    #[serde(default)]
+    pub between_round_secs: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

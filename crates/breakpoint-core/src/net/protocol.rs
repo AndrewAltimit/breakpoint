@@ -388,6 +388,7 @@ mod tests {
                 player_id: 42,
                 score: 5,
             }],
+            between_round_secs: 30,
         });
         let encoded = encode_server_message(&msg).unwrap();
         let decoded = decode_server_message(&encoded).unwrap();
@@ -483,6 +484,7 @@ mod tests {
     fn roundtrip_request_game_start() {
         let msg = ClientMessage::RequestGameStart(RequestGameStartMsg {
             game_name: "mini-golf".to_string(),
+            custom: std::collections::HashMap::new(),
         });
         let encoded = encode_client_message(&msg).unwrap();
         let decoded = decode_client_message(&encoded).unwrap();
@@ -618,6 +620,7 @@ mod tests {
             (
                 ClientMessage::RequestGameStart(RequestGameStartMsg {
                     game_name: "g".to_string(),
+                    custom: std::collections::HashMap::new(),
                 }),
                 0x30,
             ),

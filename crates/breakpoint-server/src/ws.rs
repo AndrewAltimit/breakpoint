@@ -367,7 +367,14 @@ async fn read_loop(
                 decode_client_message(&data)
             {
                 let mut rooms = state.rooms.write().await;
-                match rooms.start_game(room_code, &req.game_name, player_id, &state.game_registry) {
+                match rooms.start_game(
+                    room_code,
+                    &req.game_name,
+                    player_id,
+                    &state.game_registry,
+                    Arc::clone(&state.rooms),
+                    req.custom,
+                ) {
                     Ok(()) => {
                         tracing::info!(
                             player_id,

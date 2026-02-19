@@ -266,6 +266,7 @@ pub async fn ws_send_client_msg(stream: &mut WsStream, msg: &ClientMessage) {
 pub async fn ws_request_game_start(stream: &mut WsStream, game_name: &str) {
     let msg = ClientMessage::RequestGameStart(RequestGameStartMsg {
         game_name: game_name.to_string(),
+        custom: std::collections::HashMap::new(),
     });
     ws_send_client_msg(stream, &msg).await;
 }

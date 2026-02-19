@@ -388,6 +388,7 @@ async fn server_only_messages_rejected_from_clients() {
     let re = ServerMessage::RoundEnd(RoundEndMsg {
         round: 1,
         scores: vec![],
+        between_round_secs: 0,
     });
     ws_send_server_msg(&mut client, &re).await;
     let maybe = ws_try_read_raw(&mut leader, 500).await;

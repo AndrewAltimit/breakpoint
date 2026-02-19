@@ -430,6 +430,8 @@ impl RoomManager {
         game_name: &str,
         requester_id: PlayerId,
         registry: &std::sync::Arc<ServerGameRegistry>,
+        rooms: crate::state::SharedRoomManager,
+        custom: HashMap<String, serde_json::Value>,
     ) -> Result<(), String> {
         let entry = self
             .rooms
@@ -456,6 +458,7 @@ impl RoomManager {
             round_count: 0, // Let the game decide via round_count_hint()
             round_duration: entry.room.config.round_duration,
             between_round_duration: entry.room.config.between_round_duration,
+            custom,
         };
 
         let (cmd_tx, broadcast_rx, game_handle) = spawn_game_session(registry, config)
@@ -471,8 +474,13 @@ impl RoomManager {
         }
         let shared_senders = Arc::clone(&entry.broadcast_senders);
         let room_code_owned = room_code.to_string();
+        let rooms_clone = rooms;
         let broadcast_handle = tokio::spawn(async move {
             forward_broadcasts(broadcast_rx, shared_senders, &room_code_owned).await;
+            // Game ended — clean up room state and notify clients
+            let mut mgr = rooms_clone.write().await;
+            mgr.end_game_session(&room_code_owned);
+            mgr.broadcast_player_list(&room_code_owned);
         });
 
         entry.game_command_tx = Some(cmd_tx);
