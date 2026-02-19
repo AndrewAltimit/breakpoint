@@ -21,15 +21,15 @@
     <!-- Fatal error overlay (WebGL2 failure, WASM load error) -->
     <div id="fatal-error" class="hidden">
         <div class="fatal-error-content">
-            <h1 class="logo" style="color: #f77;">BREAKPOINT</h1>
+            <h1 class="logo fatal-error-logo">BREAKPOINT</h1>
             <p id="fatal-error-msg" class="fatal-error-msg"></p>
-            <button class="btn btn-secondary" onclick="location.reload()">Reload Page</button>
+            <button id="btn-fatal-reload" class="btn btn-secondary">Reload Page</button>
         </div>
     </div>
 
     <noscript>
-        <div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#0d0d1a;color:#e0e0e0;font-family:system-ui;text-align:center;z-index:9999;">
-            <div><h1 style="color:#7cf;font-size:2rem;margin-bottom:16px;">BREAKPOINT</h1><p>JavaScript is required to play. Please enable JavaScript and reload.</p></div>
+        <div class="noscript-overlay">
+            <div><h1 class="noscript-title">BREAKPOINT</h1><p>JavaScript is required to play. Please enable JavaScript and reload.</p></div>
         </div>
     </noscript>
 

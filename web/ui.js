@@ -216,21 +216,28 @@
             fatal.classList.remove("hidden");
         }
     };
+    const btnFatalReload = $("btn-fatal-reload");
+    if (btnFatalReload) btnFatalReload.addEventListener("click", () => location.reload());
 
     // ── Disconnect banner with attempt info ──────────────
-    window._breakpointDisconnect = function (attempt, maxAttempts, nextRetrySecs) {
+    // Rust bridge passes a single JSON object: { attempt, maxAttempts, nextRetrySecs }
+    window._breakpointDisconnect = function (info) {
         disconnectBanner.classList.remove("hidden");
+        const attempt = info && info.attempt;
+        const maxAttempts = info && info.maxAttempts;
+        const nextRetrySecs = info && info.nextRetrySecs;
         if (typeof attempt === "number" && typeof maxAttempts === "number") {
             if (attempt >= maxAttempts) {
-                disconnectBanner.innerHTML =
-                    'Connection lost. <button id="dc-rejoin" style="margin-left:8px;padding:4px 12px;border:1px solid #fff;border-radius:4px;background:transparent;color:#fff;cursor:pointer;">Return to Lobby</button>';
-                const rejoinBtn = $("dc-rejoin");
-                if (rejoinBtn) {
-                    rejoinBtn.addEventListener("click", () => {
-                        if (window._bpReturnToLobby) window._bpReturnToLobby();
-                        disconnectBanner.classList.add("hidden");
-                    });
-                }
+                disconnectBanner.textContent = "Connection lost. ";
+                const rejoinBtn = document.createElement("button");
+                rejoinBtn.id = "dc-rejoin";
+                rejoinBtn.className = "dc-rejoin-btn";
+                rejoinBtn.textContent = "Return to Lobby";
+                rejoinBtn.addEventListener("click", () => {
+                    if (window._bpReturnToLobby) window._bpReturnToLobby();
+                    disconnectBanner.classList.add("hidden");
+                });
+                disconnectBanner.appendChild(rejoinBtn);
             } else {
                 const retryText = typeof nextRetrySecs === "number" && nextRetrySecs > 0
                     ? `, retrying in ${Math.ceil(nextRetrySecs)}s`
