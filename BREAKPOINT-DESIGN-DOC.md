@@ -240,6 +240,47 @@ Players navigate a top-down arena, firing lasers to tag opponents. Tagged player
 
 **Technical Notes:** This is the most network-intensive game due to real-time position + aim direction broadcasting. Target 20 Hz tick rate. Laser hit detection is server-authoritative to prevent cheating — clients send "fire" inputs with aim direction, the server resolves hits against authoritative player positions and broadcasts results. Laser projectiles are fast enough that client-side prediction of hits works well visually; the server confirms/denies within 1–2 frames, and mispredictions are rare enough to not feel jarring.
 
+### 4.4 Tron Light Cycles
+
+**Genre:** Top-down trail avoidance
+**Players:** 2–8
+**Round Duration:** 30–120 seconds
+**Network Demand:** Medium (20 Hz position + trail broadcast)
+
+Players drive light cycles that leave persistent wall trails behind them. The objective is to survive longer than all opponents — crash into any wall (arena boundary, your own trail, or another player's trail) and you're eliminated. Last cycle standing wins.
+
+**Core Mechanics:**
+- Each cycle moves forward continuously at a base speed (default 50 units/s). Players steer by turning left or right in 90-degree increments.
+- Wall trails are permanent for the duration of the round. The arena becomes increasingly dangerous as trails accumulate.
+- **Grinding:** Driving parallel and close to an existing wall trail (within collision distance) grants a speed boost (1.3x multiplier). This risk-reward mechanic rewards aggressive play — riding close to walls is faster but one wrong move is fatal.
+- **Braking:** Players can brake to slow down (0.5x speed), useful for tight maneuvering in congested areas. Braking disables grinding.
+- **Win zones:** Optional circular zones that appear on the arena. Driving through a win zone while it's active instantly wins the round. Win zones encourage aggressive movement rather than defensive hiding.
+
+**Arena Design:**
+- Rectangular arena with solid boundary walls.
+- Arena size scales with player count to maintain appropriate density.
+- Spawn points are distributed evenly around the arena perimeter, facing inward.
+
+**Bot AI:**
+- Server-side bot players allow solo play (the game requires 2+ players).
+- Bot AI uses raycasting: it looks ahead in the current direction plus left/right turn directions, measuring open distance to the nearest obstacle.
+- When the current path is blocked within a danger threshold, the bot turns toward the direction with the most open space.
+- Slight pseudo-random noise prevents deterministic behavior and makes bots feel more natural.
+- Bots are added/removed from the lobby by the room leader via dedicated UI buttons.
+
+**Scoring:**
+- Last player standing earns points equal to the number of eliminated opponents.
+- Players who crash earn 0 points for the round.
+- Running total across rounds; highest score wins.
+
+**Visual Design:**
+- Neon aesthetic with glowing cycle trails and fog effects.
+- Each player's trail uses their chosen color with bloom/glow shaders.
+- Eliminated cycles show a brief explosion particle effect.
+- HUD shows player status, speed, and a minimap of the arena.
+
+**Technical Notes:** Runs at 20 Hz tick rate. Trail segments are stored as line segments (start/end points) with owner IDs. Collision detection uses point-to-segment distance checks against all trail segments plus arena boundaries. The server is authoritative for all collision resolution.
+
 ---
 
 ## 5. Alert Overlay System
@@ -716,13 +757,22 @@ breakpoint/
 │   │   │       ├── scoring.rs         # Race + survival scoring
 │   │   │       └── powerups.rs        # Speed boost, double jump, shield
 │   │   │
-│   │   └── breakpoint-lasertag/       # Laser tag arena (2-8 players)
+│   │   ├── breakpoint-lasertag/       # Laser tag arena (2-8 players)
+│   │   │   └── src/
+│   │   │       ├── lib.rs
+│   │   │       ├── arena.rs           # Arena layout, reflective walls
+│   │   │       ├── projectile.rs      # Laser physics, reflection, hit detection
+│   │   │       ├── scoring.rs         # FFA + team scoring
+│   │   │       └── powerups.rs        # Rapid fire, shield, speed boost
+│   │   │
+│   │   └── breakpoint-tron/           # Tron Light Cycles (2-8 players)
 │   │       └── src/
-│   │           ├── lib.rs
-│   │           ├── arena.rs           # Arena layout, reflective walls
-│   │           ├── projectile.rs      # Laser physics, reflection, hit detection
-│   │           ├── scoring.rs         # FFA + team scoring
-│   │           └── powerups.rs        # Rapid fire, shield, speed boost
+│   │           ├── lib.rs             # BreakpointGame trait implementation
+│   │           ├── physics.rs         # Cycle movement, turning, grinding
+│   │           ├── collision.rs       # Trail + boundary collision detection
+│   │           ├── arena.rs           # Arena layout, spawn points
+│   │           ├── config.rs          # Game configuration defaults
+│   │           └── bot.rs             # Server-side bot AI (raycasting)
 │   │
 │   └── adapters/
 │       └── breakpoint-github/         # GitHub Actions polling + agent detection
@@ -809,7 +859,7 @@ pub struct GameConfig {
 }
 ```
 
-This trait is implemented by all three game crates (golf, platformer, laser tag) and verified by 45 combined game tests. Rendering is handled by dedicated `*_render.rs` modules in the client crate (one per game) rather than a `render()` method on the trait, keeping game logic decoupled from the rendering framework. The `custom` field in `GameConfig` allows each game to expose its own settings without polluting the core configuration. See [docs/GAME-DEVELOPMENT.md](docs/GAME-DEVELOPMENT.md) for a step-by-step guide to adding new games.
+This trait is implemented by all four game crates (golf, platformer, laser tag, tron) and verified by combined game tests. Rendering is handled by dedicated `*_render.rs` modules in the client crate (one per game) rather than a `render()` method on the trait, keeping game logic decoupled from the rendering framework. The `custom` field in `GameConfig` allows each game to expose its own settings without polluting the core configuration. See [docs/GAME-DEVELOPMENT.md](docs/GAME-DEVELOPMENT.md) for a step-by-step guide to adding new games.
 
 ---
 
@@ -1008,4 +1058,4 @@ Example adapters are provided in Python, Node.js, and shell, plus a ready-to-use
 
 ---
 
-*This document is a living specification. Phases 1–4 are feature-complete with 484 passing tests across 8 workspace crates, plus 12 Playwright browser spec files. Phase 5 (testing, validation, production hardening) is in progress.*
+*This document is a living specification. Phases 1–4 are feature-complete with passing tests across 9 workspace crates, plus 12 Playwright browser spec files. Phase 5 (testing, validation, production hardening) is in progress.*

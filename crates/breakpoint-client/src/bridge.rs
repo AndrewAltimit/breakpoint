@@ -24,6 +24,7 @@ pub fn push_ui_state(app: &App) {
                         "id": p.id,
                         "name": p.display_name,
                         "isLeader": p.is_leader,
+                        "isBot": p.is_bot,
                     })
                 }).collect::<Vec<_>>(),
             },
@@ -594,6 +595,54 @@ pub fn attach_ui_callbacks(app: &std::rc::Rc<std::cell::RefCell<App>>) {
         let _ = js_sys::Reflect::set(
             &window,
             &"_bpToggleDashboard".into(),
+            closure.as_ref().unchecked_ref(),
+        );
+        closure.forget();
+    }
+
+    // ui_add_bot
+    {
+        let app = Rc::clone(app);
+        let closure = Closure::<dyn FnMut()>::new(move || {
+            let app = app.borrow();
+            let msg = ClientMessage::AddBot(breakpoint_core::net::messages::AddBotMsg {});
+            match encode_client_message(&msg) {
+                Ok(data) => {
+                    if let Err(e) = app.ws.send(&data) {
+                        crate::diag::console_warn!("Failed to send AddBot: {e}");
+                    }
+                },
+                Err(e) => crate::diag::console_warn!("Failed to encode AddBot: {e}"),
+            }
+        });
+        let _ = js_sys::Reflect::set(
+            &window,
+            &"_bpAddBot".into(),
+            closure.as_ref().unchecked_ref(),
+        );
+        closure.forget();
+    }
+
+    // ui_remove_bot(player_id)
+    {
+        let app = Rc::clone(app);
+        let closure = Closure::<dyn FnMut(f64)>::new(move |player_id: f64| {
+            let app = app.borrow();
+            let msg = ClientMessage::RemoveBot(breakpoint_core::net::messages::RemoveBotMsg {
+                player_id: player_id as u64,
+            });
+            match encode_client_message(&msg) {
+                Ok(data) => {
+                    if let Err(e) = app.ws.send(&data) {
+                        crate::diag::console_warn!("Failed to send RemoveBot: {e}");
+                    }
+                },
+                Err(e) => crate::diag::console_warn!("Failed to encode RemoveBot: {e}"),
+            }
+        });
+        let _ = js_sys::Reflect::set(
+            &window,
+            &"_bpRemoveBot".into(),
             closure.as_ref().unchecked_ref(),
         );
         closure.forget();

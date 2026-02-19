@@ -1,4 +1,5 @@
 pub mod arena;
+pub mod bot;
 pub mod collision;
 pub mod config;
 pub mod physics;

@@ -15,6 +15,7 @@
 - **Simultaneous Mini-Golf** (2-8 players, 10 Hz) — all players putt at once, first to sink earns bonus
 - **Platform Racer** (2-6 players, 15 Hz) — race through procedural obstacle courses
 - **Laser Tag Arena** (2-8 players, 20 Hz) — top-down arena with reflective walls and power-ups
+- **Tron Light Cycles** (2-8 players, 20 Hz) — wall trails, grinding, win zones, bot AI
 
 ### Alert Overlay
 

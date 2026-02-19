@@ -178,12 +178,44 @@
             // Player list
             let html = "";
             for (const p of lobby.players) {
+                const botTag = p.isBot ? '<span class="bot-badge">[BOT]</span>' : "";
+                const removeBtn = (lobby.isLeader && p.isBot)
+                    ? `<button class="bot-remove-btn" data-bot-id="${p.id}">Remove</button>`
+                    : "";
                 html += `<div class="player-item">
                     <span>${escapeHtml(p.name)}</span>
+                    ${botTag}
                     ${p.isLeader ? '<span class="leader-badge">Leader</span>' : ""}
+                    ${removeBtn}
                 </div>`;
             }
             playerList.innerHTML = html;
+
+            // Bind remove-bot buttons
+            playerList.querySelectorAll(".bot-remove-btn").forEach((btn) => {
+                btn.addEventListener("click", () => {
+                    const botId = Number(btn.dataset.botId);
+                    if (window._bpRemoveBot) window._bpRemoveBot(botId);
+                });
+            });
+
+            // Add Bot button (leader only)
+            let addBotBtn = $("btn-add-bot");
+            if (lobby.isLeader && lobby.connected) {
+                if (!addBotBtn) {
+                    addBotBtn = document.createElement("button");
+                    addBotBtn.id = "btn-add-bot";
+                    addBotBtn.className = "btn-secondary";
+                    addBotBtn.textContent = "Add Bot";
+                    addBotBtn.addEventListener("click", () => {
+                        if (window._bpAddBot) window._bpAddBot();
+                    });
+                    btnStart.parentNode.insertBefore(addBotBtn, btnStart);
+                }
+                addBotBtn.classList.remove("hidden");
+            } else if (addBotBtn) {
+                addBotBtn.classList.add("hidden");
+            }
 
             // Start button (leader only)
             btnStart.classList.toggle("hidden", !lobby.isLeader);

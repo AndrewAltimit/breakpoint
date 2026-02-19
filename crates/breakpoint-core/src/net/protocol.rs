@@ -3,9 +3,9 @@ use serde::{Deserialize, Serialize};
 use crate::overlay::config::OverlayConfigMsg;
 
 use super::messages::{
-    AlertClaimedMsg, AlertDismissedMsg, AlertEventMsg, ChatMessageMsg, ClaimAlertMsg,
+    AddBotMsg, AlertClaimedMsg, AlertDismissedMsg, AlertEventMsg, ChatMessageMsg, ClaimAlertMsg,
     ClientMessage, GameEndMsg, GameStartMsg, GameStateMsg, JoinRoomMsg, JoinRoomResponseMsg,
-    LeaveRoomMsg, MessageType, PlayerInputMsg, PlayerListMsg, RequestGameStartMsg,
+    LeaveRoomMsg, MessageType, PlayerInputMsg, PlayerListMsg, RemoveBotMsg, RequestGameStartMsg,
     RoomConfigPayload, RoundEndMsg, ServerMessage,
 };
 
@@ -73,6 +73,8 @@ pub fn encode_client_message(msg: &ClientMessage) -> Result<Vec<u8>, ProtocolErr
         ClientMessage::ClaimAlert(m) => encode_message(MessageType::ClaimAlert, m),
         ClientMessage::OverlayConfig(m) => encode_message(MessageType::OverlayConfig, m),
         ClientMessage::RequestGameStart(m) => encode_message(MessageType::RequestGameStart, m),
+        ClientMessage::AddBot(m) => encode_message(MessageType::AddBot, m),
+        ClientMessage::RemoveBot(m) => encode_message(MessageType::RemoveBot, m),
     }
 }
 
@@ -134,6 +136,10 @@ pub fn decode_client_message(data: &[u8]) -> Result<ClientMessage, ProtocolError
         MessageType::RequestGameStart => Ok(ClientMessage::RequestGameStart(decode_payload::<
             RequestGameStartMsg,
         >(data)?)),
+        MessageType::AddBot => Ok(ClientMessage::AddBot(decode_payload::<AddBotMsg>(data)?)),
+        MessageType::RemoveBot => Ok(ClientMessage::RemoveBot(decode_payload::<RemoveBotMsg>(
+            data,
+        )?)),
         _ => Err(ProtocolError::UnknownMessageType(data[0])),
     }
 }
@@ -192,6 +198,7 @@ mod tests {
             color: PlayerColor::default(),
             is_leader: true,
             is_spectator: false,
+            is_bot: false,
         }
     }
 
@@ -545,6 +552,8 @@ mod tests {
             (0x22, MessageType::AlertDismissed),
             (0x23, MessageType::OverlayConfig),
             (0x30, MessageType::RequestGameStart),
+            (0x31, MessageType::AddBot),
+            (0x32, MessageType::RemoveBot),
         ];
         for (byte, expected) in &known {
             assert_eq!(

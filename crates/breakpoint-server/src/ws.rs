@@ -390,6 +390,40 @@ async fn read_loop(
             continue;
         }
 
+        // AddBot: leader adds a bot player to the lobby
+        if msg_type == MessageType::AddBot {
+            let mut rooms = state.rooms.write().await;
+            match rooms.add_bot(room_code, player_id) {
+                Ok(bot_id) => {
+                    tracing::info!(player_id, room_code, bot_id, "Bot added");
+                    rooms.broadcast_player_list(room_code);
+                },
+                Err(e) => {
+                    tracing::warn!(player_id, room_code, error = %e, "Failed to add bot");
+                },
+            }
+            continue;
+        }
+
+        // RemoveBot: leader removes a bot player from the lobby
+        if msg_type == MessageType::RemoveBot {
+            if let Ok(breakpoint_core::net::messages::ClientMessage::RemoveBot(req)) =
+                decode_client_message(&data)
+            {
+                let mut rooms = state.rooms.write().await;
+                match rooms.remove_bot(room_code, req.player_id, player_id) {
+                    Ok(()) => {
+                        tracing::info!(player_id, room_code, bot_id = req.player_id, "Bot removed");
+                        rooms.broadcast_player_list(room_code);
+                    },
+                    Err(e) => {
+                        tracing::warn!(player_id, room_code, error = %e, "Failed to remove bot");
+                    },
+                }
+            }
+            continue;
+        }
+
         // ClaimAlert needs special lock handling (read→drop→write→read)
         if msg_type == MessageType::ClaimAlert {
             if let Ok(breakpoint_core::net::messages::ClientMessage::ClaimAlert(claim)) =

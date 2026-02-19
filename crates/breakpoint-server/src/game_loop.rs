@@ -162,10 +162,34 @@ async fn run_game_tick_loop(
     let mut input_buffer: HashMap<PlayerId, Vec<u8>> = HashMap::new();
     let mut players = config.players.clone();
     let mut state_buf: Vec<u8> = Vec::with_capacity(512);
+    let is_tron = config.game_id == GameId::Tron;
+    let bot_player_ids: Vec<PlayerId> = players.iter().filter(|p| p.is_bot).map(|p| p.id).collect();
 
     loop {
         tokio::select! {
             _ = interval.tick() => {
+                // Generate bot inputs for Tron games
+                #[cfg(feature = "tron")]
+                if is_tron && !bot_player_ids.is_empty() {
+                    let bot_state = game.serialize_state();
+                    if let Ok(state) =
+                        rmp_serde::from_slice::<breakpoint_tron::TronState>(&bot_state)
+                    {
+                        let tron_config = breakpoint_tron::config::TronConfig::default();
+                        for &bot_id in &bot_player_ids {
+                            let bot_input = breakpoint_tron::bot::generate_bot_input(
+                                &state,
+                                bot_id,
+                                &tron_config,
+                            );
+                            if let Ok(input_bytes) = rmp_serde::to_vec(&bot_input) {
+                                game.apply_input(bot_id, &input_bytes);
+                                input_buffer.insert(bot_id, input_bytes);
+                            }
+                        }
+                    }
+                }
+
                 // Collect buffered inputs
                 let inputs = PlayerInputs {
                     inputs: std::mem::take(&mut input_buffer),
@@ -342,6 +366,7 @@ mod tests {
                 color: PlayerColor::PALETTE[i % PlayerColor::PALETTE.len()],
                 is_leader: i == 0,
                 is_spectator: false,
+                is_bot: false,
             })
             .collect()
     }
