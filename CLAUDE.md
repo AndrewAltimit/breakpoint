@@ -65,7 +65,7 @@ docker build -f docker/server.Dockerfile -t breakpoint .
 
 ## Architecture
 
-**Workspace layout** — Eight crates in `crates/`:
+**Workspace layout** — Nine crates in `crates/`:
 
 - **breakpoint-core** — Shared types with no runtime dependencies. Event schema (`events.rs`), `BreakpointGame` trait (`game_trait.rs`), player/room types, network message types (`net/`), overlay data models (`overlay/` including config, ticker, toast, dashboard).
 - **breakpoint-server** — Axum binary. Server-authoritative game simulation (`game_loop.rs`), WSS game state broadcast, REST event ingestion (`/api/v1/events`), SSE streaming, GitHub webhook adapter, room management, TOML config loading, static file serving. Optional `github-poller` feature flag spawns the GitHub Actions polling monitor.
@@ -74,6 +74,7 @@ docker build -f docker/server.Dockerfile -t breakpoint .
 - **breakpoint-golf** — Simultaneous mini-golf (2-8 players, 10 Hz). Physics, obstacles, scoring.
 - **breakpoint-platformer** — Platform racer (2-6 players, 15 Hz). Procedural courses, race/survival modes, power-ups.
 - **breakpoint-lasertag** — Laser tag arena (2-8 players, 20 Hz). Reflective walls, FFA/team modes, power-ups.
+- **breakpoint-tron** — Tron Light Cycles (2-8 players, 20 Hz). Wall trails, grinding, win zones, server-side bots.
 - **breakpoint-github** — GitHub Actions polling adapter with agent/bot detection. Configurable glob-style patterns.
 
 **Key design patterns:**
@@ -141,5 +142,8 @@ Three GitHub Actions workflows, all on a self-hosted runner using Docker contain
 | Input handling | `crates/breakpoint-client/src/input.rs` |
 | GLSL shaders | `crates/breakpoint-client/src/shaders_gl/` |
 | HTML/CSS/JS UI layer | `web/index.html`, `web/style.css`, `web/ui.js` |
+| Tron game logic | `crates/games/breakpoint-tron/src/lib.rs` |
+| Tron bot AI | `crates/games/breakpoint-tron/src/bot.rs` |
+| Tron config | `crates/games/breakpoint-tron/src/config.rs` |
 | Agent detection | `crates/adapters/breakpoint-github/src/agent_detect.rs` |
 | Relay server | `crates/breakpoint-relay/src/relay.rs` |

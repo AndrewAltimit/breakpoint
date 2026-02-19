@@ -12,6 +12,8 @@ pub struct Player {
     pub color: PlayerColor,
     pub is_leader: bool,
     pub is_spectator: bool,
+    #[serde(default)]
+    pub is_bot: bool,
 }
 
 /// Avatar color selection.

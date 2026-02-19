@@ -31,6 +31,38 @@
                     </div>
                 </div>
 
+                <div id="game-settings" class="lobby-section hidden">
+                    <label>Game Settings</label>
+                    <div id="settings-platformer" class="game-settings-panel hidden">
+                        <div class="setting-row">
+                            <span>Mode</span>
+                            <select id="setting-platformer-mode" data-testid="setting-platformer-mode">
+                                <option value="race">Race</option>
+                                <option value="survival">Survival</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="settings-lasertag" class="game-settings-panel hidden">
+                        <div class="setting-row">
+                            <span>Team Mode</span>
+                            <select id="setting-lasertag-team-mode" data-testid="setting-lasertag-team-mode">
+                                <option value="ffa">FFA</option>
+                                <option value="2teams">2 Teams</option>
+                                <option value="3teams">3 Teams</option>
+                                <option value="4teams">4 Teams</option>
+                            </select>
+                        </div>
+                        <div class="setting-row">
+                            <span>Arena Size</span>
+                            <select id="setting-lasertag-arena-size" data-testid="setting-lasertag-arena-size">
+                                <option value="small">Small</option>
+                                <option value="default" selected>Default</option>
+                                <option value="large">Large</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="lobby-actions">
                     <button id="btn-create" data-testid="btn-create" class="btn btn-primary">Create Room</button>
                     <div class="join-row">
@@ -62,6 +94,31 @@
             <div class="hud-bottom">
                 <span class="hud-hint" id="hud-controls" data-testid="hud-controls"></span>
             </div>
+            <!-- Golf HUD -->
+            <div id="golf-hud" class="game-specific-hud hidden">
+                <div class="golf-hole-info">
+                    <span id="golf-hole-name"></span>
+                    <span id="golf-par"></span>
+                </div>
+                <div id="golf-player-strokes" class="golf-strokes"></div>
+            </div>
+            <!-- Platformer HUD -->
+            <div id="platformer-hud" class="game-specific-hud hidden">
+                <div class="platformer-info">
+                    <span id="platformer-mode"></span>
+                    <span id="platformer-hazard"></span>
+                </div>
+                <div id="platformer-rankings" class="platformer-rankings"></div>
+            </div>
+            <!-- LaserTag HUD -->
+            <div id="lasertag-hud" class="game-specific-hud hidden">
+                <div class="lasertag-info">
+                    <span id="lasertag-mode"></span>
+                    <span id="lasertag-timer"></span>
+                </div>
+                <div id="lasertag-scores" class="lasertag-scores"></div>
+                <div id="lasertag-stun" class="lasertag-stun hidden">STUNNED</div>
+            </div>
             <!-- Tron-specific HUD overlay -->
             <div id="tron-hud-container"></div>
             <canvas id="tron-minimap" width="200" height="200"></canvas>
@@ -87,6 +144,7 @@
                 <h2 id="between-rounds-title">Round Complete</h2>
                 <div id="round-scores" data-testid="round-scores" class="score-table"></div>
                 <p class="round-info" id="round-info" data-testid="round-info"></p>
+                <p class="round-countdown" id="round-countdown" data-testid="round-countdown"></p>
             </div>
         </div>
 
@@ -95,7 +153,11 @@
             <div class="modal">
                 <h2 id="game-over-title">Game Over</h2>
                 <div id="final-scores" data-testid="final-scores" class="score-table"></div>
-                <button id="btn-return-lobby" data-testid="btn-return-lobby" class="btn btn-primary">Return to Lobby</button>
+                <div class="game-over-actions">
+                    <button id="btn-play-again" data-testid="btn-play-again" class="btn btn-primary">Play Again</button>
+                    <button id="btn-return-lobby" data-testid="btn-return-lobby" class="btn btn-secondary">Return to Lobby</button>
+                </div>
+                <p class="game-over-countdown" id="game-over-countdown" data-testid="game-over-countdown"></p>
             </div>
         </div>
 

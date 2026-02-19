@@ -23,6 +23,9 @@
     const btnStart       = $("btn-start");
     const btnMute        = $("btn-mute");
     const btnReturnLobby = $("btn-return-lobby");
+    const btnPlayAgain   = $("btn-play-again");
+    const roundCountdown = $("round-countdown");
+    const gameOverCountdown = $("game-over-countdown");
     const hudGameName    = $("hud-game-name");
     const hudRound       = $("hud-round");
     const hudControls    = $("hud-controls");
@@ -38,7 +41,25 @@
 
     // ── Game selector buttons ───────────────────────────
     const gameBtns = document.querySelectorAll(".game-btn");
+    const gameSettings   = $("game-settings");
+    const settPlatformer = $("settings-platformer");
+    const settLasertag   = $("settings-lasertag");
     let selectedGame = "mini-golf";
+
+    function updateGameSettingsPanel() {
+        const panels = [settPlatformer, settLasertag];
+        panels.forEach((p) => p && p.classList.add("hidden"));
+
+        if (selectedGame === "platform-racer" && settPlatformer) {
+            gameSettings.classList.remove("hidden");
+            settPlatformer.classList.remove("hidden");
+        } else if (selectedGame === "laser-tag" && settLasertag) {
+            gameSettings.classList.remove("hidden");
+            settLasertag.classList.remove("hidden");
+        } else {
+            gameSettings.classList.add("hidden");
+        }
+    }
 
     gameBtns.forEach((btn) => {
         btn.addEventListener("click", () => {
@@ -50,8 +71,24 @@
             btn.setAttribute("aria-pressed", "true");
             selectedGame = btn.dataset.game;
             if (window._bpSelectGame) window._bpSelectGame(selectedGame);
+            updateGameSettingsPanel();
         });
     });
+
+    // ── Game settings change handlers ────────────────────
+    function bindSettingSelect(id, key) {
+        const el = $(id);
+        if (!el) return;
+        el.addEventListener("change", () => {
+            if (window._bpSetGameSetting) {
+                window._bpSetGameSetting(key, JSON.stringify(el.value));
+            }
+        });
+    }
+
+    bindSettingSelect("setting-platformer-mode", "mode");
+    bindSettingSelect("setting-lasertag-team-mode", "team_mode");
+    bindSettingSelect("setting-lasertag-arena-size", "arena_size");
 
     // ── Lobby actions ───────────────────────────────────
     btnCreate.addEventListener("click", () => {
@@ -84,6 +121,10 @@
     });
 
     btnReturnLobby.addEventListener("click", () => {
+        if (window._bpReturnToLobby) window._bpReturnToLobby();
+    });
+
+    btnPlayAgain.addEventListener("click", () => {
         if (window._bpReturnToLobby) window._bpReturnToLobby();
     });
 
@@ -126,6 +167,9 @@
         updateScreens(state);
         updateLobby(state);
         updateHud(state);
+        updateGolfHud(state);
+        updatePlatformerHud(state);
+        updateLasertagHud(state);
         updateTronHud(state);
         updateScoreScreens(state);
         updateOverlay(state);
@@ -178,12 +222,44 @@
             // Player list
             let html = "";
             for (const p of lobby.players) {
+                const botTag = p.isBot ? '<span class="bot-badge">[BOT]</span>' : "";
+                const removeBtn = (lobby.isLeader && p.isBot)
+                    ? `<button class="bot-remove-btn" data-bot-id="${p.id}">Remove</button>`
+                    : "";
                 html += `<div class="player-item">
                     <span>${escapeHtml(p.name)}</span>
+                    ${botTag}
                     ${p.isLeader ? '<span class="leader-badge">Leader</span>' : ""}
+                    ${removeBtn}
                 </div>`;
             }
             playerList.innerHTML = html;
+
+            // Bind remove-bot buttons
+            playerList.querySelectorAll(".bot-remove-btn").forEach((btn) => {
+                btn.addEventListener("click", () => {
+                    const botId = Number(btn.dataset.botId);
+                    if (window._bpRemoveBot) window._bpRemoveBot(botId);
+                });
+            });
+
+            // Add Bot button (leader only)
+            let addBotBtn = $("btn-add-bot");
+            if (lobby.isLeader && lobby.connected) {
+                if (!addBotBtn) {
+                    addBotBtn = document.createElement("button");
+                    addBotBtn.id = "btn-add-bot";
+                    addBotBtn.className = "btn-secondary";
+                    addBotBtn.textContent = "Add Bot";
+                    addBotBtn.addEventListener("click", () => {
+                        if (window._bpAddBot) window._bpAddBot();
+                    });
+                    btnStart.parentNode.insertBefore(addBotBtn, btnStart);
+                }
+                addBotBtn.classList.remove("hidden");
+            } else if (addBotBtn) {
+                addBotBtn.classList.add("hidden");
+            }
 
             // Start button (leader only)
             btnStart.classList.toggle("hidden", !lobby.isLeader);
@@ -222,6 +298,113 @@
         } else {
             hudRound.classList.add("hidden");
         }
+    }
+
+    // ── Golf HUD ────────────────────────────────────────
+    const golfHudEl     = $("golf-hud");
+    const golfHoleName  = $("golf-hole-name");
+    const golfPar       = $("golf-par");
+    const golfStrokes   = $("golf-player-strokes");
+
+    function updateGolfHud(state) {
+        const hud = state.golfHud;
+        if (!hud || !hud.players) {
+            if (golfHudEl) golfHudEl.classList.add("hidden");
+            return;
+        }
+        golfHudEl.classList.remove("hidden");
+        golfHoleName.textContent = hud.holeName || `Hole ${(hud.holeIndex || 0) + 1}`;
+        golfPar.textContent = `Par ${hud.par}`;
+
+        let html = "";
+        for (const p of hud.players) {
+            const sunkClass = p.isSunk ? " sunk" : "";
+            const sunkLabel = p.isSunk ? (p.sunkRank ? ` (#${p.sunkRank})` : " \u2713") : "";
+            html += `<div class="hud-player-row${sunkClass}">
+                <span class="name">${escapeHtml(p.name)}${sunkLabel}</span>
+                <span class="value">${p.strokes}</span>
+            </div>`;
+        }
+        golfStrokes.innerHTML = html;
+    }
+
+    // ── Platformer HUD ─────────────────────────────────
+    const platformerHudEl   = $("platformer-hud");
+    const platformerMode    = $("platformer-mode");
+    const platformerHazard  = $("platformer-hazard");
+    const platformerRankings = $("platformer-rankings");
+
+    function updatePlatformerHud(state) {
+        const hud = state.platformerHud;
+        if (!hud || !hud.players) {
+            if (platformerHudEl) platformerHudEl.classList.add("hidden");
+            return;
+        }
+        platformerHudEl.classList.remove("hidden");
+        platformerMode.textContent = hud.mode || "Race";
+        platformerHazard.textContent = hud.mode === "Survival" ? `Hazard: ${Math.round(hud.hazardY)}` : "";
+
+        let html = "";
+        for (const p of hud.players) {
+            let cls = "";
+            let status = "";
+            if (p.eliminated) { cls = " eliminated"; status = "OUT"; }
+            else if (p.finished) { cls = " finished"; status = p.finishRank ? `#${p.finishRank}` : "DONE"; }
+            html += `<div class="hud-player-row${cls}">
+                <span class="name">${escapeHtml(p.name)}</span>
+                <span class="value">${status}</span>
+            </div>`;
+        }
+        platformerRankings.innerHTML = html;
+    }
+
+    // ── LaserTag HUD ───────────────────────────────────
+    const lasertagHudEl  = $("lasertag-hud");
+    const lasertagMode   = $("lasertag-mode");
+    const lasertagTimer  = $("lasertag-timer");
+    const lasertagScores = $("lasertag-scores");
+    const lasertagStun   = $("lasertag-stun");
+
+    function updateLasertagHud(state) {
+        const hud = state.lasertagHud;
+        if (!hud || !hud.players) {
+            if (lasertagHudEl) lasertagHudEl.classList.add("hidden");
+            if (lasertagStun) lasertagStun.classList.add("hidden");
+            return;
+        }
+        lasertagHudEl.classList.remove("hidden");
+        lasertagMode.textContent = hud.teamMode || "FFA";
+        const secs = Math.ceil(hud.roundTimer || 0);
+        lasertagTimer.textContent = secs > 0 ? `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}` : "";
+
+        // Stun indicator
+        if (lasertagStun) {
+            lasertagStun.classList.toggle("hidden", !(hud.localStunRemaining > 0));
+        }
+
+        // Sort by tags descending
+        const sorted = [...hud.players].sort((a, b) => (b.tags || 0) - (a.tags || 0));
+        let html = "";
+
+        // Show team scores if team mode
+        if (hud.teamScores && Object.keys(hud.teamScores).length > 0) {
+            const TEAM_COLORS = ["#7cf", "#f77", "#7f7", "#ff7"];
+            html += '<div style="margin-bottom:6px;font-size:0.7rem;color:#889">';
+            for (const [team, score] of Object.entries(hud.teamScores)) {
+                const tc = TEAM_COLORS[parseInt(team)] || "#fff";
+                html += `<span style="color:${tc}">T${parseInt(team) + 1}: ${score}</span> `;
+            }
+            html += "</div>";
+        }
+
+        for (const p of sorted) {
+            const stunnedClass = p.stunned ? " stunned" : "";
+            html += `<div class="hud-player-row${stunnedClass}">
+                <span class="name">${escapeHtml(p.name)}</span>
+                <span class="value">${p.tags || 0}</span>
+            </div>`;
+        }
+        lasertagScores.innerHTML = html;
     }
 
     // ── Tron HUD (player names, minimap, gauges) ────────
@@ -372,22 +555,59 @@
     }
 
     // ── Score screens ───────────────────────────────────
+    const SCORE_LABELS = {
+        "mini-golf": "Strokes", "Golf": "Strokes",
+        "laser-tag": "Tags", "LaserTag": "Tags",
+        "platform-racer": "Score", "Platformer": "Score",
+        "tron": "Score", "Tron": "Score",
+    };
+
+    function getScoreOpts(state, isGameOver) {
+        const gameId = state.game ? state.game.gameId : selectedGame;
+        const isGolf = gameId === "mini-golf" || gameId === "Golf";
+        return {
+            roundHistory: state.roundTracker.roundScoresHistory || null,
+            scoreLabel: SCORE_LABELS[gameId] || "Score",
+            isGameOver,
+            isGolf,
+        };
+    }
+
     function updateScoreScreens(state) {
         if (state.appState === "BetweenRounds" && state.roundTracker) {
-            renderScores(roundScores, state.roundTracker.scores, state.lobby.players);
+            renderScores(roundScores, state.roundTracker.scores, state.lobby.players, getScoreOpts(state, false));
             roundInfoEl.textContent = `Round ${state.roundTracker.currentRound} of ${state.roundTracker.totalRounds}`;
+            // Between-round countdown
+            if (roundCountdown && state.betweenRoundCountdown != null) {
+                const secs = Math.ceil(state.betweenRoundCountdown);
+                roundCountdown.textContent = secs > 0 ? `Next round in ${secs}s...` : "";
+            } else if (roundCountdown) {
+                roundCountdown.textContent = "";
+            }
         }
 
         if (state.appState === "GameOver" && state.roundTracker) {
-            renderScores(finalScores, state.roundTracker.scores, state.lobby.players);
+            renderScores(finalScores, state.roundTracker.scores, state.lobby.players, getScoreOpts(state, true));
+            // Game-over auto-return countdown
+            if (gameOverCountdown && state.gameOverCountdown != null) {
+                const secs = Math.ceil(state.gameOverCountdown);
+                gameOverCountdown.textContent = secs > 0 ? `Returning to lobby in ${secs}s...` : "";
+            } else if (gameOverCountdown) {
+                gameOverCountdown.textContent = "";
+            }
         }
     }
 
-    function renderScores(container, scores, players) {
+    function renderScores(container, scores, players, opts) {
         if (!scores) {
             container.innerHTML = "<p>Waiting for scores...</p>";
             return;
         }
+
+        const roundHistory = (opts && opts.roundHistory) || null;
+        const scoreLabel = (opts && opts.scoreLabel) || "Score";
+        const isGameOver = (opts && opts.isGameOver) || false;
+        const isGolf = (opts && opts.isGolf) || false;
 
         // Convert scores object to sorted array
         const entries = Object.entries(scores)
@@ -396,16 +616,59 @@
                 score,
                 name: findPlayerName(parseInt(pid), players),
             }))
-            .sort((a, b) => b.score - a.score);
+            .sort((a, b) => isGolf ? (a.score - b.score) : (b.score - a.score));
+
+        const MEDALS = ["\ud83e\udd47", "\ud83e\udd48", "\ud83e\udd49"];
+        const PLAYER_COLORS = ["#7cf", "#f93", "#7f7", "#f7f", "#97f", "#f90", "#0fb", "#f44"];
 
         let html = "";
+
+        // Per-round header row if we have history
+        if (roundHistory && roundHistory.length > 1) {
+            html += `<div class="score-row score-header">
+                <span class="rank"></span>
+                <span class="name">Player</span>`;
+            for (let r = 0; r < roundHistory.length; r++) {
+                html += `<span class="round-col">R${r + 1}</span>`;
+            }
+            html += `<span class="score">${escapeHtml(scoreLabel)}</span></div>`;
+        }
+
         entries.forEach((e, i) => {
-            html += `<div class="score-row">
-                <span class="rank">${i + 1}.</span>
-                <span class="name">${escapeHtml(e.name)}</span>
-                <span class="score">${e.score}</span>
-            </div>`;
+            const medal = i < 3 ? MEDALS[i] : "";
+            const winnerClass = (isGameOver && i === 0) ? " winner" : "";
+            const colorIdx = entries.findIndex((x) => x.pid === e.pid);
+            const dotColor = PLAYER_COLORS[colorIdx % PLAYER_COLORS.length];
+
+            html += `<div class="score-row${winnerClass}">
+                <span class="rank">${medal || (i + 1) + "."}</span>
+                <span class="name"><span class="player-dot" style="background:${dotColor}"></span>${escapeHtml(e.name)}</span>`;
+
+            // Per-round columns
+            if (roundHistory && roundHistory.length > 1) {
+                for (let r = 0; r < roundHistory.length; r++) {
+                    const rScore = roundHistory[r][String(e.pid)] || 0;
+                    html += `<span class="round-col">${rScore}</span>`;
+                }
+            }
+
+            // Delta indicator
+            let deltaHtml = "";
+            if (roundHistory && roundHistory.length > 0) {
+                const lastRound = roundHistory[roundHistory.length - 1];
+                const delta = lastRound[String(e.pid)] || 0;
+                if (delta > 0) deltaHtml = ` <span class="score-delta">+${delta}</span>`;
+                else if (delta < 0) deltaHtml = ` <span class="score-delta negative">${delta}</span>`;
+            }
+
+            html += `<span class="score">${e.score}${deltaHtml}</span></div>`;
         });
+
+        // Winner announcement
+        if (isGameOver && entries.length > 0) {
+            html += `<div class="winner-announce">${escapeHtml(entries[0].name)} wins!</div>`;
+        }
+
         container.innerHTML = html;
     }
 

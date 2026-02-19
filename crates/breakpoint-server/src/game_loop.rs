@@ -97,6 +97,7 @@ pub struct GameSessionConfig {
     pub round_count: u8,
     pub round_duration: Duration,
     pub between_round_duration: Duration,
+    pub custom: HashMap<String, serde_json::Value>,
 }
 
 /// Spawn a game tick loop as a tokio task.
@@ -137,7 +138,7 @@ async fn run_game_tick_loop(
     let game_config = GameConfig {
         round_count,
         round_duration: config.round_duration,
-        custom: HashMap::new(),
+        custom: config.custom.clone(),
     };
     game.init(&config.players, &game_config);
 
@@ -162,10 +163,34 @@ async fn run_game_tick_loop(
     let mut input_buffer: HashMap<PlayerId, Vec<u8>> = HashMap::new();
     let mut players = config.players.clone();
     let mut state_buf: Vec<u8> = Vec::with_capacity(512);
+    let is_tron = config.game_id == GameId::Tron;
+    let bot_player_ids: Vec<PlayerId> = players.iter().filter(|p| p.is_bot).map(|p| p.id).collect();
 
     loop {
         tokio::select! {
             _ = interval.tick() => {
+                // Generate bot inputs for Tron games
+                #[cfg(feature = "tron")]
+                if is_tron && !bot_player_ids.is_empty() {
+                    let bot_state = game.serialize_state();
+                    if let Ok(state) =
+                        rmp_serde::from_slice::<breakpoint_tron::TronState>(&bot_state)
+                    {
+                        let tron_config = breakpoint_tron::config::TronConfig::default();
+                        for &bot_id in &bot_player_ids {
+                            let bot_input = breakpoint_tron::bot::generate_bot_input(
+                                &state,
+                                bot_id,
+                                &tron_config,
+                            );
+                            if let Ok(input_bytes) = rmp_serde::to_vec(&bot_input) {
+                                game.apply_input(bot_id, &input_bytes);
+                                input_buffer.insert(bot_id, input_bytes);
+                            }
+                        }
+                    }
+                }
+
                 // Collect buffered inputs
                 let inputs = PlayerInputs {
                     inputs: std::mem::take(&mut input_buffer),
@@ -225,6 +250,7 @@ async fn run_game_tick_loop(
                     let round_end_msg = ServerMessage::RoundEnd(RoundEndMsg {
                         round: current_round,
                         scores,
+                        between_round_secs: config.between_round_duration.as_secs() as u16,
                     });
                     if let Ok(data) = encode_server_message(&round_end_msg) {
                         let _ = broadcast_tx.send(GameBroadcast::EncodedMessage(
@@ -270,7 +296,7 @@ async fn run_game_tick_loop(
                         p.is_spectator = false;
                     }
 
-                    let mut custom = HashMap::new();
+                    let mut custom = config.custom.clone();
                     custom.insert(
                         "hole_index".to_string(),
                         serde_json::json!(current_round - 1),
@@ -342,6 +368,7 @@ mod tests {
                 color: PlayerColor::PALETTE[i % PlayerColor::PALETTE.len()],
                 is_leader: i == 0,
                 is_spectator: false,
+                is_bot: false,
             })
             .collect()
     }
@@ -379,6 +406,7 @@ mod tests {
             round_count: 1,
             round_duration: Duration::from_secs(90),
             between_round_duration: Duration::from_secs(1),
+            custom: HashMap::new(),
         };
 
         let (cmd_tx, mut broadcast_rx, handle) =
@@ -429,6 +457,7 @@ mod tests {
             round_count: 1,
             round_duration: Duration::from_secs(90),
             between_round_duration: Duration::from_secs(1),
+            custom: HashMap::new(),
         };
 
         let (cmd_tx, mut broadcast_rx, handle) =
@@ -485,6 +514,7 @@ mod tests {
             round_count: 1,
             round_duration: Duration::from_secs(90),
             between_round_duration: Duration::from_secs(1),
+            custom: HashMap::new(),
         };
 
         let (cmd_tx, mut broadcast_rx, handle) =
@@ -516,6 +546,7 @@ mod tests {
             round_count: 1,
             round_duration: Duration::from_secs(90),
             between_round_duration: Duration::from_secs(1),
+            custom: HashMap::new(),
         };
 
         let (cmd_tx, mut broadcast_rx, handle) =

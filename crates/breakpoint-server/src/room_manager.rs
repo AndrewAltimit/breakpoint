@@ -104,6 +104,7 @@ impl RoomManager {
             color: player_color,
             is_leader: true,
             is_spectator: false,
+            is_bot: false,
         };
         let room = Room::new(code.clone(), player);
         let mut connections = HashMap::new();
@@ -162,6 +163,7 @@ impl RoomManager {
             color: player_color,
             is_leader: false,
             is_spectator,
+            is_bot: false,
         };
 
         entry.room.players.push(player);
@@ -306,6 +308,76 @@ impl RoomManager {
         before - self.sessions.len()
     }
 
+    /// Add a bot player to the room. Only the room leader can add bots, and
+    /// the room must be in the Lobby state. Returns the bot's PlayerId.
+    pub fn add_bot(&mut self, room_code: &str, requester_id: PlayerId) -> Result<PlayerId, String> {
+        // Validate first with an immutable borrow
+        {
+            let entry = self
+                .rooms
+                .get(room_code)
+                .ok_or_else(|| "Room not found".to_string())?;
+            if entry.room.leader_id != requester_id {
+                return Err("Only the room leader can add bots".to_string());
+            }
+            if entry.room.state != RoomState::Lobby {
+                return Err("Can only add bots in lobby".to_string());
+            }
+            if entry.room.players.len() >= entry.room.config.max_players as usize {
+                return Err("Room is full".to_string());
+            }
+        }
+
+        let bot_id = self.alloc_player_id();
+        let entry = self.rooms.get_mut(room_code).unwrap();
+        let bot_number = entry.room.players.iter().filter(|p| p.is_bot).count() + 1;
+        let color_index = entry.room.players.len();
+        let color = PlayerColor::PALETTE[color_index % PlayerColor::PALETTE.len()];
+
+        let bot = Player {
+            id: bot_id,
+            display_name: format!("Bot {bot_number}"),
+            color,
+            is_leader: false,
+            is_spectator: false,
+            is_bot: true,
+        };
+        entry.room.players.push(bot);
+        entry.last_activity = Instant::now();
+
+        Ok(bot_id)
+    }
+
+    /// Remove a bot player from the room. Only the room leader can remove bots.
+    pub fn remove_bot(
+        &mut self,
+        room_code: &str,
+        bot_id: PlayerId,
+        requester_id: PlayerId,
+    ) -> Result<(), String> {
+        let entry = self
+            .rooms
+            .get_mut(room_code)
+            .ok_or_else(|| "Room not found".to_string())?;
+
+        if entry.room.leader_id != requester_id {
+            return Err("Only the room leader can remove bots".to_string());
+        }
+
+        let is_bot = entry
+            .room
+            .players
+            .iter()
+            .any(|p| p.id == bot_id && p.is_bot);
+        if !is_bot {
+            return Err("Player is not a bot".to_string());
+        }
+
+        entry.room.players.retain(|p| p.id != bot_id);
+        entry.last_activity = Instant::now();
+        Ok(())
+    }
+
     /// Get the list of players in a room.
     #[cfg(test)]
     pub fn get_players(&self, room_code: &str) -> Option<Vec<Player>> {
@@ -358,6 +430,8 @@ impl RoomManager {
         game_name: &str,
         requester_id: PlayerId,
         registry: &std::sync::Arc<ServerGameRegistry>,
+        rooms: crate::state::SharedRoomManager,
+        custom: HashMap<String, serde_json::Value>,
     ) -> Result<(), String> {
         let entry = self
             .rooms
@@ -384,6 +458,7 @@ impl RoomManager {
             round_count: 0, // Let the game decide via round_count_hint()
             round_duration: entry.room.config.round_duration,
             between_round_duration: entry.room.config.between_round_duration,
+            custom,
         };
 
         let (cmd_tx, broadcast_rx, game_handle) = spawn_game_session(registry, config)
@@ -399,8 +474,13 @@ impl RoomManager {
         }
         let shared_senders = Arc::clone(&entry.broadcast_senders);
         let room_code_owned = room_code.to_string();
+        let rooms_clone = rooms;
         let broadcast_handle = tokio::spawn(async move {
             forward_broadcasts(broadcast_rx, shared_senders, &room_code_owned).await;
+            // Game ended — clean up room state and notify clients
+            let mut mgr = rooms_clone.write().await;
+            mgr.end_game_session(&room_code_owned);
+            mgr.broadcast_player_list(&room_code_owned);
         });
 
         entry.game_command_tx = Some(cmd_tx);

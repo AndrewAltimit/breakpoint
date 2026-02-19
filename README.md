@@ -45,6 +45,7 @@ docker compose up -d
 | Simultaneous Mini-Golf | 2-8 | All players putt simultaneously. First to sink earns bonus points. |
 | Platform Racer | 2-6 | Race through procedural obstacle courses. |
 | Laser Tag Arena | 2-8 | Top-down arena with reflective walls and power-ups. |
+| Tron Light Cycles | 2-8 | Drive fast, leave walls, don't crash! Grind walls for speed boosts. |
 
 Games are pluggable modules implementing the `BreakpointGame` trait. Adding a new game requires no changes to networking, overlay, or server code. See [docs/GAME-DEVELOPMENT.md](docs/GAME-DEVELOPMENT.md).
 
@@ -108,7 +109,8 @@ breakpoint/
 │   ├── games/
 │   │   ├── breakpoint-golf/          # Simultaneous mini-golf
 │   │   ├── breakpoint-platformer/    # Platform racer
-│   │   └── breakpoint-lasertag/      # Laser tag arena
+│   │   ├── breakpoint-lasertag/      # Laser tag arena
+│   │   └── breakpoint-tron/          # Tron Light Cycles
 │   └── adapters/
 │       └── breakpoint-github/        # GitHub Actions polling + agent detection
 ├── web/                              # Static assets (HTML, CSS, sprites, sounds)

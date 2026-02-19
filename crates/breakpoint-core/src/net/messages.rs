@@ -17,6 +17,8 @@ pub enum MessageType {
     ClaimAlert = 0x04,
     ChatMessage = 0x05,
     RequestGameStart = 0x30,
+    AddBot = 0x31,
+    RemoveBot = 0x32,
 
     // Server -> Client
     JoinRoomResponse = 0x06,
@@ -58,6 +60,8 @@ impl MessageType {
             0x22 => Some(Self::AlertDismissed),
             0x23 => Some(Self::OverlayConfig),
             0x30 => Some(Self::RequestGameStart),
+            0x31 => Some(Self::AddBot),
+            0x32 => Some(Self::RemoveBot),
             _ => None,
         }
     }
@@ -113,6 +117,16 @@ pub struct ChatMessageMsg {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RequestGameStartMsg {
     pub game_name: String,
+    #[serde(default)]
+    pub custom: std::collections::HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AddBotMsg {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RemoveBotMsg {
+    pub player_id: PlayerId,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -149,6 +163,9 @@ pub struct GameStartMsg {
 pub struct RoundEndMsg {
     pub round: u8,
     pub scores: Vec<PlayerScoreEntry>,
+    /// Seconds until the next round starts.
+    #[serde(default)]
+    pub between_round_secs: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -190,6 +207,8 @@ pub enum ClientMessage {
     ClaimAlert(ClaimAlertMsg),
     OverlayConfig(OverlayConfigMsg),
     RequestGameStart(RequestGameStartMsg),
+    AddBot(AddBotMsg),
+    RemoveBot(RemoveBotMsg),
 }
 
 impl ClientMessage {
@@ -202,6 +221,8 @@ impl ClientMessage {
             Self::ClaimAlert(_) => MessageType::ClaimAlert,
             Self::OverlayConfig(_) => MessageType::OverlayConfig,
             Self::RequestGameStart(_) => MessageType::RequestGameStart,
+            Self::AddBot(_) => MessageType::AddBot,
+            Self::RemoveBot(_) => MessageType::RemoveBot,
         }
     }
 }

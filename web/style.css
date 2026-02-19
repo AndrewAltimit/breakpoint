@@ -141,6 +141,61 @@ input[type="text"]:focus-visible {
     background: rgba(119, 204, 255, 0.08);
 }
 
+/* Game settings */
+
+.game-settings-panel select {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #334;
+    border-radius: 6px;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.setting-row span {
+    font-size: 0.85rem;
+    color: #aab;
+    white-space: nowrap;
+}
+
+.setting-row select {
+    flex: 1;
+    max-width: 160px;
+}
+
+/* Bot badge */
+
+.bot-badge {
+    font-size: 0.65rem;
+    color: #889;
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.bot-remove-btn {
+    padding: 2px 8px;
+    border: 1px solid #445;
+    border-radius: 4px;
+    background: transparent;
+    color: #f77;
+    font-size: 0.7rem;
+    cursor: pointer;
+    margin-left: auto;
+}
+
+.bot-remove-btn:hover {
+    background: rgba(255, 119, 119, 0.1);
+}
+
 /* Buttons */
 
 .btn {
@@ -364,10 +419,78 @@ input[type="text"]:focus-visible {
     font-weight: 600;
 }
 
+.score-row.winner {
+    background: rgba(119, 204, 255, 0.08);
+    border: 1px solid rgba(119, 204, 255, 0.2);
+    border-radius: 4px;
+}
+
+.score-row.score-header {
+    font-size: 0.75rem;
+    color: #667;
+    border-bottom: 1px solid #223;
+    padding-bottom: 4px;
+    margin-bottom: 4px;
+}
+
+.score-row .round-col {
+    width: 32px;
+    text-align: center;
+    font-size: 0.8rem;
+    color: #889;
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.player-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+}
+
+.score-delta {
+    font-size: 0.7rem;
+    color: #5a5;
+    margin-left: 4px;
+}
+
+.score-delta.negative {
+    color: #f77;
+}
+
+.winner-announce {
+    text-align: center;
+    margin-top: 16px;
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: #fd6;
+    text-shadow: 0 0 12px rgba(255, 221, 102, 0.3);
+}
+
 .round-info {
     color: #889;
     font-size: 0.85rem;
+    margin-bottom: 8px;
+}
+
+.round-countdown {
+    color: #7cf;
+    font-size: 0.85rem;
     margin-bottom: 16px;
+}
+
+.game-over-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    margin-bottom: 12px;
+}
+
+.game-over-countdown {
+    color: #889;
+    font-size: 0.8rem;
 }
 
 /* ── Icon buttons ────────────────────────────────────── */
@@ -533,6 +656,88 @@ input[type="text"]:focus-visible {
     align-items: center;
     justify-content: center;
     padding: 0 4px;
+}
+
+/* ── Game-specific HUDs ─────────────────────────────── */
+
+.game-specific-hud {
+    position: absolute;
+    top: 48px;
+    right: 16px;
+    background: rgba(13, 13, 26, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 10px 14px;
+    pointer-events: none;
+    min-width: 180px;
+}
+
+.golf-hole-info, .platformer-info, .lasertag-info {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.75rem;
+    color: #889;
+    margin-bottom: 8px;
+    gap: 12px;
+}
+
+.golf-strokes, .platformer-rankings, .lasertag-scores {
+    font-size: 0.8rem;
+}
+
+.hud-player-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 2px 0;
+    gap: 8px;
+}
+
+.hud-player-row .name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.hud-player-row .value {
+    color: #7cf;
+    font-weight: 600;
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.hud-player-row.sunk .name {
+    color: #5a5;
+}
+
+.hud-player-row.eliminated .name {
+    color: #f77;
+    text-decoration: line-through;
+}
+
+.hud-player-row.finished .name {
+    color: #5a5;
+}
+
+.hud-player-row.stunned .name {
+    color: #f93;
+}
+
+.lasertag-stun {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 2rem;
+    font-weight: 800;
+    color: #f44;
+    text-shadow: 0 0 20px rgba(255, 68, 68, 0.5);
+    animation: stun-pulse 0.5s ease-in-out infinite alternate;
+    pointer-events: none;
+}
+
+@keyframes stun-pulse {
+    from { opacity: 0.6; }
+    to { opacity: 1.0; }
 }
 
 /* ── Tron HUD ───────────────────────────────────────── */

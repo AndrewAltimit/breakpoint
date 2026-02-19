@@ -28,6 +28,7 @@ pub mod test_helpers {
                 color: PlayerColor::default(),
                 is_leader: i == 0,
                 is_spectator: false,
+                is_bot: false,
             })
             .collect()
     }

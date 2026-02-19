@@ -24,6 +24,7 @@ pub fn push_ui_state(app: &App) {
                         "id": p.id,
                         "name": p.display_name,
                         "isLeader": p.is_leader,
+                        "isBot": p.is_bot,
                     })
                 }).collect::<Vec<_>>(),
             },
@@ -54,11 +55,24 @@ pub fn push_ui_state(app: &App) {
                     "currentRound": rt.current_round,
                     "totalRounds": rt.total_rounds,
                     "scores": rt.cumulative_scores,
+                    "roundScoresHistory": rt.round_scores,
                 })
             }),
             "connected": app.ws.is_connected(),
             "muted": app.audio_settings.muted,
+            "golfHud": build_golf_hud(app),
+            "platformerHud": build_platformer_hud(app),
+            "lasertagHud": build_lasertag_hud(app),
             "tronHud": build_tron_hud(app),
+            "betweenRoundCountdown": app.between_round_end_time.map(|end| {
+                let remaining = (end - app.prev_timestamp) / 1000.0;
+                if remaining > 0.0 { remaining } else { 0.0 }
+            }),
+            "gameOverCountdown": app.game_over_timestamp.map(|start| {
+                let elapsed = (app.prev_timestamp - start) / 1000.0;
+                let remaining = 30.0 - elapsed;
+                if remaining > 0.0 { remaining } else { 0.0 }
+            }),
         });
 
         match serde_json::to_string(&state) {
@@ -72,6 +86,219 @@ pub fn push_ui_state(app: &App) {
     }
     #[cfg(not(target_family = "wasm"))]
     let _ = app;
+}
+
+/// Build Golf HUD data (hole/par/strokes/sunk indicators).
+#[cfg(target_family = "wasm")]
+fn build_golf_hud(app: &App) -> serde_json::Value {
+    use breakpoint_core::game_trait::GameId;
+
+    use crate::app::AppState;
+
+    if app.state != AppState::InGame {
+        return serde_json::Value::Null;
+    }
+    let Some(ref active) = app.game else {
+        return serde_json::Value::Null;
+    };
+    if active.game_id != GameId::Golf {
+        return serde_json::Value::Null;
+    }
+
+    let state: Option<breakpoint_golf::GolfState> = crate::game::read_game_state(active);
+    let Some(state) = state else {
+        return serde_json::Value::Null;
+    };
+
+    let courses = breakpoint_golf::course::all_courses();
+    let course = courses.get(state.course_index as usize);
+    let par = course.map(|c| c.par).unwrap_or(3);
+    let hole_name = course.map(|c| c.name.as_str()).unwrap_or("Hole");
+
+    let players_json: Vec<serde_json::Value> = app
+        .lobby
+        .players
+        .iter()
+        .map(|p| {
+            let strokes = state.strokes.get(&p.id).copied().unwrap_or(0);
+            let is_sunk = state.balls.get(&p.id).map(|b| b.is_sunk).unwrap_or(false);
+            let sunk_rank = state
+                .sunk_order
+                .iter()
+                .position(|&id| id == p.id)
+                .map(|i| i + 1);
+            serde_json::json!({
+                "id": p.id,
+                "name": p.display_name,
+                "strokes": strokes,
+                "isSunk": is_sunk,
+                "sunkRank": sunk_rank,
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "holeIndex": state.course_index,
+        "holeName": hole_name,
+        "par": par,
+        "players": players_json,
+        "roundTimer": state.round_timer,
+    })
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[allow(dead_code)]
+fn build_golf_hud(_app: &App) -> serde_json::Value {
+    serde_json::Value::Null
+}
+
+/// Build Platformer HUD data (rankings, mode, hazard, eliminations).
+#[cfg(target_family = "wasm")]
+fn build_platformer_hud(app: &App) -> serde_json::Value {
+    use breakpoint_core::game_trait::GameId;
+
+    use crate::app::AppState;
+
+    if app.state != AppState::InGame {
+        return serde_json::Value::Null;
+    }
+    let Some(ref active) = app.game else {
+        return serde_json::Value::Null;
+    };
+    if active.game_id != GameId::Platformer {
+        return serde_json::Value::Null;
+    }
+
+    let state: Option<breakpoint_platformer::PlatformerState> =
+        crate::game::read_game_state(active);
+    let Some(state) = state else {
+        return serde_json::Value::Null;
+    };
+
+    let mode_str = match state.mode {
+        breakpoint_platformer::GameMode::Race => "Race",
+        breakpoint_platformer::GameMode::Survival => "Survival",
+    };
+
+    let players_json: Vec<serde_json::Value> = app
+        .lobby
+        .players
+        .iter()
+        .map(|p| {
+            let ps = state.players.get(&p.id);
+            let eliminated = ps.map(|s| s.eliminated).unwrap_or(false);
+            let finished = ps.map(|s| s.finished).unwrap_or(false);
+            let finish_rank = state
+                .finish_order
+                .iter()
+                .position(|&id| id == p.id)
+                .map(|i| i + 1);
+            serde_json::json!({
+                "id": p.id,
+                "name": p.display_name,
+                "eliminated": eliminated,
+                "finished": finished,
+                "finishRank": finish_rank,
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "mode": mode_str,
+        "players": players_json,
+        "hazardY": state.hazard_y,
+        "eliminationCount": state.elimination_order.len(),
+        "finishCount": state.finish_order.len(),
+        "roundTimer": state.round_timer,
+    })
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[allow(dead_code)]
+fn build_platformer_hud(_app: &App) -> serde_json::Value {
+    serde_json::Value::Null
+}
+
+/// Build LaserTag HUD data (scores, team scores, power-ups, stun).
+#[cfg(target_family = "wasm")]
+fn build_lasertag_hud(app: &App) -> serde_json::Value {
+    use breakpoint_core::game_trait::GameId;
+
+    use crate::app::AppState;
+
+    if app.state != AppState::InGame {
+        return serde_json::Value::Null;
+    }
+    let Some(ref active) = app.game else {
+        return serde_json::Value::Null;
+    };
+    if active.game_id != GameId::LaserTag {
+        return serde_json::Value::Null;
+    }
+
+    let state: Option<breakpoint_lasertag::LaserTagState> = crate::game::read_game_state(active);
+    let Some(state) = state else {
+        return serde_json::Value::Null;
+    };
+
+    let local_id = app.network_role.as_ref().map(|r| r.local_player_id);
+
+    let team_mode_str = match &state.team_mode {
+        breakpoint_lasertag::TeamMode::FreeForAll => "FFA".to_string(),
+        breakpoint_lasertag::TeamMode::Teams { team_count } => {
+            format!("{team_count} Teams")
+        },
+    };
+
+    let players_json: Vec<serde_json::Value> = app
+        .lobby
+        .players
+        .iter()
+        .map(|p| {
+            let tags = state.tags_scored.get(&p.id).copied().unwrap_or(0);
+            let ps = state.players.get(&p.id);
+            let stunned = ps.map(|s| s.stun_remaining > 0.0).unwrap_or(false);
+            let team = state.teams.get(&p.id).copied();
+            let is_local = local_id == Some(p.id);
+            serde_json::json!({
+                "id": p.id,
+                "name": p.display_name,
+                "tags": tags,
+                "stunned": stunned,
+                "team": team,
+                "isLocal": is_local,
+            })
+        })
+        .collect();
+
+    // Team scores
+    let mut team_scores: std::collections::HashMap<u8, u32> = std::collections::HashMap::new();
+    if matches!(state.team_mode, breakpoint_lasertag::TeamMode::Teams { .. }) {
+        for (&pid, &tags) in &state.tags_scored {
+            if let Some(&team) = state.teams.get(&pid) {
+                *team_scores.entry(team).or_insert(0) += tags;
+            }
+        }
+    }
+
+    let local_stun = local_id
+        .and_then(|id| state.players.get(&id))
+        .map(|s| s.stun_remaining)
+        .unwrap_or(0.0);
+
+    serde_json::json!({
+        "teamMode": team_mode_str,
+        "players": players_json,
+        "teamScores": team_scores,
+        "localStunRemaining": local_stun,
+        "roundTimer": state.round_timer,
+    })
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[allow(dead_code)]
+fn build_lasertag_hud(_app: &App) -> serde_json::Value {
+    serde_json::Value::Null
 }
 
 /// Build Tron HUD data (player name positions, minimap walls, gauges).
@@ -490,6 +717,7 @@ pub fn attach_ui_callbacks(app: &std::rc::Rc<std::cell::RefCell<App>>) {
             if app.lobby.is_leader {
                 let msg = ClientMessage::RequestGameStart(RequestGameStartMsg {
                     game_name: app.lobby.selected_game.to_string(),
+                    custom: app.lobby.game_settings.clone(),
                 });
                 match encode_client_message(&msg) {
                     Ok(data) => {
@@ -519,6 +747,24 @@ pub fn attach_ui_callbacks(app: &std::rc::Rc<std::cell::RefCell<App>>) {
         let _ = js_sys::Reflect::set(
             &window,
             &"_bpSelectGame".into(),
+            closure.as_ref().unchecked_ref(),
+        );
+        closure.forget();
+    }
+
+    // ui_set_game_setting(key, value_json)
+    {
+        let app = Rc::clone(app);
+        let closure =
+            Closure::<dyn FnMut(String, String)>::new(move |key: String, value_json: String| {
+                let mut app = app.borrow_mut();
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&value_json) {
+                    app.lobby.game_settings.insert(key, val);
+                }
+            });
+        let _ = js_sys::Reflect::set(
+            &window,
+            &"_bpSetGameSetting".into(),
             closure.as_ref().unchecked_ref(),
         );
         closure.forget();
@@ -570,7 +816,8 @@ pub fn attach_ui_callbacks(app: &std::rc::Rc<std::cell::RefCell<App>>) {
         let closure = Closure::<dyn FnMut()>::new(move || {
             let mut app = app.borrow_mut();
             app.reconnect_info = None;
-            app.ws.disconnect();
+            // Keep WebSocket alive — server resets room to Lobby automatically
+            // after the game ends (via end_game_session in broadcast task).
             app.transition_to(AppState::Lobby);
         });
         let _ = js_sys::Reflect::set(
@@ -594,6 +841,54 @@ pub fn attach_ui_callbacks(app: &std::rc::Rc<std::cell::RefCell<App>>) {
         let _ = js_sys::Reflect::set(
             &window,
             &"_bpToggleDashboard".into(),
+            closure.as_ref().unchecked_ref(),
+        );
+        closure.forget();
+    }
+
+    // ui_add_bot
+    {
+        let app = Rc::clone(app);
+        let closure = Closure::<dyn FnMut()>::new(move || {
+            let app = app.borrow();
+            let msg = ClientMessage::AddBot(breakpoint_core::net::messages::AddBotMsg {});
+            match encode_client_message(&msg) {
+                Ok(data) => {
+                    if let Err(e) = app.ws.send(&data) {
+                        crate::diag::console_warn!("Failed to send AddBot: {e}");
+                    }
+                },
+                Err(e) => crate::diag::console_warn!("Failed to encode AddBot: {e}"),
+            }
+        });
+        let _ = js_sys::Reflect::set(
+            &window,
+            &"_bpAddBot".into(),
+            closure.as_ref().unchecked_ref(),
+        );
+        closure.forget();
+    }
+
+    // ui_remove_bot(player_id)
+    {
+        let app = Rc::clone(app);
+        let closure = Closure::<dyn FnMut(f64)>::new(move |player_id: f64| {
+            let app = app.borrow();
+            let msg = ClientMessage::RemoveBot(breakpoint_core::net::messages::RemoveBotMsg {
+                player_id: player_id as u64,
+            });
+            match encode_client_message(&msg) {
+                Ok(data) => {
+                    if let Err(e) = app.ws.send(&data) {
+                        crate::diag::console_warn!("Failed to send RemoveBot: {e}");
+                    }
+                },
+                Err(e) => crate::diag::console_warn!("Failed to encode RemoveBot: {e}"),
+            }
+        });
+        let _ = js_sys::Reflect::set(
+            &window,
+            &"_bpRemoveBot".into(),
             closure.as_ref().unchecked_ref(),
         );
         closure.forget();
