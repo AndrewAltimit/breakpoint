@@ -119,6 +119,23 @@ pub fn sync_golf_scene(
             Transform::from_xyz(ball.position.x, ball.position.y.max(0.15), ball.position.z)
                 .with_scale(Vec3::splat(0.3)),
         );
+
+        // Strike flash — white glow when the ball has just been hit
+        let vel_sq = ball.velocity.x * ball.velocity.x
+            + ball.velocity.y * ball.velocity.y
+            + ball.velocity.z * ball.velocity.z;
+        if vel_sq > 10.0 {
+            let alpha = (vel_sq / 50.0).min(1.0);
+            scene.add(
+                MeshType::Sphere { segments: 16 },
+                MaterialType::Glow {
+                    color: Vec4::new(1.0, 1.0, 1.0, alpha),
+                    intensity: 3.0,
+                },
+                Transform::from_xyz(ball.position.x, ball.position.y.max(0.15), ball.position.z)
+                    .with_scale(Vec3::splat(0.5)),
+            );
+        }
     }
 
     // Aim indicator: draw dots from local player's ball toward cursor ground position

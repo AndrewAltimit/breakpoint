@@ -8,7 +8,7 @@ use breakpoint_core::net::messages::MessageType;
 use breakpoint_core::net::protocol::{decode_message_type, decode_server_message};
 use breakpoint_core::player::Player;
 
-use crate::audio::{AudioEventQueue, AudioManager, AudioSettings};
+use crate::audio::{AudioEvent, AudioEventQueue, AudioManager, AudioSettings};
 use crate::bridge;
 use crate::camera_gl::{Camera, CameraMode};
 use crate::effects::ScreenShake;
@@ -151,6 +151,10 @@ pub struct App {
     /// Timestamp (ms) when game-over was entered (for auto-return countdown).
     pub game_over_timestamp: Option<f64>,
     pub(crate) prev_timestamp: f64,
+    /// Tracks local player alive state for Tron crash audio detection.
+    prev_local_alive: bool,
+    /// Frame counter for throttling continuous audio (e.g. Tron grind).
+    audio_frame_counter: u32,
 }
 
 impl App {
@@ -244,6 +248,8 @@ impl App {
             between_round_end_time: None,
             game_over_timestamp: None,
             prev_timestamp: 0.0,
+            prev_local_alive: true,
+            audio_frame_counter: 0,
         }
     }
 
@@ -337,7 +343,7 @@ impl App {
 
         // Detect disconnect — start reconnection if we were in a room
         if self.was_connected && !connected && self.ws.has_connection() {
-            bridge::show_disconnect_banner();
+            bridge::show_disconnect_banner(0, MAX_RECONNECT_ATTEMPTS, 1.0);
             if !self.lobby.room_code.is_empty() && self.reconnect_info.is_none() {
                 let recon = ReconnectInfo {
                     attempt: 0,
@@ -429,7 +435,13 @@ impl App {
                             },
                             Err(_) => {
                                 recon.attempt += 1;
-                                recon.next_attempt_at = timestamp + reconnect_delay(recon.attempt);
+                                let delay = reconnect_delay(recon.attempt);
+                                recon.next_attempt_at = timestamp + delay;
+                                bridge::show_disconnect_banner(
+                                    recon.attempt,
+                                    MAX_RECONNECT_ATTEMPTS,
+                                    delay / 1000.0,
+                                );
                             },
                         }
                         should_give_up = false;
@@ -448,6 +460,7 @@ impl App {
 
         if should_give_up {
             self.reconnect_info = None;
+            bridge::show_disconnect_banner(MAX_RECONNECT_ATTEMPTS, MAX_RECONNECT_ATTEMPTS, 0.0);
             self.lobby.error_message = Some("Connection lost. Please rejoin.".to_string());
             self.lobby.status_message = self.lobby.error_message.clone();
             return;
@@ -602,6 +615,7 @@ impl App {
                         self.between_round_end_time =
                             Some(self.prev_timestamp + (re.between_round_secs as f64 * 1000.0));
                     }
+                    self.audio_events.push(AudioEvent::NoticeChime);
                     self.transition_to(AppState::BetweenRounds);
                 },
                 Err(e) => {
@@ -626,6 +640,7 @@ impl App {
                         tracker.record_round(&scores);
                     }
                     self.game_over_timestamp = Some(self.prev_timestamp);
+                    self.audio_events.push(AudioEvent::UrgentAttention);
                     self.transition_to(AppState::GameOver);
                 },
                 Err(e) => {
@@ -751,6 +766,8 @@ impl App {
     }
 
     fn update_game(&mut self, dt: f32) {
+        self.audio_frame_counter = self.audio_frame_counter.wrapping_add(1);
+
         let Some(ref active) = self.game else {
             return;
         };
@@ -789,18 +806,40 @@ impl App {
                 if let Some(ref role) = self.network_role
                     && let Some(s) = read_game_state::<breakpoint_tron::TronState>(active)
                     && let Some(c) = s.players.get(&role.local_player_id)
-                    && c.alive
                 {
-                    let dir = match c.direction {
-                        breakpoint_tron::Direction::North => [0.0, -1.0],
-                        breakpoint_tron::Direction::South => [0.0, 1.0],
-                        breakpoint_tron::Direction::East => [1.0, 0.0],
-                        breakpoint_tron::Direction::West => [-1.0, 0.0],
-                    };
-                    self.camera.set_mode(CameraMode::TronFollow {
-                        cycle_pos: glam::Vec3::new(c.x, 0.0, c.z),
-                        direction: dir,
-                    });
+                    // Tron crash audio: detect alive -> dead transition
+                    if self.prev_local_alive && !c.alive {
+                        self.audio_events.push(AudioEvent::TronCrash);
+                        self.screen_shake.trigger(0.3, 0.25);
+                    }
+                    self.prev_local_alive = c.alive;
+
+                    // Tron grind audio: emit every ~10 frames when speed
+                    // exceeds base (50.0)
+                    if c.alive && c.speed > 50.0 && self.audio_frame_counter.is_multiple_of(10) {
+                        self.audio_events.push(AudioEvent::TronGrind);
+                    }
+
+                    // Tron win: local player is the winner
+                    if s.round_complete
+                        && s.winner_id == Some(role.local_player_id)
+                        && self.audio_frame_counter.is_multiple_of(60)
+                    {
+                        self.audio_events.push(AudioEvent::TronWin);
+                    }
+
+                    if c.alive {
+                        let dir = match c.direction {
+                            breakpoint_tron::Direction::North => [0.0, -1.0],
+                            breakpoint_tron::Direction::South => [0.0, 1.0],
+                            breakpoint_tron::Direction::East => [1.0, 0.0],
+                            breakpoint_tron::Direction::West => [-1.0, 0.0],
+                        };
+                        self.camera.set_mode(CameraMode::TronFollow {
+                            cycle_pos: glam::Vec3::new(c.x, 0.0, c.z),
+                            direction: dir,
+                        });
+                    }
                 }
             },
             #[allow(unreachable_patterns)]
@@ -823,7 +862,7 @@ impl App {
         match active.game_id {
             #[cfg(feature = "golf")]
             GameId::Golf => {
-                crate::game::golf_input::process_golf_input(
+                let stroke_sent = crate::game::golf_input::process_golf_input(
                     &self.input,
                     &self.camera,
                     &self.renderer,
@@ -831,9 +870,23 @@ impl App {
                     role,
                     &self.ws,
                 );
+                if stroke_sent {
+                    self.audio_events.push(AudioEvent::GolfStroke);
+                    self.screen_shake.trigger(0.15, 0.15);
+                }
             },
             #[cfg(feature = "platformer")]
             GameId::Platformer => {
+                let jump_pressed = self.input.is_key_just_pressed("Space")
+                    || self.input.is_key_just_pressed("ArrowUp")
+                    || self.input.is_key_just_pressed("KeyW");
+                if jump_pressed {
+                    self.audio_events.push(AudioEvent::PlatformerJump);
+                }
+                let powerup_pressed = self.input.is_key_just_pressed("KeyE");
+                if powerup_pressed {
+                    self.audio_events.push(AudioEvent::PlatformerPowerUp);
+                }
                 crate::game::platformer_input::process_platformer_input(
                     &self.input,
                     active,
@@ -843,6 +896,12 @@ impl App {
             },
             #[cfg(feature = "lasertag")]
             GameId::LaserTag => {
+                let fire = self
+                    .input
+                    .is_mouse_just_pressed(crate::input::MouseButton::Left);
+                if fire {
+                    self.audio_events.push(AudioEvent::LaserFire);
+                }
                 crate::game::lasertag_input::process_lasertag_input(
                     &self.input,
                     &self.camera,
@@ -982,6 +1041,7 @@ impl App {
             is_spectator: self.lobby.is_spectator,
         });
         self.round_tracker = Some(RoundTracker::new(round_count));
+        self.prev_local_alive = true;
         self.scene.clear();
     }
 }
@@ -999,6 +1059,9 @@ pub fn run() {
         Ok(r) => r,
         Err(e) => {
             web_sys::console::error_1(&format!("Renderer init failed: {e}").into());
+            bridge::show_fatal_error(
+                "Your browser doesn't support WebGL2. Please use Chrome, Firefox, or Edge.",
+            );
             return;
         },
     };

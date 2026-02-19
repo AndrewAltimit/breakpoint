@@ -9,6 +9,30 @@
 <body>
     <canvas id="game-canvas" role="img" aria-label="Game canvas"></canvas>
 
+    <!-- Loading overlay (visible until WASM initializes) -->
+    <div id="loading-overlay">
+        <div class="loading-content">
+            <h1 class="logo">BREAKPOINT</h1>
+            <div class="loading-spinner"></div>
+            <p class="loading-text">Loading game engine...</p>
+        </div>
+    </div>
+
+    <!-- Fatal error overlay (WebGL2 failure, WASM load error) -->
+    <div id="fatal-error" class="hidden">
+        <div class="fatal-error-content">
+            <h1 class="logo" style="color: #f77;">BREAKPOINT</h1>
+            <p id="fatal-error-msg" class="fatal-error-msg"></p>
+            <button class="btn btn-secondary" onclick="location.reload()">Reload Page</button>
+        </div>
+    </div>
+
+    <noscript>
+        <div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#0d0d1a;color:#e0e0e0;font-family:system-ui;text-align:center;z-index:9999;">
+            <div><h1 style="color:#7cf;font-size:2rem;margin-bottom:16px;">BREAKPOINT</h1><p>JavaScript is required to play. Please enable JavaScript and reload.</p></div>
+        </div>
+    </noscript>
+
     <div id="ui-root">
         <!-- Lobby Screen -->
         <div id="lobby-screen" class="screen">

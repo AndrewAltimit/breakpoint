@@ -10,6 +10,7 @@ use crate::net_client::WsClient;
 use crate::renderer::Renderer;
 
 /// Process golf input: mouse hold for power, aim via cursor_to_ground, release to fire.
+/// Returns `true` if a stroke was sent this frame.
 pub fn process_golf_input(
     input: &InputState,
     camera: &Camera,
@@ -17,19 +18,19 @@ pub fn process_golf_input(
     active: &mut ActiveGame,
     role: &NetworkRole,
     ws: &WsClient,
-) {
+) -> bool {
     let state: Option<breakpoint_golf::GolfState> = read_game_state(active);
     let Some(state) = state else {
-        return;
+        return false;
     };
 
     // Don't allow input if round is complete
     if state.round_complete {
-        return;
+        return false;
     }
 
     let Some(ball) = state.balls.get(&role.local_player_id) else {
-        return;
+        return false;
     };
 
     // Don't allow input if ball is still moving
@@ -37,7 +38,7 @@ pub fn process_golf_input(
         + ball.velocity.y * ball.velocity.y
         + ball.velocity.z * ball.velocity.z;
     if vel_sq > 0.01 || ball.is_sunk {
-        return;
+        return false;
     }
 
     let (vw, vh) = renderer.viewport_size();
@@ -59,7 +60,9 @@ pub fn process_golf_input(
                     stroke: true,
                 };
                 send_player_input(&golf_input, active, role, ws);
+                return true;
             }
         }
     }
+    false
 }

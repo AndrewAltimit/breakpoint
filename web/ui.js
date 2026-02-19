@@ -46,6 +46,25 @@
     const settLasertag   = $("settings-lasertag");
     let selectedGame = "mini-golf";
 
+    // ── Game descriptions ───────────────────────────────
+    const GAME_DESCS = {
+        "mini-golf": "2-8 players \u00b7 Turn-based \u00b7 10 courses",
+        "platform-racer": "2-6 players \u00b7 Race or Survive",
+        "laser-tag": "2-8 players \u00b7 FFA or Teams",
+        "tron": "2-8 players \u00b7 Light Cycles \u00b7 Bots available",
+    };
+
+    // Inject game descriptions into buttons
+    gameBtns.forEach((btn) => {
+        const desc = GAME_DESCS[btn.dataset.game];
+        if (desc) {
+            const descEl = document.createElement("div");
+            descEl.className = "game-desc";
+            descEl.textContent = desc;
+            btn.appendChild(descEl);
+        }
+    });
+
     function updateGameSettingsPanel() {
         const panels = [settPlatformer, settLasertag];
         panels.forEach((p) => p && p.classList.add("hidden"));
@@ -140,6 +159,15 @@
         }
     }
 
+    // ── ESC key handling ──────────────────────────────────
+    document.addEventListener("keydown", (e) => {
+        if (e.key !== "Escape") return;
+        // Dismiss toasts on ESC during gameplay
+        if (!gameHud.classList.contains("hidden")) {
+            dismissAllToasts();
+        }
+    });
+
     // ── Controls hints per game ─────────────────────────
     const CONTROLS = {
         "mini-golf": "Click to aim & shoot | Power = distance from ball",
@@ -177,8 +205,42 @@
         prevState = state;
     };
 
-    window._breakpointDisconnect = function () {
+    // ── Fatal error display (called from Rust bridge) ────
+    window._breakpointFatalError = function (msg) {
+        const overlay = $("loading-overlay");
+        if (overlay) overlay.classList.add("hidden");
+        const fatal = $("fatal-error");
+        const msgEl = $("fatal-error-msg");
+        if (fatal && msgEl) {
+            msgEl.textContent = msg;
+            fatal.classList.remove("hidden");
+        }
+    };
+
+    // ── Disconnect banner with attempt info ──────────────
+    window._breakpointDisconnect = function (attempt, maxAttempts, nextRetrySecs) {
         disconnectBanner.classList.remove("hidden");
+        if (typeof attempt === "number" && typeof maxAttempts === "number") {
+            if (attempt >= maxAttempts) {
+                disconnectBanner.innerHTML =
+                    'Connection lost. <button id="dc-rejoin" style="margin-left:8px;padding:4px 12px;border:1px solid #fff;border-radius:4px;background:transparent;color:#fff;cursor:pointer;">Return to Lobby</button>';
+                const rejoinBtn = $("dc-rejoin");
+                if (rejoinBtn) {
+                    rejoinBtn.addEventListener("click", () => {
+                        if (window._bpReturnToLobby) window._bpReturnToLobby();
+                        disconnectBanner.classList.add("hidden");
+                    });
+                }
+            } else {
+                const retryText = typeof nextRetrySecs === "number" && nextRetrySecs > 0
+                    ? `, retrying in ${Math.ceil(nextRetrySecs)}s`
+                    : "";
+                disconnectBanner.textContent =
+                    `Connection lost. Reconnecting (attempt ${attempt + 1}/${maxAttempts}${retryText})...`;
+            }
+        } else {
+            disconnectBanner.textContent = "Connection lost. Reconnecting...";
+        }
     };
 
     window._breakpointReconnect = function () {
@@ -193,6 +255,15 @@
         gameHud.classList.toggle("hidden", s !== "InGame");
         betweenRounds.classList.toggle("hidden", s !== "BetweenRounds");
         gameOver.classList.toggle("hidden", s !== "GameOver");
+
+        // Focus trap: move focus into visible modal
+        if (s === "BetweenRounds" && !betweenRounds.contains(document.activeElement)) {
+            betweenRounds.focus();
+        }
+        if (s === "GameOver" && !gameOver.contains(document.activeElement)) {
+            const btn = btnPlayAgain || btnReturnLobby;
+            if (btn) btn.focus();
+        }
     }
 
     // ── Lobby ───────────────────────────────────────────
@@ -218,6 +289,9 @@
         if (lobby.connected && lobby.roomCode) {
             roomInfo.classList.remove("hidden");
             roomCodeValue.textContent = lobby.roomCode;
+
+            // Add copy button if not present
+            ensureCopyButton(lobby.roomCode);
 
             // Player list
             let html = "";
@@ -264,15 +338,13 @@
             // Start button (leader only)
             btnStart.classList.toggle("hidden", !lobby.isLeader);
 
-            // Disable create/join after connected
+            // Disable create/join after connected (use CSS :disabled)
             btnCreate.disabled = true;
             btnJoin.disabled = true;
-            btnCreate.style.opacity = "0.4";
         } else {
             roomInfo.classList.add("hidden");
             btnCreate.disabled = false;
             btnJoin.disabled = false;
-            btnCreate.style.opacity = "";
         }
 
         // Highlight selected game button
@@ -282,6 +354,42 @@
             btn.classList.toggle("selected", isSelected);
             btn.setAttribute("aria-pressed", String(isSelected));
         });
+    }
+
+    // ── Copy room code button ────────────────────────────
+    let copyBtnCreated = false;
+    function ensureCopyButton(roomCode) {
+        if (copyBtnCreated) return;
+        const codeDisplay = roomCodeValue.parentElement;
+        if (!codeDisplay) return;
+
+        const btn = document.createElement("button");
+        btn.className = "room-code-copy";
+        btn.textContent = "Copy";
+        btn.setAttribute("aria-label", "Copy room code");
+        btn.addEventListener("click", () => {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(roomCode).then(() => {
+                    btn.textContent = "Copied!";
+                    btn.classList.add("copied");
+                    setTimeout(() => {
+                        btn.textContent = "Copy";
+                        btn.classList.remove("copied");
+                    }, 2000);
+                });
+            } else {
+                // Fallback: select the room code text
+                const range = document.createRange();
+                range.selectNodeContents(roomCodeValue);
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+                btn.textContent = "Selected!";
+                setTimeout(() => { btn.textContent = "Copy"; }, 2000);
+            }
+        });
+        codeDisplay.appendChild(btn);
+        copyBtnCreated = true;
     }
 
     // ── HUD ─────────────────────────────────────────────
@@ -297,6 +405,30 @@
             hudRound.classList.remove("hidden");
         } else {
             hudRound.classList.add("hidden");
+        }
+
+        // Spectator badge
+        updateSpectatorBadge(state);
+    }
+
+    // ── Spectator badge ──────────────────────────────────
+    function updateSpectatorBadge(state) {
+        let badge = $("spectator-badge");
+        const isSpectator = state.lobby && state.lobby.isSpectator;
+        if (isSpectator && state.appState === "InGame") {
+            if (!badge) {
+                badge = document.createElement("div");
+                badge.id = "spectator-badge";
+                badge.className = "spectator-badge";
+                badge.textContent = "SPECTATOR";
+                gameHud.appendChild(badge);
+            }
+            badge.classList.remove("hidden");
+            // Hide controls hint for spectators
+            hudControls.style.display = "none";
+        } else {
+            if (badge) badge.classList.add("hidden");
+            hudControls.style.display = "";
         }
     }
 
@@ -344,6 +476,11 @@
         platformerMode.textContent = hud.mode || "Race";
         platformerHazard.textContent = hud.mode === "Survival" ? `Hazard: ${Math.round(hud.hazardY)}` : "";
 
+        // Checkpoint progress
+        const finished = hud.finishCount || 0;
+        const total = hud.players.length;
+        const checkpointText = finished > 0 ? ` | Finished: ${finished}/${total}` : "";
+
         let html = "";
         for (const p of hud.players) {
             let cls = "";
@@ -355,6 +492,9 @@
                 <span class="value">${status}</span>
             </div>`;
         }
+        if (checkpointText) {
+            html += `<div style="font-size:0.65rem;color:#667;margin-top:4px;">${checkpointText}</div>`;
+        }
         platformerRankings.innerHTML = html;
     }
 
@@ -365,11 +505,15 @@
     const lasertagScores = $("lasertag-scores");
     const lasertagStun   = $("lasertag-stun");
 
+    // Kill feed tracking
+    let prevLasertagTags = {};
+
     function updateLasertagHud(state) {
         const hud = state.lasertagHud;
         if (!hud || !hud.players) {
             if (lasertagHudEl) lasertagHudEl.classList.add("hidden");
             if (lasertagStun) lasertagStun.classList.add("hidden");
+            prevLasertagTags = {};
             return;
         }
         lasertagHudEl.classList.remove("hidden");
@@ -380,6 +524,15 @@
         // Stun indicator
         if (lasertagStun) {
             lasertagStun.classList.toggle("hidden", !(hud.localStunRemaining > 0));
+        }
+
+        // Detect tag changes for kill feed
+        for (const p of hud.players) {
+            const prevTags = prevLasertagTags[p.id] || 0;
+            if (p.tags > prevTags && prevTags > 0) {
+                addKillFeedEntry(`${escapeHtml(p.name)} tagged someone!`);
+            }
+            prevLasertagTags[p.id] = p.tags || 0;
         }
 
         // Sort by tags descending
@@ -407,6 +560,37 @@
         lasertagScores.innerHTML = html;
     }
 
+    // ── Kill feed ────────────────────────────────────────
+    let killFeedEl = null;
+    const killFeedEntries = [];
+    const MAX_KILL_FEED = 3;
+
+    function addKillFeedEntry(text) {
+        if (!killFeedEl) {
+            killFeedEl = document.createElement("div");
+            killFeedEl.className = "kill-feed";
+            gameHud.appendChild(killFeedEl);
+        }
+        killFeedEntries.push({ text, time: Date.now() });
+        if (killFeedEntries.length > MAX_KILL_FEED) killFeedEntries.shift();
+        renderKillFeed();
+    }
+
+    function renderKillFeed() {
+        if (!killFeedEl) return;
+        const now = Date.now();
+        // Remove entries older than 5s
+        while (killFeedEntries.length > 0 && now - killFeedEntries[0].time > 5000) {
+            killFeedEntries.shift();
+        }
+        killFeedEl.innerHTML = killFeedEntries
+            .map((e) => `<div class="kill-feed-entry">${e.text}</div>`)
+            .join("");
+    }
+
+    // Clean up kill feed periodically
+    setInterval(renderKillFeed, 1000);
+
     // ── Tron HUD (player names, minimap, gauges) ────────
     const tronHudContainer = $("tron-hud-container");
     const tronMinimap      = $("tron-minimap");
@@ -417,6 +601,7 @@
     const tronMinimapCtx   = tronMinimap ? tronMinimap.getContext("2d") : null;
     let tronNameEls        = new Map();
     let tronMinimapFrame   = 0;
+    let tronEliminatedEl   = null;
 
     const PLAYER_COLORS_CSS = [
         "#00d9ff", "#ffcc00", "#1aff33", "#ff0099",
@@ -430,12 +615,14 @@
             if (tronHudContainer) tronHudContainer.innerHTML = "";
             if (tronMinimap) tronMinimap.classList.remove("visible");
             if (tronGauges) tronGauges.classList.add("hidden");
+            if (tronEliminatedEl) { tronEliminatedEl.remove(); tronEliminatedEl = null; }
             tronNameEls.clear();
             return;
         }
 
         updateTronPlayerNames(hud.players);
         updateTronGauges(hud.players);
+        updateTronEliminatedOverlay(hud.players);
 
         // Minimap — update every 5th frame for performance
         tronMinimapFrame++;
@@ -501,6 +688,21 @@
         // Brake fuel: 0-1 range
         const brakePct = Math.min(local.brakeFuel / 5, 1) * 100;
         tronBrakeFill.style.width = brakePct + "%";
+    }
+
+    function updateTronEliminatedOverlay(players) {
+        const local = players.find((p) => p.isLocal);
+        if (local && !local.alive) {
+            if (!tronEliminatedEl) {
+                tronEliminatedEl = document.createElement("div");
+                tronEliminatedEl.className = "tron-eliminated";
+                tronEliminatedEl.textContent = "ELIMINATED";
+                gameHud.appendChild(tronEliminatedEl);
+            }
+        } else if (tronEliminatedEl) {
+            tronEliminatedEl.remove();
+            tronEliminatedEl = null;
+        }
     }
 
     function updateTronMinimap(hud) {
@@ -577,12 +779,16 @@
         if (state.appState === "BetweenRounds" && state.roundTracker) {
             renderScores(roundScores, state.roundTracker.scores, state.lobby.players, getScoreOpts(state, false));
             roundInfoEl.textContent = `Round ${state.roundTracker.currentRound} of ${state.roundTracker.totalRounds}`;
-            // Between-round countdown
+            // Between-round countdown with progress bar
             if (roundCountdown && state.betweenRoundCountdown != null) {
                 const secs = Math.ceil(state.betweenRoundCountdown);
-                roundCountdown.textContent = secs > 0 ? `Next round in ${secs}s...` : "";
+                const totalSecs = 8; // typical between-round duration
+                const pct = Math.max(0, Math.min(100, (secs / totalSecs) * 100));
+                roundCountdown.innerHTML = secs > 0
+                    ? `Next round in ${secs}s...<div class="countdown-bar"><div class="countdown-bar-fill" style="width:${pct}%"></div></div>`
+                    : "";
             } else if (roundCountdown) {
-                roundCountdown.textContent = "";
+                roundCountdown.innerHTML = "";
             }
         }
 
@@ -708,6 +914,12 @@
     }
 
     const activeToasts = new Map();
+    const toastTimers = new Map();
+    const TOAST_AUTO_DISMISS_MS = 8000;
+    const MAX_VISIBLE_TOASTS = 5;
+
+    // Toast priority order for sorting
+    const TOAST_PRIORITY_ORDER = { "Critical": 0, "Urgent": 1, "Notice": 2, "Ambient": 3 };
 
     function updateToasts(toasts) {
         if (!toasts) return;
@@ -717,13 +929,21 @@
         // Remove dismissed toasts
         for (const [id, el] of activeToasts) {
             if (!currentIds.has(id)) {
-                el.remove();
-                activeToasts.delete(id);
+                dismissToast(id);
             }
         }
 
-        // Add/update toasts
-        for (const toast of toasts) {
+        // Sort by priority
+        const sorted = [...toasts].sort((a, b) =>
+            (TOAST_PRIORITY_ORDER[a.priority] || 3) - (TOAST_PRIORITY_ORDER[b.priority] || 3)
+        );
+
+        // Add/update toasts (capped at MAX_VISIBLE_TOASTS)
+        let visibleCount = 0;
+        for (const toast of sorted) {
+            if (visibleCount >= MAX_VISIBLE_TOASTS) break;
+            visibleCount++;
+
             if (activeToasts.has(toast.id)) {
                 // Update claim status
                 const el = activeToasts.get(toast.id);
@@ -755,7 +975,46 @@
                 }
                 toastContainer.appendChild(el);
                 activeToasts.set(toast.id, el);
+
+                // Auto-dismiss timer
+                const timerId = setTimeout(() => dismissToast(toast.id), TOAST_AUTO_DISMISS_MS);
+                toastTimers.set(toast.id, timerId);
             }
+        }
+
+        // Show overflow indicator
+        let overflowEl = toastContainer.querySelector(".toast-overflow-indicator");
+        const overflowCount = sorted.length - MAX_VISIBLE_TOASTS;
+        if (overflowCount > 0) {
+            if (!overflowEl) {
+                overflowEl = document.createElement("div");
+                overflowEl.className = "toast-overflow-indicator";
+                toastContainer.appendChild(overflowEl);
+            }
+            overflowEl.textContent = `+${overflowCount} more`;
+        } else if (overflowEl) {
+            overflowEl.remove();
+        }
+    }
+
+    function dismissToast(id) {
+        const el = activeToasts.get(id);
+        if (el) {
+            el.classList.add("dismissing");
+            setTimeout(() => {
+                el.remove();
+                activeToasts.delete(id);
+            }, 300);
+        } else {
+            activeToasts.delete(id);
+        }
+        const timer = toastTimers.get(id);
+        if (timer) { clearTimeout(timer); toastTimers.delete(id); }
+    }
+
+    function dismissAllToasts() {
+        for (const [id] of activeToasts) {
+            dismissToast(id);
         }
     }
 
