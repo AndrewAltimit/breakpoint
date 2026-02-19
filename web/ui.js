@@ -1038,6 +1038,101 @@
         }
     }
 
+    // ── Background Music Player ──────────────────────────
+    // Reads web/music.json for per-game track lists. Users provide their own
+    // audio files in web/music/ (gitignored). The config maps game IDs to
+    // arrays of { src, title } objects. Tracks loop and shuffle.
+    const musicPlayer = {
+        audio: null,
+        config: null,
+        currentContext: null,   // "lobby", "mini-golf", "tron", etc.
+        trackIndex: 0,
+        started: false,         // needs user gesture before first play
+    };
+
+    // Fetch music config once
+    fetch("music.json")
+        .then((r) => r.ok ? r.json() : null)
+        .then((cfg) => { musicPlayer.config = cfg; })
+        .catch(() => { /* no music config — silent */ });
+
+    // Start playback on first user interaction (browser autoplay policy)
+    function ensureMusicStarted() {
+        if (musicPlayer.started) return;
+        musicPlayer.started = true;
+        musicSetContext(musicPlayer.currentContext || "lobby");
+    }
+    document.addEventListener("click", ensureMusicStarted, { once: true });
+    document.addEventListener("keydown", ensureMusicStarted, { once: true });
+
+    function musicSetContext(context) {
+        musicPlayer.currentContext = context;
+        if (!musicPlayer.config || !musicPlayer.started) return;
+
+        const tracks = musicPlayer.config[context];
+        if (!tracks || tracks.length === 0) {
+            // No tracks for this context — stop music
+            if (musicPlayer.audio) {
+                musicPlayer.audio.pause();
+                musicPlayer.audio = null;
+            }
+            return;
+        }
+
+        // Check if we're already playing a track from this context
+        const currentSrc = musicPlayer.audio ? musicPlayer.audio.dataset.src : null;
+        const alreadyPlaying = tracks.some((t) => t.src === currentSrc);
+        if (alreadyPlaying) return;
+
+        // Pick a random track (or first if only one)
+        musicPlayer.trackIndex = tracks.length > 1 ? Math.floor(Math.random() * tracks.length) : 0;
+        musicPlayTrack(tracks[musicPlayer.trackIndex]);
+    }
+
+    function musicPlayTrack(track) {
+        if (musicPlayer.audio) {
+            musicPlayer.audio.pause();
+        }
+
+        const audio = new Audio(track.src);
+        audio.loop = true;
+        audio.volume = 0;
+        audio.dataset.src = track.src;
+        audio.play().catch(() => { /* autoplay blocked — will retry on interaction */ });
+        musicPlayer.audio = audio;
+    }
+
+    // Called each frame from _breakpointUpdate — syncs volume/mute
+    function updateMusicVolume(state) {
+        if (!musicPlayer.audio) return;
+        const vol = state.muted ? 0 : (state.musicVolume || 0);
+        musicPlayer.audio.volume = Math.max(0, Math.min(1, vol));
+    }
+
+    // Map game IDs from Rust to music.json keys
+    const GAME_TO_MUSIC_CTX = {
+        "Golf": "mini-golf", "mini-golf": "mini-golf",
+        "Platformer": "platform-racer", "platform-racer": "platform-racer",
+        "LaserTag": "laser-tag", "laser-tag": "laser-tag",
+        "Tron": "tron", "tron": "tron",
+    };
+
+    // Hook into the main update loop
+    const origUpdate = window._breakpointUpdate;
+    window._breakpointUpdate = function (state) {
+        origUpdate(state);
+        updateMusicVolume(state);
+
+        // Switch music context based on app state
+        let ctx = "lobby";
+        if (state.appState === "InGame" && state.game) {
+            ctx = GAME_TO_MUSIC_CTX[state.game.gameId] || "lobby";
+        }
+        if (ctx !== musicPlayer.currentContext) {
+            musicSetContext(ctx);
+        }
+    };
+
     // ── Helpers ─────────────────────────────────────────
     function escapeHtml(str) {
         if (!str) return "";

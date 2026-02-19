@@ -34,23 +34,25 @@ impl AudioEventQueue {
     pub fn process(&mut self, manager: &AudioManager, settings: &AudioSettings) {
         for event in self.events.drain(..) {
             let (freq, dur, wave, vol_category) = match event {
-                AudioEvent::NoticeChime => (880.0, 0.15, WaveType::Sine, SoundCategory::Overlay),
+                AudioEvent::NoticeChime => (440.0, 0.15, WaveType::Sine, SoundCategory::Overlay),
                 AudioEvent::UrgentAttention => {
-                    (660.0, 0.25, WaveType::Triangle, SoundCategory::Overlay)
+                    (330.0, 0.25, WaveType::Triangle, SoundCategory::Overlay)
                 },
-                AudioEvent::CriticalAlert => (440.0, 0.4, WaveType::Square, SoundCategory::Overlay),
-                AudioEvent::GolfStroke => (350.0, 0.1, WaveType::Sine, SoundCategory::Game),
-                AudioEvent::GolfBallSink => (1200.0, 0.3, WaveType::Sine, SoundCategory::Game),
-                AudioEvent::PlatformerJump => (500.0, 0.08, WaveType::Square, SoundCategory::Game),
-                AudioEvent::PlatformerPowerUp => (900.0, 0.2, WaveType::Sine, SoundCategory::Game),
+                AudioEvent::CriticalAlert => (220.0, 0.4, WaveType::Square, SoundCategory::Overlay),
+                AudioEvent::GolfStroke => (250.0, 0.1, WaveType::Sine, SoundCategory::Game),
+                AudioEvent::GolfBallSink => (520.0, 0.3, WaveType::Sine, SoundCategory::Game),
+                AudioEvent::PlatformerJump => {
+                    (330.0, 0.08, WaveType::Triangle, SoundCategory::Game)
+                },
+                AudioEvent::PlatformerPowerUp => (440.0, 0.2, WaveType::Sine, SoundCategory::Game),
                 AudioEvent::PlatformerFinish => {
-                    (1000.0, 0.5, WaveType::Triangle, SoundCategory::Game)
+                    (520.0, 0.5, WaveType::Triangle, SoundCategory::Game)
                 },
-                AudioEvent::LaserFire => (1800.0, 0.06, WaveType::Sawtooth, SoundCategory::Game),
-                AudioEvent::LaserHit => (200.0, 0.15, WaveType::Square, SoundCategory::Game),
-                AudioEvent::TronCrash => (300.0, 0.3, WaveType::Square, SoundCategory::Game),
-                AudioEvent::TronGrind => (1500.0, 0.05, WaveType::Sawtooth, SoundCategory::Game),
-                AudioEvent::TronWin => (1000.0, 0.5, WaveType::Triangle, SoundCategory::Game),
+                AudioEvent::LaserFire => (280.0, 0.06, WaveType::Sawtooth, SoundCategory::Game),
+                AudioEvent::LaserHit => (180.0, 0.15, WaveType::Square, SoundCategory::Game),
+                AudioEvent::TronCrash => (200.0, 0.3, WaveType::Square, SoundCategory::Game),
+                AudioEvent::TronGrind => (350.0, 0.05, WaveType::Sawtooth, SoundCategory::Game),
+                AudioEvent::TronWin => (520.0, 0.5, WaveType::Triangle, SoundCategory::Game),
             };
 
             let category_vol = match vol_category {
@@ -72,6 +74,7 @@ pub struct AudioSettings {
     pub master_volume: f32,
     pub game_volume: f32,
     pub overlay_volume: f32,
+    pub music_volume: f32,
     pub muted: bool,
 }
 
@@ -81,6 +84,7 @@ impl Default for AudioSettings {
             master_volume: 0.5,
             game_volume: 0.7,
             overlay_volume: 0.8,
+            music_volume: 0.3,
             muted: false,
         }
     }

@@ -220,6 +220,11 @@ impl App {
                 audio_settings.muted = false;
                 audio_settings.master_volume = v.clamp(0.0, 1.0);
             }
+            if let Ok(Some(val)) = storage.get_item("audio_music_volume")
+                && let Ok(v) = val.parse::<f32>()
+            {
+                audio_settings.music_volume = v.clamp(0.0, 1.0);
+            }
         });
 
         let registry = crate::game::create_registry();

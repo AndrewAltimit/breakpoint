@@ -46,6 +46,9 @@ tests/browser/results/
 tests/browser/report/
 tests/browser/test-results/
 
+# User-provided music (MP3/OGG/WAV files — not committed, see web/music.json)
+web/music/
+
 # Scratch
 scratch/
 .local/

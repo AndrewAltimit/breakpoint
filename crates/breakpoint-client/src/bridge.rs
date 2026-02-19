@@ -60,6 +60,7 @@ pub fn push_ui_state(app: &App) {
             }),
             "connected": app.ws.is_connected(),
             "muted": app.audio_settings.muted,
+            "musicVolume": app.audio_settings.master_volume * app.audio_settings.music_volume,
             "golfHud": build_golf_hud(app),
             "platformerHud": build_platformer_hud(app),
             "lasertagHud": build_lasertag_hud(app),
