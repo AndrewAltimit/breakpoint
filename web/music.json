@@ -1,9 +1,15 @@
 {
   "lobby": [
-    { "src": "music/golf-course-select.mp3", "title": "Golf (Course Select) - Wii Sports" }
+    {
+      "src": "music/golf-course-select.mp3",
+      "title": "Golf (Course Select) - Wii Sports"
+    }
   ],
   "mini-golf": [
-    { "src": "music/golf-course-select.mp3", "title": "Golf (Course Select) - Wii Sports" }
+    {
+      "src": "music/golf-course-select.mp3",
+      "title": "Golf (Course Select) - Wii Sports"
+    }
   ],
   "platform-racer": [],
   "laser-tag": [],

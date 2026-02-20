@@ -37,19 +37,21 @@ repos:
         types: [shell]
         args: [-x]
 
-  # Rust formatting and linting (containerized)
+  # Rust formatting (local, runs on every commit — fast)
+  # Clippy runs on pre-push only (slower, but catches lint before CI)
   - repo: local
     hooks:
       - id: rust-fmt
         name: Rust format
-        entry: docker compose --profile ci run --rm rust-ci cargo fmt --all
+        entry: bash -c 'source "$HOME/.cargo/env" 2>/dev/null || true; cargo fmt --all -- --check'
         language: system
         files: '\.rs$'
         pass_filenames: false
 
       - id: rust-clippy
-        name: Rust lint
-        entry: docker compose --profile ci run --rm rust-ci cargo clippy --workspace --all-targets -- -D warnings
+        name: Rust clippy
+        entry: bash -c 'source "$HOME/.cargo/env" 2>/dev/null || true; cargo clippy --workspace --all-targets -- -D warnings'
         language: system
         files: '\.rs$'
         pass_filenames: false
+        stages: [pre-push]
