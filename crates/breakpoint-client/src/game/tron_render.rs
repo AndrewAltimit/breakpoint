@@ -152,6 +152,53 @@ pub fn sync_tron_scene(
         )),
     );
 
+    // Arena boundary floor strips — animated blue line effect (TronWall shader)
+    let strip_width = 5.0;
+    let strip_y = 0.01;
+    let strip_color = Vec4::new(0.0, 0.5, 1.0, 1.0);
+    let strip_intensity = 2.0;
+
+    // North strip (z=0)
+    scene.add(
+        MeshType::Plane,
+        MaterialType::TronWall {
+            color: strip_color,
+            intensity: strip_intensity,
+        },
+        Transform::from_xyz(arena_w / 2.0, strip_y, strip_width / 2.0)
+            .with_scale(Vec3::new(arena_w, 1.0, strip_width)),
+    );
+    // South strip (z=depth)
+    scene.add(
+        MeshType::Plane,
+        MaterialType::TronWall {
+            color: strip_color,
+            intensity: strip_intensity,
+        },
+        Transform::from_xyz(arena_w / 2.0, strip_y, arena_d - strip_width / 2.0)
+            .with_scale(Vec3::new(arena_w, 1.0, strip_width)),
+    );
+    // West strip (x=0)
+    scene.add(
+        MeshType::Plane,
+        MaterialType::TronWall {
+            color: strip_color,
+            intensity: strip_intensity,
+        },
+        Transform::from_xyz(strip_width / 2.0, strip_y, arena_d / 2.0)
+            .with_scale(Vec3::new(strip_width, 1.0, arena_d)),
+    );
+    // East strip (x=width)
+    scene.add(
+        MeshType::Plane,
+        MaterialType::TronWall {
+            color: strip_color,
+            intensity: strip_intensity,
+        },
+        Transform::from_xyz(arena_w - strip_width / 2.0, strip_y, arena_d / 2.0)
+            .with_scale(Vec3::new(strip_width, 1.0, arena_d)),
+    );
+
     // Build a player index for color mapping
     let mut player_index: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
     for (i, (&pid, _)) in state.players.iter().enumerate() {
