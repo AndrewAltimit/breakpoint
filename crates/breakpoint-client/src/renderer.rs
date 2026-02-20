@@ -266,7 +266,15 @@ impl Renderer {
 
         let vp = camera.view_projection();
 
-        for obj in scene.visible_objects() {
+        // Sort by shader program to minimize expensive gl.use_program() switches.
+        // With ~500 wall segments interleaved with other materials, this reduces
+        // program switches from hundreds to ~5 (one per unique program).
+        let mut sorted: Vec<&crate::scene::RenderObject> =
+            scene.visible_objects().collect();
+        sorted.sort_by_key(|obj| material_sort_key(&obj.material));
+
+        let mut active_program: &str = "";
+        for obj in &sorted {
             let model = obj.transform.matrix();
             let mvp = vp * model;
 
@@ -281,7 +289,11 @@ impl Renderer {
             let Some(prog) = self.programs.get(program_name) else {
                 continue;
             };
-            gl.use_program(Some(&prog.program));
+            // Only switch program when the material type changes
+            if program_name != active_program {
+                gl.use_program(Some(&prog.program));
+                active_program = program_name;
+            }
 
             // Common uniforms
             set_mat4(gl, &prog.u_mvp, &mvp);
@@ -316,7 +328,11 @@ impl Renderer {
                     set_vec4(gl, &prog.u_color, color);
                     set_f32(gl, &prog.u_intensity, *intensity);
                     set_f32(gl, &prog.u_time, self.time);
-                    set_vec2(gl, &prog.u_resolution, 40.0, 4.0);
+                    // Derive tile count from geometry so noise cells stay square
+                    let s = obj.transform.scale;
+                    let width = s.x.max(s.z);
+                    let tiles = width / s.y.max(0.01);
+                    set_vec2(gl, &prog.u_resolution, tiles, 3.0);
                 },
             }
 
@@ -420,6 +436,17 @@ impl Renderer {
 fn set_mat4(gl: &GL, loc: &Option<WebGlUniformLocation>, m: &Mat4) {
     if let Some(loc) = loc {
         gl.uniform_matrix4fv_with_f32_array(Some(loc), false, m.as_ref());
+    }
+}
+
+/// Sort key for grouping objects by shader program (minimizes program switches).
+fn material_sort_key(m: &MaterialType) -> u8 {
+    match m {
+        MaterialType::Unlit { .. } => 0,
+        MaterialType::Gradient { .. } => 1,
+        MaterialType::Glow { .. } => 2,
+        MaterialType::Ripple { .. } => 3,
+        MaterialType::TronWall { .. } => 4,
     }
 }
 

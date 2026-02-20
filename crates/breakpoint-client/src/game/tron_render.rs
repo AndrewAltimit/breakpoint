@@ -152,51 +152,53 @@ pub fn sync_tron_scene(
         )),
     );
 
-    // Arena boundary floor strips — animated blue line effect (TronWall shader)
-    let strip_width = 5.0;
-    let strip_y = 0.01;
-    let strip_color = Vec4::new(0.0, 0.5, 1.0, 1.0);
-    let strip_intensity = 2.0;
+    // Arena boundary flame strips — vertical billboards at wall bases (TronWall shader).
+    // Thin cuboids standing upright, UV.y maps to height (flame rises bottom→top).
+    let flame_height = 3.75;
+    let flame_depth = 0.1; // paper-thin
+    let flame_color = Vec4::new(0.0, 0.5, 1.0, 1.0);
+    let flame_intensity = 2.5;
+    let inset = bwall_thickness / 2.0 + flame_depth; // just inside the wall
 
-    // North strip (z=0)
+    // North wall flame (z=0, faces +Z into arena)
     scene.add(
-        MeshType::Plane,
+        MeshType::Cuboid,
         MaterialType::TronWall {
-            color: strip_color,
-            intensity: strip_intensity,
+            color: flame_color,
+            intensity: flame_intensity,
         },
-        Transform::from_xyz(arena_w / 2.0, strip_y, strip_width / 2.0)
-            .with_scale(Vec3::new(arena_w, 1.0, strip_width)),
+        Transform::from_xyz(arena_w / 2.0, flame_height / 2.0, inset)
+            .with_scale(Vec3::new(arena_w, flame_height, flame_depth)),
     );
-    // South strip (z=depth)
+    // South wall flame (z=depth, faces -Z into arena)
     scene.add(
-        MeshType::Plane,
+        MeshType::Cuboid,
         MaterialType::TronWall {
-            color: strip_color,
-            intensity: strip_intensity,
+            color: flame_color,
+            intensity: flame_intensity,
         },
-        Transform::from_xyz(arena_w / 2.0, strip_y, arena_d - strip_width / 2.0)
-            .with_scale(Vec3::new(arena_w, 1.0, strip_width)),
+        Transform::from_xyz(arena_w / 2.0, flame_height / 2.0, arena_d - inset)
+            .with_scale(Vec3::new(arena_w, flame_height, flame_depth)),
     );
-    // West strip (x=0)
+    // West wall flame (x=0, faces +X into arena)
     scene.add(
-        MeshType::Plane,
+        MeshType::Cuboid,
         MaterialType::TronWall {
-            color: strip_color,
-            intensity: strip_intensity,
+            color: flame_color,
+            intensity: flame_intensity,
         },
-        Transform::from_xyz(strip_width / 2.0, strip_y, arena_d / 2.0)
-            .with_scale(Vec3::new(strip_width, 1.0, arena_d)),
+        Transform::from_xyz(inset, flame_height / 2.0, arena_d / 2.0)
+            .with_scale(Vec3::new(flame_depth, flame_height, arena_d)),
     );
-    // East strip (x=width)
+    // East wall flame (x=width, faces -X into arena)
     scene.add(
-        MeshType::Plane,
+        MeshType::Cuboid,
         MaterialType::TronWall {
-            color: strip_color,
-            intensity: strip_intensity,
+            color: flame_color,
+            intensity: flame_intensity,
         },
-        Transform::from_xyz(arena_w - strip_width / 2.0, strip_y, arena_d / 2.0)
-            .with_scale(Vec3::new(strip_width, 1.0, arena_d)),
+        Transform::from_xyz(arena_w - inset, flame_height / 2.0, arena_d / 2.0)
+            .with_scale(Vec3::new(flame_depth, flame_height, arena_d)),
     );
 
     // Build a player index for color mapping
@@ -208,7 +210,7 @@ pub fn sync_tron_scene(
     // Wall trail segments — TronWall shader (dim body + bright top edge).
     // Own walls: short, high intensity. Enemy walls: tall, dimmer.
     // Cap total wall segments rendered to avoid GPU overload on weaker drivers.
-    let max_wall_segments = 512;
+    let max_wall_segments = 256;
     let trail_thickness = 0.3;
     let walls_to_render = if state.wall_segments.len() > max_wall_segments {
         // Render most recent segments (end of the vec)
