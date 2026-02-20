@@ -269,8 +269,7 @@ impl Renderer {
         // Sort by shader program to minimize expensive gl.use_program() switches.
         // With ~500 wall segments interleaved with other materials, this reduces
         // program switches from hundreds to ~5 (one per unique program).
-        let mut sorted: Vec<&crate::scene::RenderObject> =
-            scene.visible_objects().collect();
+        let mut sorted: Vec<&crate::scene::RenderObject> = scene.visible_objects().collect();
         sorted.sort_by_key(|obj| material_sort_key(&obj.material));
 
         let mut active_program: &str = "";

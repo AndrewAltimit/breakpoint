@@ -167,8 +167,11 @@ pub fn sync_tron_scene(
             color: flame_color,
             intensity: flame_intensity,
         },
-        Transform::from_xyz(arena_w / 2.0, flame_height / 2.0, inset)
-            .with_scale(Vec3::new(arena_w, flame_height, flame_depth)),
+        Transform::from_xyz(arena_w / 2.0, flame_height / 2.0, inset).with_scale(Vec3::new(
+            arena_w,
+            flame_height,
+            flame_depth,
+        )),
     );
     // South wall flame (z=depth, faces -Z into arena)
     scene.add(
@@ -187,8 +190,11 @@ pub fn sync_tron_scene(
             color: flame_color,
             intensity: flame_intensity,
         },
-        Transform::from_xyz(inset, flame_height / 2.0, arena_d / 2.0)
-            .with_scale(Vec3::new(flame_depth, flame_height, arena_d)),
+        Transform::from_xyz(inset, flame_height / 2.0, arena_d / 2.0).with_scale(Vec3::new(
+            flame_depth,
+            flame_height,
+            arena_d,
+        )),
     );
     // East wall flame (x=width, faces -X into arena)
     scene.add(
