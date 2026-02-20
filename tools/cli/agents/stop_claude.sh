@@ -16,7 +16,7 @@ fi
 
 # Display found processes
 echo "Found Claude Code processes:"
-ps -fp $CLAUDE_PIDS
+ps -fp "$CLAUDE_PIDS"
 echo ""
 
 # Ask for confirmation
