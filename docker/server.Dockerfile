@@ -49,8 +49,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \
     cargo build --release -p breakpoint-server --features github-poller; exit 0
 
-# Copy actual source code
+# Copy actual source code and compile-time assets
 COPY crates/ crates/
+COPY web/theme.json web/theme.json
 
 # Purge stale cargo fingerprints for workspace crates so cargo detects
 # that the real sources replaced the stubs. The cache mount preserves
