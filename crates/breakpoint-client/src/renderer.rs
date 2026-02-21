@@ -266,10 +266,24 @@ impl Renderer {
 
         let vp = camera.view_projection();
 
+        // Frustum culling: extract frustum planes from the VP matrix and skip
+        // objects whose bounding sphere is entirely outside any plane. This avoids
+        // draw calls for off-screen objects (significant for Tron with 500+ walls).
+        let frustum = extract_frustum_planes(&vp);
+
         // Sort by shader program to minimize expensive gl.use_program() switches.
         // With ~500 wall segments interleaved with other materials, this reduces
         // program switches from hundreds to ~5 (one per unique program).
-        let mut sorted: Vec<&crate::scene::RenderObject> = scene.visible_objects().collect();
+        let mut sorted: Vec<&crate::scene::RenderObject> = scene
+            .visible_objects()
+            .filter(|obj| {
+                let pos = obj.transform.translation;
+                let max_scale = obj.transform.scale.max_element();
+                // Conservative bounding radius: half-diagonal of scaled unit primitive
+                let radius = max_scale * 0.87; // sqrt(3)/2 ≈ 0.87
+                is_sphere_in_frustum(&frustum, pos, radius)
+            })
+            .collect();
         sorted.sort_by_key(|obj| material_sort_key(&obj.material));
 
         let mut active_program: &str = "";
@@ -523,6 +537,41 @@ fn link_program(gl: &GL, vert_src: &str, frag_src: &str) -> Result<WebGlProgram,
     }
 }
 
+// --- Frustum culling ---
+
+/// Six frustum planes extracted from a view-projection matrix.
+/// Each plane is (a, b, c, d) where ax + by + cz + d = 0.
+type FrustumPlanes = [Vec4; 6];
+
+/// Extract frustum planes from a view-projection matrix using the
+/// Gribb/Hartmann method. Planes point inward (positive = inside).
+fn extract_frustum_planes(vp: &Mat4) -> FrustumPlanes {
+    let r0 = vp.row(0);
+    let r1 = vp.row(1);
+    let r2 = vp.row(2);
+    let r3 = vp.row(3);
+    [
+        r3 + r0, // left
+        r3 - r0, // right
+        r3 + r1, // bottom
+        r3 - r1, // top
+        r3 + r2, // near
+        r3 - r2, // far
+    ]
+}
+
+/// Test whether a bounding sphere is at least partially inside the frustum.
+fn is_sphere_in_frustum(planes: &FrustumPlanes, center: Vec3, radius: f32) -> bool {
+    for plane in planes {
+        let dist = plane.x * center.x + plane.y * center.y + plane.z * center.z + plane.w;
+        let norm = (plane.x * plane.x + plane.y * plane.y + plane.z * plane.z).sqrt();
+        if norm > 0.0 && dist < -radius * norm {
+            return false;
+        }
+    }
+    true
+}
+
 // --- Mesh generation (interleaved: pos3 + normal3 + uv2) ---
 
 fn push_vertex(buf: &mut Vec<f32>, pos: Vec3, normal: Vec3, u: f32, v: f32) {
@@ -585,7 +634,9 @@ fn generate_plane() -> Vec<f32> {
 }
 
 fn generate_sphere(segments: u16) -> Vec<f32> {
-    let mut buf = Vec::new();
+    let verts_per_quad = 6;
+    let total_verts = segments as usize * segments as usize * verts_per_quad;
+    let mut buf = Vec::with_capacity(total_verts * 8);
     let rings = segments;
     let sectors = segments;
 
@@ -624,7 +675,8 @@ fn sphere_point(ring_frac: f32, sector_frac: f32) -> Vec3 {
 }
 
 fn generate_cylinder(segments: u16) -> Vec<f32> {
-    let mut buf = Vec::new();
+    // 6 verts for side quad + 3 top cap + 3 bottom cap = 12 per segment
+    let mut buf = Vec::with_capacity(segments as usize * 12 * 8);
     let h = 0.5;
 
     for i in 0..segments {

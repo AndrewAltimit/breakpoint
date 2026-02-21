@@ -44,8 +44,29 @@ pub fn generate_bot_input(state: &TronState, bot_id: PlayerId, config: &TronConf
     let mut brake = false;
 
     if straight < danger_dist {
-        // Current path is blocked — pick the better turn
-        if left >= right {
+        // 2-step lookahead: simulate moving in each direction, then evaluate
+        let left_score = left
+            + second_step_best(
+                cycle,
+                bot_id,
+                left_dir,
+                left,
+                &state.wall_segments,
+                config,
+                state,
+            );
+        let right_score = right
+            + second_step_best(
+                cycle,
+                bot_id,
+                right_dir,
+                right,
+                &state.wall_segments,
+                config,
+                state,
+            );
+
+        if left_score >= right_score {
             turn = TurnDirection::Left;
         } else {
             turn = TurnDirection::Right;
@@ -68,6 +89,33 @@ pub fn generate_bot_input(state: &TronState, bot_id: PlayerId, config: &TronConf
     }
 
     TronInput { turn, brake }
+}
+
+/// 2-step lookahead: simulate moving in `first_dir` for a short distance,
+/// then return the best open distance from the simulated position.
+fn second_step_best(
+    cycle: &CycleState,
+    bot_id: PlayerId,
+    first_dir: Direction,
+    first_open: f32,
+    walls: &[WallSegment],
+    config: &TronConfig,
+    state: &TronState,
+) -> f32 {
+    // Simulate position after a short travel in first_dir
+    let look_dist = first_open.min(cycle.speed * 3.0 / TICK_RATE);
+    let (dx, dz) = direction_delta(first_dir);
+    let sim = CycleState {
+        x: cycle.x + dx * look_dist,
+        z: cycle.z + dz * look_dist,
+        direction: first_dir,
+        ..*cycle
+    };
+
+    let s = open_distance(&sim, bot_id, first_dir, walls, config, state);
+    let l = open_distance(&sim, bot_id, turn_left(first_dir), walls, config, state);
+    let r = open_distance(&sim, bot_id, turn_right(first_dir), walls, config, state);
+    s.max(l).max(r)
 }
 
 /// Measure open distance in a given direction from the cycle's current position.

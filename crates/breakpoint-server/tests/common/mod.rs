@@ -55,7 +55,7 @@ impl TestServer {
         Self::from_config(config).await
     }
 
-    async fn from_config(config: ServerConfig) -> Self {
+    pub async fn from_config(config: ServerConfig) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 

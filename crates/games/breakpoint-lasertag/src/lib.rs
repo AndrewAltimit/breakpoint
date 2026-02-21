@@ -40,6 +40,9 @@ pub struct LaserTagState {
     pub smoke_zones: Vec<(f32, f32, f32)>,
 }
 
+/// Post-stun invulnerability duration in seconds.
+const INVULNERABILITY_DURATION: f32 = 1.0;
+
 /// A player's state in laser tag.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LaserPlayerState {
@@ -49,6 +52,9 @@ pub struct LaserPlayerState {
     pub stun_remaining: f32,
     pub fire_cooldown: f32,
     pub move_speed: f32,
+    /// Brief invulnerability after recovering from a stun.
+    #[serde(default)]
+    pub invulnerability_remaining: f32,
 }
 
 impl LaserPlayerState {
@@ -60,11 +66,16 @@ impl LaserPlayerState {
             stun_remaining: 0.0,
             fire_cooldown: 0.0,
             move_speed: 8.0,
+            invulnerability_remaining: 0.0,
         }
     }
 
     pub fn is_stunned(&self) -> bool {
         self.stun_remaining > 0.0
+    }
+
+    pub fn is_invulnerable(&self) -> bool {
+        self.invulnerability_remaining > 0.0
     }
 }
 
@@ -183,6 +194,37 @@ impl Default for LaserTagArena {
     fn default() -> Self {
         Self::with_config(LaserTagConfig::default())
     }
+}
+
+/// Check if a line segment intersects a circle (for smoke zone LOS blocking).
+fn segment_intersects_circle(
+    x1: f32,
+    z1: f32,
+    x2: f32,
+    z2: f32,
+    cx: f32,
+    cz: f32,
+    radius: f32,
+) -> bool {
+    let dx = x2 - x1;
+    let dz = z2 - z1;
+    let fx = x1 - cx;
+    let fz = z1 - cz;
+    let a = dx * dx + dz * dz;
+    if a < 1e-10 {
+        return false;
+    }
+    let b = 2.0 * (fx * dx + fz * dz);
+    let c = fx * fx + fz * fz - radius * radius;
+    let discriminant = b * b - 4.0 * a * c;
+    if discriminant < 0.0 {
+        return false;
+    }
+    let sqrt_d = discriminant.sqrt();
+    let t1 = (-b - sqrt_d) / (2.0 * a);
+    let t2 = (-b + sqrt_d) / (2.0 * a);
+    // Intersection within segment [0, 1]
+    (0.0..=1.0).contains(&t1) || (0.0..=1.0).contains(&t2) || (t1 < 0.0 && t2 > 1.0)
 }
 
 impl BreakpointGame for LaserTagArena {
@@ -315,7 +357,14 @@ impl BreakpointGame for LaserTagArena {
             if let Some(player) = self.state.players.get_mut(&pid) {
                 player.aim_angle = input.aim_angle;
                 player.fire_cooldown = (player.fire_cooldown - dt).max(0.0);
+                let was_stunned = player.stun_remaining > 0.0;
                 player.stun_remaining = (player.stun_remaining - dt).max(0.0);
+                player.invulnerability_remaining = (player.invulnerability_remaining - dt).max(0.0);
+
+                // Grant brief invulnerability when stun expires
+                if was_stunned && !player.is_stunned() {
+                    player.invulnerability_remaining = INVULNERABILITY_DURATION;
+                }
 
                 if player.is_stunned() {
                     continue;
@@ -357,11 +406,12 @@ impl BreakpointGame for LaserTagArena {
                 };
 
                 // Build player list for hit detection (stack-allocated for up to 8 players)
+                // Exclude stunned and invulnerable players
                 let player_positions: SmallVec<[(u64, f32, f32); 8]> = self
                     .state
                     .players
                     .iter()
-                    .filter(|(_, p)| !p.is_stunned())
+                    .filter(|(_, p)| !p.is_stunned() && !p.is_invulnerable())
                     .map(|(&id, p)| (id, p.x, p.z))
                     .collect();
 
@@ -378,14 +428,24 @@ impl BreakpointGame for LaserTagArena {
                     100.0,
                 );
 
+                // Check smoke zone LOS blocking before moving segments
+                let blocked_by_smoke = hit.hit_player.is_some()
+                    && self.state.smoke_zones.iter().any(|&(sx, sz, sr)| {
+                        hit.segments.iter().any(|&(x1, z1, x2, z2)| {
+                            segment_intersects_circle(x1, z1, x2, z2, sx, sz, sr)
+                        })
+                    });
+
                 // Record laser trail for rendering
                 self.state.laser_trails.push(LaserTrail {
                     segments: hit.segments,
                     age: 0.0,
                 });
 
-                // Apply hit
-                if let Some(target_id) = hit.hit_player {
+                // Apply hit (if not blocked by smoke zone)
+                if let Some(target_id) = hit.hit_player
+                    && !blocked_by_smoke
+                {
                     let has_shield = self
                         .state
                         .active_powerups
@@ -2165,6 +2225,196 @@ mod tests {
             score_events.is_empty(),
             "No score event should be emitted for same-team hit attempt"
         );
+    }
+
+    // ================================================================
+    // Phase 3: Post-stun invulnerability & smoke zone LOS tests
+    // ================================================================
+
+    #[test]
+    fn post_stun_invulnerability_blocks_hit() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(180));
+
+        // Stun player 2
+        game.state.players.get_mut(&2).unwrap().stun_remaining = 0.05;
+
+        // Tick to let stun expire — should grant invulnerability
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(0.05, &inputs);
+
+        assert!(
+            !game.state.players[&2].is_stunned(),
+            "Player 2 stun should have expired"
+        );
+        assert!(
+            game.state.players[&2].is_invulnerable(),
+            "Player 2 should be invulnerable after stun expires"
+        );
+
+        // Position player 1 to fire at player 2
+        game.state.players.get_mut(&1).unwrap().x = 5.0;
+        game.state.players.get_mut(&1).unwrap().z = 10.0;
+        game.state.players.get_mut(&1).unwrap().aim_angle = 0.0;
+        game.state.players.get_mut(&1).unwrap().fire_cooldown = 0.0;
+        game.state.players.get_mut(&1).unwrap().stun_remaining = 0.0;
+
+        game.state.players.get_mut(&2).unwrap().x = 10.0;
+        game.state.players.get_mut(&2).unwrap().z = 10.0;
+
+        let input = LaserTagInput {
+            move_x: 0.0,
+            move_z: 0.0,
+            aim_angle: 0.0,
+            fire: true,
+            use_powerup: false,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+        game.update(0.05, &inputs);
+
+        // Player 2 should NOT be stunned (invulnerable)
+        assert!(
+            !game.state.players[&2].is_stunned(),
+            "Invulnerable player should not be stunned"
+        );
+        assert_eq!(
+            game.state.tags_scored[&1], 0,
+            "No tag should be scored against invulnerable player"
+        );
+    }
+
+    #[test]
+    fn invulnerability_expires_after_duration() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(180));
+
+        // Set invulnerability directly
+        game.state
+            .players
+            .get_mut(&2)
+            .unwrap()
+            .invulnerability_remaining = 1.0;
+
+        // Tick past the invulnerability duration
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        for _ in 0..25 {
+            game.update(0.05, &inputs);
+        }
+
+        assert!(
+            !game.state.players[&2].is_invulnerable(),
+            "Invulnerability should expire after 1.0s"
+        );
+    }
+
+    #[test]
+    fn smoke_zone_blocks_laser_hit() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(180));
+
+        // Place a smoke zone between the two players
+        game.state.smoke_zones = vec![(7.5, 10.0, 2.0)];
+
+        // Position player 1 to fire at player 2 through smoke
+        game.state.players.get_mut(&1).unwrap().x = 3.0;
+        game.state.players.get_mut(&1).unwrap().z = 10.0;
+        game.state.players.get_mut(&1).unwrap().aim_angle = 0.0;
+        game.state.players.get_mut(&1).unwrap().fire_cooldown = 0.0;
+        game.state.players.get_mut(&1).unwrap().stun_remaining = 0.0;
+
+        game.state.players.get_mut(&2).unwrap().x = 12.0;
+        game.state.players.get_mut(&2).unwrap().z = 10.0;
+        game.state.players.get_mut(&2).unwrap().stun_remaining = 0.0;
+
+        let input = LaserTagInput {
+            move_x: 0.0,
+            move_z: 0.0,
+            aim_angle: 0.0,
+            fire: true,
+            use_powerup: false,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(0.05, &inputs);
+
+        // Player 2 should NOT be stunned (smoke blocked the laser)
+        assert!(
+            !game.state.players[&2].is_stunned(),
+            "Laser should be blocked by smoke zone"
+        );
+        assert_eq!(
+            game.state.tags_scored[&1], 0,
+            "No tag should be scored through smoke"
+        );
+    }
+
+    #[test]
+    fn no_smoke_zone_allows_hit() {
+        let mut game = LaserTagArena::new();
+        let players = make_players(2);
+        game.init(&players, &default_config(180));
+
+        // Clear smoke zones
+        game.state.smoke_zones.clear();
+
+        // Position player 1 to fire at player 2
+        game.state.players.get_mut(&1).unwrap().x = 5.0;
+        game.state.players.get_mut(&1).unwrap().z = 10.0;
+        game.state.players.get_mut(&1).unwrap().aim_angle = 0.0;
+        game.state.players.get_mut(&1).unwrap().fire_cooldown = 0.0;
+        game.state.players.get_mut(&1).unwrap().stun_remaining = 0.0;
+
+        game.state.players.get_mut(&2).unwrap().x = 10.0;
+        game.state.players.get_mut(&2).unwrap().z = 10.0;
+        game.state.players.get_mut(&2).unwrap().stun_remaining = 0.0;
+
+        let input = LaserTagInput {
+            move_x: 0.0,
+            move_z: 0.0,
+            aim_angle: 0.0,
+            fire: true,
+            use_powerup: false,
+        };
+        let data = rmp_serde::to_vec(&input).unwrap();
+        game.apply_input(1, &data);
+
+        let inputs = PlayerInputs {
+            inputs: HashMap::new(),
+        };
+        game.update(0.05, &inputs);
+
+        assert!(
+            game.state.players[&2].is_stunned(),
+            "Without smoke, hit should connect"
+        );
+    }
+
+    #[test]
+    fn segment_intersects_circle_basic() {
+        // Line through circle center
+        assert!(super::segment_intersects_circle(
+            0.0, 0.0, 10.0, 0.0, 5.0, 0.0, 1.0
+        ));
+        // Line misses circle
+        assert!(!super::segment_intersects_circle(
+            0.0, 0.0, 10.0, 0.0, 5.0, 5.0, 1.0
+        ));
+        // Line ends before circle
+        assert!(!super::segment_intersects_circle(
+            0.0, 0.0, 2.0, 0.0, 5.0, 0.0, 1.0
+        ));
     }
 
     #[test]

@@ -39,8 +39,7 @@ pub async fn ws_handler(
         .map(|ci| ci.0.ip())
         .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
     let max_per_ip = state.config.limits.max_ws_per_ip;
-    let ip_guard =
-        IpConnectionGuard::try_acquire(ip, Arc::clone(&state.ws_per_ip), max_per_ip).await;
+    let ip_guard = IpConnectionGuard::try_acquire(ip, Arc::clone(&state.ws_per_ip), max_per_ip);
     let Some(ip_guard) = ip_guard else {
         tracing::warn!(%ip, max_per_ip, "Per-IP WS connection limit reached");
         return Err(StatusCode::TOO_MANY_REQUESTS);
@@ -63,16 +62,28 @@ async fn handle_socket(socket: WebSocket, state: AppState, _ip_guard: IpConnecti
     // Wait for the first message: must be a JoinRoom.
     let first_msg = match ws_receiver.next().await {
         Some(Ok(Message::Binary(data))) => data,
-        _ => return,
+        Some(Ok(other)) => {
+            tracing::warn!(msg_type = ?other, "WS first message was not Binary, dropping");
+            return;
+        },
+        Some(Err(e)) => {
+            tracing::warn!(error = %e, "WS first message error");
+            return;
+        },
+        None => return,
     };
 
     let Ok(client_msg) = decode_client_message(&first_msg) else {
+        tracing::warn!(len = first_msg.len(), "WS first message decode failed");
         return;
     };
 
     let join = match client_msg {
         breakpoint_core::net::messages::ClientMessage::JoinRoom(j) => j,
-        _ => return,
+        other => {
+            tracing::warn!(msg = ?std::mem::discriminant(&other), "WS first message was not JoinRoom");
+            return;
+        },
     };
 
     // Validate protocol version
@@ -315,6 +326,7 @@ async fn read_loop(
 ) {
     let rate = state.config.limits.ws_rate_limit_per_sec;
     let mut rate_limiter = RateLimiter::new(rate, rate);
+    let mut rate_limit_drops: u32 = 0;
 
     while let Some(Ok(msg)) = ws_receiver.next().await {
         let data = match msg {
@@ -325,7 +337,16 @@ async fn read_loop(
 
         // Rate limit: drop messages that exceed per-connection rate
         if !rate_limiter.allow() {
-            tracing::warn!(player_id, room_code, "Rate limited");
+            rate_limit_drops += 1;
+            // Log every 10th drop to avoid log spam
+            if rate_limit_drops % 10 == 1 {
+                tracing::warn!(
+                    player_id,
+                    room_code,
+                    total_drops = rate_limit_drops,
+                    "Rate limited"
+                );
+            }
             continue;
         }
 

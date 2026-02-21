@@ -128,6 +128,7 @@ input[type="text"]:focus-visible {
     font-size: 0.8rem;
     cursor: pointer;
     transition: all 0.2s;
+    min-height: 44px;
 }
 
 .game-btn:hover {
@@ -206,6 +207,7 @@ input[type="text"]:focus-visible {
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
+    min-height: 44px;
 }
 
 .btn-primary {
@@ -866,6 +868,33 @@ input[type="text"]:focus-visible {
     }
 }
 
+/* ── Skip link ─────────────────────────────────────── */
+
+.skip-link {
+    position: absolute;
+    left: -9999px;
+    top: auto;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    z-index: 10000;
+    background: #7cf;
+    color: #0d0d1a;
+    padding: 8px 16px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    border-radius: 0 0 6px 0;
+    text-decoration: none;
+}
+
+.skip-link:focus {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: auto;
+    height: auto;
+}
+
 /* ── Focus indicators ───────────────────────────────── */
 
 .btn:focus-visible,
@@ -1108,6 +1137,22 @@ input[type="text"]:focus-visible {
         animation-duration: 0.01ms !important;
         animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important;
+    }
+}
+
+/* ── Tablet responsiveness ─────────────────────────── */
+
+@media (max-width: 900px) {
+    .lobby-container {
+        width: 380px;
+    }
+
+    .toast-container {
+        width: min(300px, 85vw);
+    }
+
+    .modal {
+        padding: 28px 32px;
     }
 }
 

@@ -22,21 +22,34 @@ pub struct GitHubPoller {
 #[derive(Debug, Clone)]
 struct RunState {
     status: String,
+    first_seen: std::time::Instant,
 }
 
 #[derive(Debug, Default)]
 struct PollerStats {
-    success_24h: u32,
-    failure_24h: u32,
+    /// Sliding window of (timestamp, succeeded: bool) entries.
+    results: Vec<(std::time::Instant, bool)>,
 }
 
 impl PollerStats {
+    fn record(&mut self, success: bool) {
+        self.results.push((std::time::Instant::now(), success));
+        self.prune();
+    }
+
+    /// Remove entries older than 24 hours.
+    fn prune(&mut self) {
+        let cutoff = std::time::Instant::now() - std::time::Duration::from_secs(24 * 3600);
+        self.results.retain(|&(t, _)| t > cutoff);
+    }
+
     fn pass_rate(&self) -> f32 {
-        let total = self.success_24h + self.failure_24h;
+        let total = self.results.len();
         if total == 0 {
             return 100.0;
         }
-        (self.success_24h as f32 / total as f32) * 100.0
+        let successes = self.results.iter().filter(|(_, ok)| *ok).count();
+        (successes as f32 / total as f32) * 100.0
     }
 }
 
@@ -86,6 +99,12 @@ impl GitHubPoller {
                     tracing::warn!(repo, error = %e, "Failed to poll repo");
                 }
             }
+
+            // Prune stale active_runs older than 24h
+            let prune_cutoff =
+                std::time::Instant::now() - std::time::Duration::from_secs(24 * 3600);
+            self.active_runs.retain(|_, r| r.first_seen > prune_cutoff);
+            self.stats.prune();
 
             // Emit aggregate ticker event
             let active_count = self
@@ -181,6 +200,7 @@ impl GitHubPoller {
                 run.id,
                 RunState {
                     status: run.status.clone(),
+                    first_seen: std::time::Instant::now(),
                 },
             );
         }
@@ -209,15 +229,15 @@ impl GitHubPoller {
                     let is_agent = self.agent_detector.detect(&run.actor.login);
                     let (event_type, priority) = match run.conclusion.as_deref() {
                         Some("success") => {
-                            self.stats.success_24h += 1;
+                            self.stats.record(true);
                             (EventType::PipelineSucceeded, Priority::Ambient)
                         },
                         Some("failure") => {
-                            self.stats.failure_24h += 1;
+                            self.stats.record(false);
                             (EventType::PipelineFailed, Priority::Notice)
                         },
                         _ => {
-                            self.stats.failure_24h += 1;
+                            self.stats.record(false);
                             (EventType::PipelineFailed, Priority::Ambient)
                         },
                     };
@@ -271,10 +291,11 @@ mod tests {
 
     #[test]
     fn poller_stats_with_data() {
-        let stats = PollerStats {
-            success_24h: 9,
-            failure_24h: 1,
-        };
+        let mut stats = PollerStats::default();
+        for _ in 0..9 {
+            stats.record(true);
+        }
+        stats.record(false);
         assert!((stats.pass_rate() - 90.0).abs() < 0.01);
     }
 

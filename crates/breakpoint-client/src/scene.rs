@@ -143,10 +143,11 @@ impl Scene {
         self.objects.retain(|o| o.id != id);
     }
 
-    /// Clear all objects.
+    /// Clear all objects, preserving allocated capacity for reuse.
     pub fn clear(&mut self) {
         self.objects.clear();
-        self.next_id = 1;
+        // Don't reset next_id to 1 — preserving monotonic IDs avoids
+        // accidental reuse if any code holds a stale ObjectId.
     }
 
     /// Iterate over all visible objects.
@@ -209,6 +210,13 @@ mod tests {
         assert_eq!(scene.object_count(), 10);
         scene.clear();
         assert_eq!(scene.object_count(), 0);
+        // IDs keep incrementing after clear (monotonic to avoid stale ID reuse)
+        let id = scene.add(
+            MeshType::Cuboid,
+            MaterialType::Unlit { color: Vec4::ONE },
+            Transform::default(),
+        );
+        assert!(id > 10);
     }
 
     #[test]
