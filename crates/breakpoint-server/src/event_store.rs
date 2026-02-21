@@ -63,7 +63,9 @@ impl EventStore {
     /// Insert a new event. Evicts the oldest event if at capacity.
     /// Also broadcasts the event to all subscribers.
     pub fn insert(&mut self, event: Event) {
-        let _ = self.broadcast_tx.send(event.clone());
+        if self.broadcast_tx.send(event.clone()).is_err() {
+            tracing::warn!(event_id = %event.id, "Event broadcast failed (no active subscribers)");
+        }
         let abs_index = self.eviction_offset + self.events.len();
         self.id_index.insert(event.id.clone(), abs_index);
         self.events.push_back(StoredEvent {

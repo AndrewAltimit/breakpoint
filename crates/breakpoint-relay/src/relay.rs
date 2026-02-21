@@ -59,6 +59,7 @@ impl RelayRoom {
 pub struct RelayState {
     rooms: HashMap<String, RelayRoom>,
     max_rooms: usize,
+    max_clients_per_room: usize,
 }
 
 impl RelayState {
@@ -66,6 +67,7 @@ impl RelayState {
         Self {
             rooms: HashMap::new(),
             max_rooms,
+            max_clients_per_room: 16,
         }
     }
 
@@ -91,6 +93,9 @@ impl RelayState {
             .rooms
             .get_mut(code)
             .ok_or_else(|| "Room not found".to_string())?;
+        if room.clients.len() >= self.max_clients_per_room {
+            return Err("Room is full".to_string());
+        }
         Ok(room.add_client(tx))
     }
 
@@ -332,6 +337,28 @@ mod tests {
         let mut state = RelayState::new(10);
         let destroyed = state.leave_room("NOPE-0000", 1);
         assert!(!destroyed, "Leaving non-existent room should return false");
+    }
+
+    #[test]
+    fn max_clients_per_room_enforced() {
+        let mut state = RelayState::new(10);
+        state.max_clients_per_room = 2;
+        let (host_tx, _host_rx) = mpsc::channel(256);
+        state.create_room("FULL-0001".to_string(), host_tx).unwrap();
+
+        let (tx1, _rx1) = mpsc::channel(256);
+        assert!(state.join_room("FULL-0001", tx1).is_ok());
+
+        let (tx2, _rx2) = mpsc::channel(256);
+        assert!(state.join_room("FULL-0001", tx2).is_ok());
+
+        // Third client should be rejected
+        let (tx3, _rx3) = mpsc::channel(256);
+        let result = state.join_room("FULL-0001", tx3);
+        assert!(
+            result.is_err(),
+            "Third client should be rejected when room is full"
+        );
     }
 
     #[test]

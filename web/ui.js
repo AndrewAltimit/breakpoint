@@ -109,14 +109,26 @@
     bindSettingSelect("setting-lasertag-team-mode", "team_mode");
     bindSettingSelect("setting-lasertag-arena-size", "arena_size");
 
+    // ── Button debounce utility ─────────────────────────
+    function debounceBtn(btn, fn, ms) {
+        if (!ms) ms = 1000;
+        let blocked = false;
+        btn.addEventListener("click", () => {
+            if (blocked) return;
+            blocked = true;
+            fn();
+            setTimeout(() => { blocked = false; }, ms);
+        });
+    }
+
     // ── Lobby actions ───────────────────────────────────
-    btnCreate.addEventListener("click", () => {
+    debounceBtn(btnCreate, () => {
         syncPlayerName();
         if (window._bpSelectGame) window._bpSelectGame(selectedGame);
         if (window._bpCreateRoom) window._bpCreateRoom();
     });
 
-    btnJoin.addEventListener("click", () => {
+    debounceBtn(btnJoin, () => {
         syncPlayerName();
         const code = joinCodeInput.value.trim().toUpperCase();
         if (!code) {
@@ -158,6 +170,27 @@
             window._bpSetPlayerName(name);
         }
     }
+
+    // ── Focus trap for modals ─────────────────────────────
+    let activeTrapEl = null;
+    function trapFocus(e) {
+        if (!activeTrapEl || activeTrapEl.classList.contains("hidden")) return;
+        if (e.key !== "Tab") return;
+        const focusable = activeTrapEl.querySelectorAll(
+            'button:not([disabled]):not(.hidden), [href], input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+        }
+    }
+    document.addEventListener("keydown", trapFocus);
 
     // ── ESC key handling ──────────────────────────────────
     document.addEventListener("keydown", (e) => {
@@ -264,12 +297,19 @@
         gameOver.classList.toggle("hidden", s !== "GameOver");
 
         // Focus trap: move focus into visible modal
-        if (s === "BetweenRounds" && !betweenRounds.contains(document.activeElement)) {
-            betweenRounds.focus();
-        }
-        if (s === "GameOver" && !gameOver.contains(document.activeElement)) {
-            const btn = btnPlayAgain || btnReturnLobby;
-            if (btn) btn.focus();
+        if (s === "BetweenRounds") {
+            activeTrapEl = betweenRounds;
+            if (!betweenRounds.contains(document.activeElement)) {
+                betweenRounds.focus();
+            }
+        } else if (s === "GameOver") {
+            activeTrapEl = gameOver;
+            if (!gameOver.contains(document.activeElement)) {
+                const btn = btnPlayAgain || btnReturnLobby;
+                if (btn) btn.focus();
+            }
+        } else {
+            activeTrapEl = null;
         }
     }
 

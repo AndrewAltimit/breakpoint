@@ -80,12 +80,18 @@ impl WsClient {
             });
         ws.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
 
-        // onopen: mark connected and flush queued messages
+        // onopen: mark connected, cancel timeout, and flush queued messages
         let connected = Rc::clone(&self.connected);
         let queue = Rc::clone(&self.outbound_queue);
         let ws_clone = ws.clone();
+        let timeout_id = Rc::new(RefCell::new(0i32));
+        let timeout_id_open = Rc::clone(&timeout_id);
         let onopen = Closure::<dyn FnMut()>::new(move || {
             *connected.borrow_mut() = true;
+            // Cancel the connection timeout
+            if let Some(window) = web_sys::window() {
+                window.clear_timeout_with_handle(*timeout_id_open.borrow());
+            }
             web_sys::console::log_1(&"WebSocket connected".into());
             let queued: Vec<Vec<u8>> = queue.borrow_mut().drain(..).collect();
             if !queued.is_empty() {
@@ -140,6 +146,25 @@ impl WsClient {
             _onclose: onclose,
         });
 
+        // Set a 10-second connection timeout — if onopen doesn't fire, close the socket
+        let ws_timeout = ws.clone();
+        let connected_timeout = Rc::clone(&self.connected);
+        if let Some(window) = web_sys::window() {
+            let timeout_closure = Closure::<dyn FnMut()>::once(move || {
+                if !*connected_timeout.borrow() {
+                    web_sys::console::warn_1(&"WebSocket connection timed out after 10s".into());
+                    let _ = ws_timeout.close();
+                }
+            });
+            if let Ok(id) = window.set_timeout_with_callback_and_timeout_and_arguments_0(
+                timeout_closure.as_ref().unchecked_ref(),
+                10_000,
+            ) {
+                *timeout_id.borrow_mut() = id;
+            }
+            timeout_closure.forget();
+        }
+
         self.ws = Some(ws);
         Ok(())
     }
@@ -164,7 +189,13 @@ impl WsClient {
         }
         // Drop closures (frees WASM-JS trampolines)
         self.closures = None;
-        self.outbound_queue.borrow_mut().clear();
+        // Preserve outbound queue for reconnection — onopen will flush it.
+        // Only discard messages older than a reasonable window (keep last 32).
+        let mut queue = self.outbound_queue.borrow_mut();
+        let len = queue.len();
+        if len > 32 {
+            queue.drain(..len - 32);
+        }
     }
 
     #[cfg(not(target_family = "wasm"))]

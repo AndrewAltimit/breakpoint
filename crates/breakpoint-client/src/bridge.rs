@@ -379,9 +379,13 @@ fn build_tron_hud(app: &App) -> serde_json::Value {
         }
 
         // Minimap data — wall segments + cycle positions (compact)
+        // Cap to the most recent 500 wall segments to prevent unbounded growth
+        const MAX_MINIMAP_WALLS: usize = 500;
+        let wall_skip = state.wall_segments.len().saturating_sub(MAX_MINIMAP_WALLS);
         let minimap_walls: Vec<serde_json::Value> = state
             .wall_segments
             .iter()
+            .skip(wall_skip)
             .map(|w| {
                 let cidx = player_index.get(&w.owner_id).copied().unwrap_or(0) % 8;
                 serde_json::json!([w.x1, w.z1, w.x2, w.z2, cidx])

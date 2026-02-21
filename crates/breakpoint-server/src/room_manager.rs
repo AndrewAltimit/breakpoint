@@ -219,9 +219,14 @@ impl RoomManager {
         entry.last_activity = Instant::now();
 
         // Update shared broadcast senders so the game loop can reach this client
-        {
-            let mut senders = entry.broadcast_senders.lock().unwrap();
+        if let Ok(mut senders) = entry.broadcast_senders.lock() {
             senders.insert(session.player_id, sender);
+        } else {
+            tracing::warn!(
+                player_id = session.player_id,
+                room = %session.room_code,
+                "Failed to update broadcast senders (poisoned mutex)"
+            );
         }
 
         Ok((session.room_code, session.player_id, new_token))
@@ -238,8 +243,7 @@ impl RoomManager {
         // Remove the connection (the WebSocket is gone)
         entry.connections.remove(&player_id);
         // Also remove from shared broadcast senders
-        {
-            let mut senders = entry.broadcast_senders.lock().unwrap();
+        if let Ok(mut senders) = entry.broadcast_senders.lock() {
             senders.remove(&player_id);
         }
 
@@ -329,7 +333,10 @@ impl RoomManager {
         }
 
         let bot_id = self.alloc_player_id();
-        let entry = self.rooms.get_mut(room_code).unwrap();
+        // Safe: we just validated the room exists above
+        let Some(entry) = self.rooms.get_mut(room_code) else {
+            return Err("Room not found".to_string());
+        };
         let bot_number = entry.room.players.iter().filter(|p| p.is_bot).count() + 1;
         let color_index = entry.room.players.len();
         let color = PlayerColor::PALETTE[color_index % PlayerColor::PALETTE.len()];
@@ -465,12 +472,14 @@ impl RoomManager {
             .ok_or_else(|| format!("Failed to create game: {game_name}"))?;
 
         // Populate shared broadcast senders from current connections
-        {
-            let mut senders = entry.broadcast_senders.lock().unwrap();
+        if let Ok(mut senders) = entry.broadcast_senders.lock() {
             senders.clear();
             for (&id, conn) in &entry.connections {
                 senders.insert(id, conn.sender.clone());
             }
+        } else {
+            tracing::error!(room = room_code, "Broadcast senders mutex poisoned");
+            return Err("Internal error: failed to initialize broadcast".to_string());
         }
         let shared_senders = Arc::clone(&entry.broadcast_senders);
         let room_code_owned = room_code.to_string();
@@ -703,7 +712,12 @@ async fn forward_broadcasts(
     while let Some(broadcast) = broadcast_rx.recv().await {
         match broadcast {
             GameBroadcast::EncodedMessage(data) => {
-                let snapshot = senders.lock().unwrap().clone();
+                let Ok(guard) = senders.lock() else {
+                    tracing::error!(room = room_code, "Broadcast senders mutex poisoned");
+                    break;
+                };
+                let snapshot = guard.clone();
+                drop(guard);
                 for (&player_id, sender) in &snapshot {
                     if sender.try_send(data.clone()).is_err() {
                         tracing::debug!(

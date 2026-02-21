@@ -74,10 +74,16 @@ pub async fn github_webhook(
 
 /// Transform a GitHub webhook event into Breakpoint events.
 fn transform_github_event(gh_event: &str, payload: &Value) -> Vec<Event> {
-    let action = payload["action"].as_str().unwrap_or("");
-    let sender = payload["sender"]["login"].as_str().unwrap_or("unknown");
-    let repo = payload["repository"]["full_name"]
-        .as_str()
+    let action = payload.get("action").and_then(|v| v.as_str()).unwrap_or("");
+    let sender = payload
+        .get("sender")
+        .and_then(|s| s.get("login"))
+        .and_then(|l| l.as_str())
+        .unwrap_or("unknown");
+    let repo = payload
+        .get("repository")
+        .and_then(|r| r.get("full_name"))
+        .and_then(|n| n.as_str())
         .unwrap_or("unknown");
 
     match gh_event {
@@ -134,7 +140,11 @@ fn transform_pull_request(action: &str, payload: &Value, sender: &str, repo: &st
     let pr_title = pr["title"].as_str().unwrap_or("PR");
     let url = pr["html_url"].as_str().map(String::from);
     let merged = pr["merged"].as_bool().unwrap_or(false);
-    let base_ref = pr["base"]["ref"].as_str().unwrap_or("unknown");
+    let base_ref = pr
+        .get("base")
+        .and_then(|b| b.get("ref"))
+        .and_then(|r| r.as_str())
+        .unwrap_or("unknown");
 
     let (event_type, priority, title) = match action {
         "opened" => (
@@ -217,7 +227,11 @@ fn transform_issues(action: &str, payload: &Value, sender: &str, repo: &str) -> 
 fn transform_issue_comment(payload: &Value, sender: &str, repo: &str) -> Vec<Event> {
     let issue = &payload["issue"];
     let number = issue["number"].as_u64().unwrap_or(0);
-    let url = payload["comment"]["html_url"].as_str().map(String::from);
+    let url = payload
+        .get("comment")
+        .and_then(|c| c.get("html_url"))
+        .and_then(|u| u.as_str())
+        .map(String::from);
 
     vec![make_event(
         EventType::CommentAdded,
