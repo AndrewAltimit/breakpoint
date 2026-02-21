@@ -57,7 +57,7 @@ COPY crates/ crates/
 # fingerprints from the stub build above, which would cause cargo to
 # skip recompiling workspace crates against the real source code.
 RUN --mount=type=cache,target=/build/target \
-    find /build/target -name "breakpoint*" -path "*/fingerprint/*" -exec rm -rf {} + 2>/dev/null; true
+    find /build/target -name "breakpoint*" -path "*/.fingerprint/*" -exec rm -rf {} + 2>/dev/null; true
 
 # Build server binary
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
