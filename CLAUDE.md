@@ -99,11 +99,10 @@ docker build -f docker/server.Dockerfile -t breakpoint .
 
 ## CI/CD Pipeline
 
-Three GitHub Actions workflows, all on a self-hosted runner using Docker containers:
+Two GitHub Actions workflows, all on a self-hosted runner using Docker containers:
 
-- **ci.yml** — push to main: fmt, clippy, test, build, cargo-deny
-- **pr-validation.yml** — PRs: same CI + Gemini/Codex AI reviews + agent auto-fix (up to 5 iterations). Agent infrastructure uses `github-agents` and `automation-cli` binaries from template-repo (degrades gracefully if missing).
-- **main-ci.yml** — push to main + `v*` tags: CI + matrix release builds (Linux x86_64 + aarch64) + Docker image push to GHCR + GitHub Release creation
+- **main-ci.yml** — push to main + `v*` tags: CI (fmt, clippy, test, build, cargo-deny, WASM check) + matrix release builds (Linux x86_64 + aarch64) + Docker image push to GHCR + GitHub Release creation. Release/Docker stages only run on version tags or manual trigger.
+- **pr-validation.yml** — PRs: same CI + browser tests (Playwright) + Gemini/Codex AI reviews + agent auto-fix (up to 5 iterations). Agent infrastructure uses `github-agents` and `automation-cli` binaries from template-repo (degrades gracefully if missing).
 
 ## Docker
 

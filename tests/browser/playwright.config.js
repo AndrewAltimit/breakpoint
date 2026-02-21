@@ -14,7 +14,7 @@ export default defineConfig({
   reporter: [['list'], ['html', { open: 'never', outputFolder: 'report' }]],
   outputDir: 'results',
   use: {
-    baseURL: 'http://127.0.0.1:8080',
+    baseURL: process.env.BASE_URL || 'http://127.0.0.1:8080',
     screenshot: 'on',
     video: 'retain-on-failure',
     trace: 'retain-on-failure',
