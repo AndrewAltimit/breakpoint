@@ -106,6 +106,47 @@ jobs:
             fi
           done
 
+  # ── Docker Build Check ───────────────────────────────────────
+  docker-build:
+    name: Docker Build Check
+    needs: ci
+    runs-on: self-hosted
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Build Docker image (no push)
+        run: docker build -f docker/server.Dockerfile -t breakpoint:pr-${{ github.event.pull_request.number || 'manual' }} .
+
+      - name: Verify Docker image starts
+        run: |
+          docker run --rm -d --name bp-docker-check \
+            -p 19080:8080 \
+            breakpoint:pr-${{ github.event.pull_request.number || 'manual' }}
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:19080/api/v1/status > /dev/null 2>&1; then
+              echo "Docker image healthcheck passed"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "::error::Docker image failed healthcheck after 15s"
+              docker logs bp-docker-check
+              docker stop bp-docker-check 2>/dev/null || true
+              exit 1
+            fi
+            sleep 0.5
+          done
+          docker stop bp-docker-check
+
+      - name: Clean up Docker image
+        if: always()
+        run: |
+          docker stop bp-docker-check 2>/dev/null || true
+          docker rmi breakpoint:pr-${{ github.event.pull_request.number || 'manual' }} 2>/dev/null || true
+
   # ── Browser Tests (Playwright, containerized) ─────────────────
   browser-tests:
     name: Browser Tests
@@ -574,7 +615,7 @@ jobs:
   # ── PR Status Summary ──────────────────────────────────────────
   pr-status:
     name: PR Status Summary
-    needs: [ci, config, browser-tests, gemini-review, codex-review, agent-review-response, agent-failure-handler]
+    needs: [ci, config, docker-build, browser-tests, gemini-review, codex-review, agent-review-response, agent-failure-handler]
     if: always()
     runs-on: self-hosted
     steps:
@@ -585,6 +626,7 @@ jobs:
           echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| CI | ${{ needs.ci.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Build | ${{ needs.docker-build.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Browser Tests | ${{ needs.browser-tests.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Gemini Review | ${{ needs.gemini-review.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Codex Review | ${{ needs.codex-review.result }} |" >> $GITHUB_STEP_SUMMARY

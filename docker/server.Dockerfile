@@ -52,6 +52,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 # Copy actual source code
 COPY crates/ crates/
 
+# Purge stale cargo fingerprints for workspace crates so cargo detects
+# that the real sources replaced the stubs. The cache mount preserves
+# fingerprints from the stub build above, which would cause cargo to
+# skip recompiling workspace crates against the real source code.
+RUN --mount=type=cache,target=/build/target \
+    find /build/target -name "breakpoint*" -path "*/fingerprint/*" -exec rm -rf {} + 2>/dev/null; true
+
 # Build server binary
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \
