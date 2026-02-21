@@ -192,8 +192,9 @@ impl WsClient {
         // Preserve outbound queue for reconnection — onopen will flush it.
         // Only discard messages older than a reasonable window (keep last 32).
         let mut queue = self.outbound_queue.borrow_mut();
-        if queue.len() > 32 {
-            queue.drain(..queue.len() - 32);
+        let len = queue.len();
+        if len > 32 {
+            queue.drain(..len - 32);
         }
     }
 
