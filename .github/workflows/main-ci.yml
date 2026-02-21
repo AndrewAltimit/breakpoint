@@ -274,54 +274,68 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
 
-      - name: Generate changelog
+      - name: Generate changelog from merged PRs
         id: changelog
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           CURRENT_TAG="${{ steps.version.outputs.version }}"
+
+          # Find the previous release tag for comparison
           PREVIOUS_TAG=$(git tag --sort=-version:refname --list 'v[0-9]*' | grep -Fxv "$CURRENT_TAG" | head -n 1)
 
+          CHANGELOG=""
           if [ -n "$PREVIOUS_TAG" ]; then
             echo "Generating changelog: ${PREVIOUS_TAG}...${CURRENT_TAG}"
             CHANGELOG=$(gh api repos/${{ github.repository }}/releases/generate-notes \
               -f tag_name="$CURRENT_TAG" \
               -f previous_tag_name="$PREVIOUS_TAG" \
               --jq '.body' 2>/dev/null || echo "")
-
-            if [ -n "$CHANGELOG" ]; then
-              printf '%s\n' "$CHANGELOG" > changelog_snippet.md
-              echo "has_changelog=true" >> $GITHUB_OUTPUT
-            else
-              echo "has_changelog=false" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "has_changelog=false" >> $GITHUB_OUTPUT
           fi
 
+          if [ -n "$CHANGELOG" ]; then
+            printf '%s\n' "$CHANGELOG" > changelog_snippet.md
+            echo "has_changelog=true" >> $GITHUB_OUTPUT
+            echo "Changelog generated successfully"
+          else
+            echo "No changelog generated"
+            echo "has_changelog=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Generate release notes
+        id: release_notes
         run: |
-          cat << 'RELEASE_EOF' > release_notes.md
+          cat << 'EOF' > release_notes.md
           ## Release ${{ steps.version.outputs.version }}
 
-          ### Breakpoint
+          ### Rust Binaries
 
-          Office Hours Gaming Platform with Agent Monitoring Overlay.
+          Pre-built binaries for Breakpoint:
 
-          | Artifact | Description |
-          |----------|-------------|
-          | `breakpoint-server-linux-*` | Host server binary (Axum + WSS + REST) |
-          | `breakpoint-relay-linux-*` | Stateless WS relay for NAT traversal |
-          | `wasm-client/` | WASM browser client bundle |
+          | Binary | Platform | Description |
+          |--------|----------|-------------|
+          | `breakpoint-server-linux-x86_64` | Linux x64 | Host server binary (Axum + WSS + REST + GitHub poller) |
+          | `breakpoint-server-linux-aarch64` | Linux arm64 | Host server binary (cross-compiled) |
+          | `breakpoint-relay-linux-x86_64` | Linux x64 | Stateless WS relay for NAT traversal |
+          | `breakpoint-relay-linux-aarch64` | Linux arm64 | Stateless WS relay (cross-compiled) |
 
-          ### Quick Start
+          ### WASM Client
+
+          Browser client bundle included in release artifacts:
+
+          - **wasm-client/** - Optimized WASM + JS glue for the browser client
+
+          ### Docker Image
 
           ```bash
-          # Using Docker
           docker run -p 8080:8080 -e BREAKPOINT_API_TOKEN=secret ghcr.io/andrewaltimit/breakpoint:latest
+          ```
 
-          # Or from binary
-          chmod +x breakpoint-server-linux-*
+          ### Installation
+
+          ```bash
+          # From binary
+          chmod +x breakpoint-server-linux-x86_64 breakpoint-relay-linux-x86_64
           ./breakpoint-server-linux-x86_64
           ```
 
@@ -329,10 +343,7 @@ jobs:
 
           - **Commit**: ${{ github.sha }}
           - **Branch**: ${{ github.ref_name }}
-          RELEASE_EOF
-
-          # Remove leading whitespace from heredoc
-          sed -i 's/^          //' release_notes.md
+          EOF
 
           # Append auto-generated changelog if available
           if [ "${{ steps.changelog.outputs.has_changelog }}" = "true" ] && [ -f changelog_snippet.md ]; then
