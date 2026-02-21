@@ -273,9 +273,11 @@ export async function startGame(page, gameName = 'mini-golf') {
   if (!roomCode) return null;
 
   // Connect Player 2
+  const baseUrl = process.env.BASE_URL || 'http://127.0.0.1:8080';
+  const wsUrl = baseUrl.replace(/^http/, 'ws') + '/ws';
   let p2;
   try {
-    p2 = await connectPlayer2('ws://127.0.0.1:8080/ws', roomCode);
+    p2 = await connectPlayer2(wsUrl, roomCode);
   } catch {
     return null;
   }

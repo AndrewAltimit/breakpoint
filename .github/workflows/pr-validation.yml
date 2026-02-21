@@ -156,15 +156,24 @@ jobs:
             fi
           done
 
-      - name: Start server
+      - name: Check CI port availability
         run: |
-          # Kill any leftover server from a previous run on this self-hosted runner
-          pkill -f breakpoint-server || true
-          sleep 1
+          if ss -tlnp | grep -q ':9090 '; then
+            echo "::error::Port 9090 is already in use — cannot start CI server"
+            ss -tlnp | grep ':9090 '
+            exit 1
+          fi
+          echo "Port 9090 is available"
+
+      - name: Start server
+        env:
+          BREAKPOINT_LISTEN_ADDR: '0.0.0.0:9090'
+        run: |
           ./target/release/breakpoint-server &
+          echo $! > /tmp/bp-ci-server.pid
           for i in $(seq 1 30); do
-            if curl -sf http://127.0.0.1:8080/health > /dev/null 2>&1; then
-              echo "Server ready"
+            if curl -sf http://127.0.0.1:9090/health > /dev/null 2>&1; then
+              echo "Server ready on port 9090"
               break
             fi
             sleep 0.5
@@ -172,8 +181,10 @@ jobs:
 
       - name: Run Playwright tests
         run: |
-          docker compose --profile ci run --rm playwright \
-            bash -c "npm ci && npx playwright test \
+          docker compose --profile ci run --rm \
+            -e BASE_URL=http://127.0.0.1:9090 \
+            playwright \
+            bash -c "npm ci && BASE_URL=http://127.0.0.1:9090 npx playwright test \
               startup-health.spec.js \
               wasm-loading.spec.js \
               overlay-expanded.spec.js \
@@ -184,7 +195,11 @@ jobs:
 
       - name: Stop server
         if: always()
-        run: pkill -f breakpoint-server || true
+        run: |
+          if [ -f /tmp/bp-ci-server.pid ]; then
+            kill "$(cat /tmp/bp-ci-server.pid)" 2>/dev/null || true
+            rm -f /tmp/bp-ci-server.pid
+          fi
 
       - name: Upload test results
         if: always()
