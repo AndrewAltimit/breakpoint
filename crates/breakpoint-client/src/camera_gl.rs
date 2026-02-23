@@ -97,7 +97,7 @@ impl Camera {
                 self.up = Vec3::Y;
             },
             CameraMode::PlatformerFollow { player_pos } => {
-                let camera_z = -15.0;
+                let camera_z = 15.0; // Camera in front of XY plane, looking back along -Z
                 let look_y_offset = 3.0;
                 let lead_x = 3.0; // Lead camera in race direction (right)
                 let target_pos = Vec3::new(
