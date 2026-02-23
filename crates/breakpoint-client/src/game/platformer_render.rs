@@ -7,9 +7,24 @@ use crate::app::ActiveGame;
 use crate::game::read_game_state;
 use crate::scene::{MaterialType, MeshType, Scene, SceneLighting, Transform};
 use crate::sprite_atlas::{
-    SpriteAnimation, SpriteRegion, SpriteSheet, build_platformer_animations, build_platformer_atlas,
+    SpriteAnimation, SpriteRegion, SpriteSheet, bitmask_tile_for_group,
+    build_platformer_animations, build_platformer_atlas, room_theme_to_tile_group,
+    stone_brick_bitmask,
 };
 use crate::theme::Theme;
+
+/// Predefined player color palettes for multiplayer differentiation.
+/// Each entry: (body_r, body_g, body_b) — applied as a tint multiplier.
+const PLAYER_PALETTES: [[f32; 3]; 8] = [
+    [1.0, 1.0, 1.0],  // P1: white (default)
+    [0.6, 0.8, 1.0],  // P2: ice blue
+    [1.0, 0.6, 0.6],  // P3: rose
+    [0.6, 1.0, 0.7],  // P4: mint
+    [1.0, 0.85, 0.5], // P5: gold
+    [0.8, 0.6, 1.0],  // P6: lavender
+    [1.0, 0.7, 0.4],  // P7: amber
+    [0.7, 1.0, 1.0],  // P8: cyan
+];
 
 /// Background texture atlas ID.
 const BG_ATLAS_ID: u8 = 1;
@@ -28,6 +43,28 @@ fn visual_states() -> &'static Mutex<HashMap<u64, PlayerVisualState>> {
     static STATES: OnceLock<Mutex<HashMap<u64, PlayerVisualState>>> = OnceLock::new();
     STATES.get_or_init(|| Mutex::new(HashMap::new()))
 }
+
+/// Hit freeze state for anime-style impact pauses.
+struct HitFreezeState {
+    /// Remaining freeze time in seconds.
+    remaining: f32,
+    /// Previous frame's enemy alive states, keyed by enemy ID.
+    prev_enemy_alive: HashMap<u16, bool>,
+}
+
+/// Global hit freeze tracker.
+fn hit_freeze() -> &'static Mutex<HitFreezeState> {
+    static STATE: OnceLock<Mutex<HitFreezeState>> = OnceLock::new();
+    STATE.get_or_init(|| {
+        Mutex::new(HitFreezeState {
+            remaining: 0.0,
+            prev_enemy_alive: HashMap::new(),
+        })
+    })
+}
+
+/// Duration of hit freeze in seconds (~2 frames at 60fps).
+const HIT_FREEZE_DURATION: f32 = 0.033;
 
 /// Compute squash/stretch scale for a player based on their movement state.
 fn squash_stretch_scale(
@@ -53,6 +90,9 @@ fn squash_stretch_scale(
         vs.time_since_transition += dt;
     }
 
+    let is_running = player.anim_state == AnimState::Walk
+        && player.active_powerup == Some(breakpoint_platformer::powerups::PowerUpKind::SpeedBoots);
+
     match player.anim_state {
         AnimState::Jump => (0.85, 1.2), // Stretch upward
         AnimState::Fall => (0.9, 1.15), // Slight stretch
@@ -62,6 +102,11 @@ fn squash_stretch_scale(
             let squash = 1.0 + (1.0 - t) * 0.12;
             let stretch = 1.0 - (1.0 - t) * 0.15;
             (squash, stretch)
+        },
+        AnimState::Walk if is_running => {
+            // More pronounced bob when running
+            let bob = (player.anim_time * 16.0).sin() * 0.04;
+            (1.0 + bob, 1.0 - bob * 0.5)
         },
         AnimState::Walk => {
             // Subtle sine bob
@@ -96,6 +141,16 @@ struct SpriteParams {
 
 /// Helper: add a sprite quad from a SpriteRegion directly.
 fn add_sprite_region(scene: &mut Scene, region: &SpriteRegion, params: &SpriteParams) {
+    add_sprite_region_with_dissolve(scene, region, params, 0.0);
+}
+
+/// Helper: add a sprite quad with dissolve effect.
+fn add_sprite_region_with_dissolve(
+    scene: &mut Scene,
+    region: &SpriteRegion,
+    params: &SpriteParams,
+    dissolve: f32,
+) {
     scene.add(
         MeshType::Quad,
         MaterialType::Sprite {
@@ -103,6 +158,7 @@ fn add_sprite_region(scene: &mut Scene, region: &SpriteRegion, params: &SpritePa
             sprite_rect: region.to_vec4(),
             tint: params.tint,
             flip_x: params.flip_x,
+            dissolve,
         },
         Transform::from_xyz(params.x, params.y, 0.0).with_scale(Vec3::new(params.w, params.h, 1.0)),
     );
@@ -126,7 +182,63 @@ fn add_sprite(scene: &mut Scene, name: &str, x: f32, y: f32, w: f32, h: f32, tin
 }
 
 /// Get the sprite region for a player animation frame.
+/// Uses full player state to select contextual animations (run, wall-slide, etc.)
 fn player_sprite_region(
+    player: &breakpoint_platformer::physics::PlatformerPlayerState,
+    course: &breakpoint_platformer::course_gen::Course,
+) -> SpriteRegion {
+    use breakpoint_platformer::physics::{AnimState, PLAYER_WIDTH, TILE_SIZE};
+    use breakpoint_platformer::powerups::PowerUpKind;
+
+    let anims = animations();
+    let key = match player.anim_state {
+        AnimState::Idle => "player_idle",
+        AnimState::Walk => {
+            if player.active_powerup == Some(PowerUpKind::SpeedBoots) {
+                "player_run"
+            } else {
+                "player_walk"
+            }
+        },
+        AnimState::Jump => "player_jump",
+        AnimState::Fall => {
+            // Detect wall-slide: falling while touching a solid wall
+            let half_w = PLAYER_WIDTH / 2.0;
+            let tx_l = ((player.x - half_w - 0.05) / TILE_SIZE).floor() as i32;
+            let tx_r = ((player.x + half_w + 0.05) / TILE_SIZE).floor() as i32;
+            let ty = (player.y / TILE_SIZE).floor() as i32;
+            let touching_wall = breakpoint_platformer::physics::is_solid(course.get_tile(tx_l, ty))
+                || breakpoint_platformer::physics::is_solid(course.get_tile(tx_r, ty));
+            if touching_wall && player.vy < -0.5 {
+                "player_wall_slide"
+            } else {
+                "player_fall"
+            }
+        },
+        AnimState::Attack => "player_attack",
+        AnimState::Hurt => "player_hurt",
+        AnimState::Dead => "player_dead",
+    };
+    // Fall back to the base key if the contextual animation doesn't exist
+    match anims.get(key) {
+        Some(anim) => *anim.frame_at(player.anim_time),
+        None => {
+            // Fallback chain: try base state, then default
+            let fallback = match player.anim_state {
+                AnimState::Walk => "player_walk",
+                AnimState::Fall => "player_fall",
+                _ => "player_idle",
+            };
+            anims
+                .get(fallback)
+                .map(|a| *a.frame_at(player.anim_time))
+                .unwrap_or_else(|| atlas().get_or_default("player_idle_0"))
+        },
+    }
+}
+
+/// Simplified player_sprite_region for cases without course context (death respawn).
+fn player_sprite_region_simple(
     anim_state: &breakpoint_platformer::physics::AnimState,
     anim_time: f32,
 ) -> SpriteRegion {
@@ -168,6 +280,8 @@ fn enemy_sprite_region(
             EnemyType::Bat => "bat_death",
             EnemyType::Knight => "knight_death",
             EnemyType::Medusa => "medusa_death",
+            EnemyType::Ghost => "ghost_death",
+            EnemyType::Gargoyle => "gargoyle_death",
         };
         return anims.get(key).map(|a| *a.frame_at(death_time));
     }
@@ -177,6 +291,8 @@ fn enemy_sprite_region(
         EnemyType::Bat => "bat_fly",
         EnemyType::Knight => "knight_walk",
         EnemyType::Medusa => "medusa_float",
+        EnemyType::Ghost => "ghost_drift",
+        EnemyType::Gargoyle => "gargoyle_perch",
     };
     anims.get(key).map(|a| *a.frame_at(anim_time))
 }
@@ -234,37 +350,17 @@ fn tile_sprite_region(
     }
 }
 
-/// Auto-tile selection for stone bricks: check neighbors to pick edge variant.
+/// Auto-tile selection for stone bricks: 16-tile bitmask with per-room theme groups.
 fn stone_brick_region(
     sheet: &SpriteSheet,
     course: &breakpoint_platformer::course_gen::Course,
     tx: i32,
     ty: i32,
 ) -> SpriteRegion {
-    use breakpoint_platformer::course_gen::Tile;
-    let is_solid = |dx: i32, dy: i32| -> bool {
-        matches!(course.get_tile(tx + dx, ty + dy), Tile::StoneBrick)
-    };
-
-    let above = is_solid(0, 1);
-    let below = is_solid(0, -1);
-    let left = is_solid(-1, 0);
-    let right = is_solid(1, 0);
-
-    let name = match (above, below, left, right) {
-        // Exposed top edge
-        (false, _, true, true) => "stone_brick_top",
-        (false, _, false, true) => "stone_brick_top_left",
-        (false, _, true, false) => "stone_brick_top_right",
-        (false, _, false, false) => "stone_brick_top",
-        // Left/right edges
-        (true, _, false, true) => "stone_brick_left",
-        (true, _, true, false) => "stone_brick_right",
-        // Bottom corners
-        (true, false, false, false) => "stone_brick_inner",
-        // Fully surrounded or other
-        _ => "stone_brick_inner",
-    };
+    let mask = stone_brick_bitmask(course, tx, ty);
+    let room_theme = course.room_theme_at_tile(tx, ty);
+    let group = room_theme_to_tile_group(&room_theme);
+    let name = bitmask_tile_for_group(group, mask);
     sheet.get_or_default(name)
 }
 
@@ -297,12 +393,45 @@ pub fn sync_platformer_scene(
         return;
     };
 
+    // Hit freeze: detect enemy kills and pause rendering for impact weight.
+    {
+        let mut freeze = hit_freeze().lock().unwrap_or_else(|e| e.into_inner());
+        if freeze.remaining > 0.0 {
+            freeze.remaining -= dt;
+            if freeze.remaining > 0.0 {
+                // Keep previous frame's scene — don't clear or rebuild.
+                return;
+            }
+        }
+        // Check for new enemy kills (alive→dead transitions).
+        let mut triggered = false;
+        for enemy in &state.enemies {
+            let was_alive = freeze
+                .prev_enemy_alive
+                .get(&enemy.id)
+                .copied()
+                .unwrap_or(true);
+            if was_alive && !enemy.alive {
+                triggered = true;
+            }
+            freeze.prev_enemy_alive.insert(enemy.id, enemy.alive);
+        }
+        if triggered {
+            freeze.remaining = HIT_FREEZE_DURATION;
+        }
+    }
+
     scene.clear();
 
-    // Parallax background layers (scroll in both X and Y)
-    add_parallax_layers(scene, camera_x, camera_y);
-
     let tile_size = breakpoint_platformer::physics::TILE_SIZE;
+
+    // Determine camera room theme for background and lighting
+    let camera_theme = state
+        .course
+        .room_theme_at_tile((camera_x / tile_size) as i32, (camera_y / tile_size) as i32);
+
+    // Parallax background layers (scroll in both X and Y)
+    add_parallax_layers(scene, camera_x, camera_y, camera_theme);
     let white = Vec4::ONE;
 
     // Tile culling: only render visible columns and rows
@@ -343,6 +472,9 @@ pub fn sync_platformer_scene(
         time,
         water_color,
     );
+
+    // God rays for Chapel rooms (from stained glass light sources)
+    render_godrays(scene, &state, tile_size, camera_x, camera_y);
 
     // Render enemies
     render_enemies(scene, &state, tile_size, theme, time);
@@ -440,25 +572,26 @@ fn render_enemies(
         ) else {
             continue;
         };
-        // Fade out dying enemies
-        let tint = if !enemy.alive {
+        // Dissolve dying enemies instead of simple alpha fade
+        let (tint, dissolve) = if !enemy.alive {
             let death_time = breakpoint_platformer::enemies::RESPAWN_DELAY - enemy.respawn_timer;
-            let alpha = (1.0 - death_time / 0.6).max(0.0);
-            Vec4::new(enemy_tint.x, enemy_tint.y, enemy_tint.z, alpha)
+            let dissolve_amount = (death_time / 0.6).clamp(0.0, 1.0);
+            (enemy_tint, dissolve_amount)
         } else {
-            enemy_tint
+            (enemy_tint, 0.0)
         };
-        add_sprite_region(
+        add_sprite_region_with_dissolve(
             scene,
             &region,
             &SpriteParams {
                 x: enemy.x,
                 y: enemy.y,
                 w: tile_size,
-                h: tile_size * 2.0,
+                h: tile_size * 2.5,
                 tint,
                 flip_x: !enemy.facing_right,
             },
+            dissolve,
         );
     }
 }
@@ -526,6 +659,13 @@ fn render_projectiles(
     }
 }
 
+/// Get per-player color palette tint based on player index.
+fn player_palette(pid: u64) -> Vec4 {
+    let idx = (pid as usize) % PLAYER_PALETTES.len();
+    let [r, g, b] = PLAYER_PALETTES[idx];
+    Vec4::new(r, g, b, 1.0)
+}
+
 /// Render players with animation-based sprites, VFX, and HP hearts.
 fn render_players(
     scene: &mut Scene,
@@ -554,18 +694,14 @@ fn render_players(
             None
         };
 
-        let region = player_sprite_region(&player.anim_state, player.anim_time);
-        let base_tint = Vec4::new(
-            ((*pid * 37) % 255) as f32 / 255.0 * 0.5 + 0.5,
-            ((*pid * 73) % 255) as f32 / 255.0 * 0.5 + 0.5,
-            ((*pid * 113) % 255) as f32 / 255.0 * 0.5 + 0.5,
-            1.0,
-        );
+        let region = player_sprite_region(player, &state.course);
+        let base_tint = player_palette(*pid);
         let tint = inv_tint.unwrap_or(base_tint);
 
         // Squash/stretch scaling based on movement state
         let (sx, sy) = squash_stretch_scale(player, *pid, dt);
 
+        // 32x64 sprites: render at 2.5x tile height for taller characters
         add_sprite_region(
             scene,
             &region,
@@ -573,13 +709,13 @@ fn render_players(
                 x: player.x,
                 y: player.y,
                 w: tile_size * sx,
-                h: tile_size * 2.0 * sy,
+                h: tile_size * 2.5 * sy,
                 tint,
                 flip_x: !player.facing_right,
             },
         );
 
-        render_player_effects(scene, player, tile_size, time);
+        render_player_effects(scene, player, tile_size, time, &state.course);
         render_player_hearts(scene, player, *pid, tile_size, white);
     }
 }
@@ -594,7 +730,7 @@ fn render_death_respawn(
         return; // Still fully dead, don't render
     }
     let fade_alpha = 1.0 - (player.death_respawn_timer / 0.3);
-    let region = player_sprite_region(&player.anim_state, player.anim_time);
+    let region = player_sprite_region_simple(&player.anim_state, player.anim_time);
     add_sprite_region(
         scene,
         &region,
@@ -602,7 +738,7 @@ fn render_death_respawn(
             x: player.x,
             y: player.y,
             w: tile_size,
-            h: tile_size * 2.0,
+            h: tile_size * 2.5,
             tint: Vec4::new(1.0, 1.0, 1.0, fade_alpha),
             flip_x: !player.facing_right,
         },
@@ -615,33 +751,65 @@ fn render_player_effects(
     player: &breakpoint_platformer::physics::PlatformerPlayerState,
     tile_size: f32,
     time: f32,
+    course: &breakpoint_platformer::course_gen::Course,
 ) {
     use breakpoint_platformer::physics::AnimState;
     use breakpoint_platformer::powerups::PowerUpKind;
 
-    // Whip trail arc during attack
+    // Anime-style slash arc during attack
     if player.anim_state == AnimState::Attack {
         let attack_duration = 0.35; // matches game ATTACK_DURATION
         let progress = (player.anim_time / attack_duration).clamp(0.0, 1.0);
         let dir = if player.facing_right { 1.0 } else { -1.0 };
+        let angle = if player.facing_right {
+            -0.5 // Sweep from upper-right
+        } else {
+            std::f32::consts::PI - 0.5 // Mirrored for left-facing
+        };
         scene.add(
             MeshType::Quad,
-            MaterialType::WhipTrail {
+            MaterialType::SlashArc {
                 progress,
+                angle,
                 color: Vec4::new(1.0, 0.9, 0.5, 0.9),
             },
             Transform::from_xyz(
-                player.x + dir * tile_size * 0.6,
-                player.y + tile_size * 0.3,
+                player.x + dir * tile_size * 0.5,
+                player.y + tile_size * 0.2,
                 0.15,
             )
-            .with_scale(Vec3::new(tile_size * 1.8, tile_size * 1.2, 1.0)),
+            .with_scale(Vec3::new(tile_size * 2.2, tile_size * 2.2, 1.0)),
         );
+    }
+
+    // Magic circle when activating Holy Water or Crucifix power-ups
+    if player.powerup_timer > 0.0 {
+        let is_magic_powerup = matches!(
+            player.active_powerup,
+            Some(PowerUpKind::HolyWater) | Some(PowerUpKind::Crucifix)
+        );
+        if is_magic_powerup {
+            let circle_color = match player.active_powerup {
+                Some(PowerUpKind::HolyWater) => Vec4::new(0.3, 0.6, 1.0, 0.7),
+                Some(PowerUpKind::Crucifix) => Vec4::new(1.0, 0.85, 0.3, 0.7),
+                _ => Vec4::new(1.0, 1.0, 1.0, 0.5),
+            };
+            scene.add(
+                MeshType::Quad,
+                MaterialType::MagicCircle {
+                    rotation: time * 2.0,
+                    pulse: (time * 4.0).sin() * 0.5 + 0.5,
+                    color: circle_color,
+                },
+                Transform::from_xyz(player.x, player.y - tile_size * 0.3, 0.12)
+                    .with_scale(Vec3::new(tile_size * 2.5, tile_size * 2.5, 1.0)),
+            );
+        }
     }
 
     // Speed boots trail: 4 trailing afterimages with green tint
     if player.active_powerup == Some(PowerUpKind::SpeedBoots) {
-        let region = player_sprite_region(&player.anim_state, player.anim_time);
+        let region = player_sprite_region(player, course);
         let dir = if player.facing_right { -1.0 } else { 1.0 };
         for i in 1..=4u8 {
             let offset = f32::from(i) * tile_size * 0.2 * dir;
@@ -653,7 +821,7 @@ fn render_player_effects(
                     x: player.x + offset,
                     y: player.y,
                     w: tile_size,
-                    h: tile_size * 2.0,
+                    h: tile_size * 2.5,
                     tint: Vec4::new(0.3, 1.0, 0.4, alpha),
                     flip_x: !player.facing_right,
                 },
@@ -672,36 +840,52 @@ fn render_player_effects(
             },
             Transform::from_xyz(player.x, player.y, -0.1).with_scale(Vec3::new(
                 tile_size * 1.5,
-                tile_size * 2.5,
+                tile_size * 3.0,
                 1.0,
             )),
         );
     }
 }
 
-/// Render HP hearts above a player.
+/// Render animated health bar above a player (replacing floating hearts).
 fn render_player_hearts(
     scene: &mut Scene,
     player: &breakpoint_platformer::physics::PlatformerPlayerState,
-    _pid: u64,
+    pid: u64,
     tile_size: f32,
-    white: Vec4,
+    _white: Vec4,
 ) {
-    let heart_size = tile_size * 0.3;
-    let heart_y = player.y + tile_size * 1.3;
-    let hearts_width = player.max_hp as f32 * heart_size * 1.2;
-    let heart_start_x = player.x - hearts_width / 2.0 + heart_size / 2.0;
-    for i in 0..player.max_hp {
-        let hx = heart_start_x + i as f32 * heart_size * 1.2;
-        let heart_name = if i < player.hp {
-            "heart_full"
-        } else {
-            "heart_empty"
-        };
-        add_sprite(
-            scene, heart_name, hx, heart_y, heart_size, heart_size, white,
-        );
+    if player.max_hp == 0 {
+        return;
     }
+    let fill = player.hp as f32 / player.max_hp as f32;
+    let bar_y = player.y + tile_size * 1.6;
+    let bar_w = tile_size * 1.0;
+    let bar_h = tile_size * 0.15;
+    // Color based on fill level: green -> yellow -> red
+    let bar_color = if fill > 0.6 {
+        Vec4::new(0.3, 0.9, 0.3, 0.9)
+    } else if fill > 0.3 {
+        Vec4::new(0.9, 0.8, 0.2, 0.9)
+    } else {
+        Vec4::new(0.9, 0.2, 0.2, 0.9)
+    };
+    // Tint with player palette
+    let palette = player_palette(pid);
+    let final_color = Vec4::new(
+        bar_color.x * palette.x,
+        bar_color.y * palette.y,
+        bar_color.z * palette.z,
+        bar_color.w,
+    );
+    scene.add(
+        MeshType::Quad,
+        MaterialType::HealthBar {
+            fill,
+            color: final_color,
+        },
+        Transform::from_xyz(player.x, bar_y, 0.3).with_scale(Vec3::new(bar_w, bar_h, 1.0)),
+    );
 }
 
 /// Render uncollected powerups.
@@ -728,7 +912,142 @@ fn render_powerups(
     }
 }
 
-/// Collect torch light sources from visible DecoTorch tiles.
+/// Render god rays for Chapel rooms (stained glass light beams).
+fn render_godrays(
+    scene: &mut Scene,
+    state: &breakpoint_platformer::PlatformerState,
+    tile_size: f32,
+    camera_x: f32,
+    camera_y: f32,
+) {
+    use breakpoint_platformer::course_gen::{RoomTheme, Tile};
+
+    // Only render god rays in Chapel rooms
+    let center_theme = state
+        .course
+        .room_theme_at_tile((camera_x / tile_size) as i32, (camera_y / tile_size) as i32);
+    if !matches!(center_theme, RoomTheme::Chapel) {
+        return;
+    }
+
+    // Find torch positions in the visible area (these act as stained glass windows)
+    let half_x = 12.0;
+    let half_y = 10.0;
+    let min_col = ((camera_x - half_x) / tile_size).floor().max(0.0) as u32;
+    let max_col = ((camera_x + half_x) / tile_size)
+        .ceil()
+        .min(state.course.width as f32) as u32;
+    let min_row = ((camera_y - half_y) / tile_size).floor().max(0.0) as u32;
+    let max_row = ((camera_y + half_y) / tile_size)
+        .ceil()
+        .min(state.course.height as f32) as u32;
+
+    let mut count = 0u8;
+    for y in min_row..max_row {
+        for x in min_col..max_col {
+            if count >= 4 {
+                return;
+            }
+            if state.course.get_tile(x as i32, y as i32) == Tile::DecoTorch {
+                let wx = x as f32 * tile_size + tile_size / 2.0;
+                let wy = y as f32 * tile_size + tile_size / 2.0;
+                // God ray quad below the window, angled down
+                scene.add(
+                    MeshType::Quad,
+                    MaterialType::GodRays {
+                        intensity: 0.3,
+                        color: Vec4::new(1.0, 0.9, 0.6, 0.25),
+                    },
+                    Transform::from_xyz(wx, wy - tile_size * 2.0, 0.15).with_scale(Vec3::new(
+                        tile_size * 3.0,
+                        tile_size * 6.0,
+                        1.0,
+                    )),
+                );
+                count += 1;
+            }
+        }
+    }
+}
+
+/// Per-room ambient color (RGB) for atmospheric tinting.
+fn room_ambient_color(theme: breakpoint_platformer::course_gen::RoomTheme) -> [f32; 3] {
+    use breakpoint_platformer::course_gen::RoomTheme;
+    match theme {
+        RoomTheme::Entrance => [0.30, 0.25, 0.15],   // warm amber
+        RoomTheme::Corridor => [0.15, 0.13, 0.12],   // dim stone
+        RoomTheme::GreatHall => [0.25, 0.20, 0.10],  // golden
+        RoomTheme::Library => [0.18, 0.15, 0.10],    // warm brown
+        RoomTheme::Armory => [0.20, 0.10, 0.05],     // forge red
+        RoomTheme::Chapel => [0.25, 0.22, 0.10],     // sacred gold
+        RoomTheme::Crypt => [0.08, 0.10, 0.18],      // cold blue
+        RoomTheme::Tower => [0.20, 0.20, 0.25],      // open sky
+        RoomTheme::Dungeon => [0.10, 0.12, 0.08],    // sickly green
+        RoomTheme::ThroneRoom => [0.18, 0.08, 0.22], // royal purple
+    }
+}
+
+/// Per-room torch light color (RGB) for colored fire.
+fn torch_light_color(theme: breakpoint_platformer::course_gen::RoomTheme) -> [f32; 3] {
+    use breakpoint_platformer::course_gen::RoomTheme;
+    match theme {
+        RoomTheme::Armory => [1.0, 0.5, 0.2],     // forge orange
+        RoomTheme::Crypt => [0.4, 0.5, 1.0],      // ghostly blue
+        RoomTheme::Chapel => [1.0, 0.9, 0.6],     // warm candlelight
+        RoomTheme::Dungeon => [0.5, 0.8, 0.3],    // sickly green
+        RoomTheme::ThroneRoom => [0.8, 0.5, 1.0], // royal purple
+        _ => [1.0, 0.8, 0.5],                     // default warm fire
+    }
+}
+
+/// Per-room color grading: (shadow_tint, highlight_tint, contrast, saturation).
+fn room_color_grading(
+    theme: breakpoint_platformer::course_gen::RoomTheme,
+) -> ([f32; 3], [f32; 3], f32, f32) {
+    use breakpoint_platformer::course_gen::RoomTheme;
+    match theme {
+        RoomTheme::Entrance => ([0.9, 0.85, 0.7], [1.0, 0.95, 0.85], 1.05, 0.95),
+        RoomTheme::Corridor => ([0.8, 0.8, 0.85], [0.95, 0.95, 1.0], 1.1, 0.85),
+        RoomTheme::GreatHall => ([0.9, 0.85, 0.7], [1.0, 0.95, 0.8], 1.05, 1.0),
+        RoomTheme::Library => ([0.85, 0.8, 0.7], [1.0, 0.9, 0.75], 1.0, 0.9),
+        RoomTheme::Armory => ([0.9, 0.7, 0.6], [1.0, 0.8, 0.7], 1.15, 1.1),
+        RoomTheme::Chapel => ([0.9, 0.85, 0.7], [1.0, 1.0, 0.85], 1.0, 1.05),
+        RoomTheme::Crypt => ([0.7, 0.75, 0.9], [0.85, 0.9, 1.0], 1.2, 0.8),
+        RoomTheme::Tower => ([0.85, 0.85, 0.9], [1.0, 1.0, 1.0], 1.05, 1.0),
+        RoomTheme::Dungeon => ([0.75, 0.8, 0.7], [0.9, 0.95, 0.85], 1.15, 0.75),
+        RoomTheme::ThroneRoom => ([0.85, 0.7, 0.9], [0.95, 0.8, 1.0], 1.1, 1.1),
+    }
+}
+
+/// Per-room ambient particle type for atmospheric effects.
+pub fn room_theme_ambient_type(
+    theme: breakpoint_platformer::course_gen::RoomTheme,
+) -> crate::weather::AmbientType {
+    use crate::weather::AmbientType;
+    use breakpoint_platformer::course_gen::RoomTheme;
+    match theme {
+        RoomTheme::Crypt | RoomTheme::Dungeon => AmbientType::DustMotes,
+        RoomTheme::Chapel => AmbientType::GoldenSparkles,
+        RoomTheme::Armory => AmbientType::Embers,
+        RoomTheme::Tower => AmbientType::Snowflakes,
+        RoomTheme::Library => AmbientType::FloatingPages,
+        RoomTheme::ThroneRoom => AmbientType::RoyalSparkles,
+        _ => AmbientType::None,
+    }
+}
+
+/// Per-room weather configuration: (raining, fog_density).
+pub fn room_theme_weather(theme: breakpoint_platformer::course_gen::RoomTheme) -> (bool, f32) {
+    use breakpoint_platformer::course_gen::RoomTheme;
+    match theme {
+        RoomTheme::Tower => (true, 0.0),      // open sky — rain
+        RoomTheme::Crypt => (false, 0.6),     // thick ground fog
+        RoomTheme::Dungeon => (false, 0.4),   // moderate fog
+        RoomTheme::Corridor => (false, 0.15), // faint mist
+        _ => (false, 0.0),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn collect_torch_lights(
     state: &breakpoint_platformer::PlatformerState,
@@ -742,11 +1061,21 @@ fn collect_torch_lights(
 ) -> SceneLighting {
     use breakpoint_platformer::course_gen::Tile;
 
-    let mut lights: Vec<[f32; 4]> = Vec::with_capacity(16);
+    let mut lights: Vec<[f32; 4]> = Vec::with_capacity(32);
+    let mut light_colors: Vec<[f32; 4]> = Vec::with_capacity(32);
+
+    // Determine the dominant room theme near the camera center
+    let center_col = (min_col + max_col) / 2;
+    let center_row = (min_row + max_row) / 2;
+    let center_theme = state
+        .course
+        .room_theme_at_tile(center_col as i32, center_row as i32);
+
+    let torch_rgb = torch_light_color(center_theme);
 
     for y in min_row..max_row {
         for x in min_col..max_col {
-            if lights.len() >= 16 {
+            if lights.len() >= 32 {
                 break;
             }
             if state.course.get_tile(x as i32, y as i32) == Tile::DecoTorch {
@@ -757,6 +1086,7 @@ fn collect_torch_lights(
                 let intensity = 1.0 + 0.15 * (time * 8.0 + hash).sin();
                 let radius = 5.0;
                 lights.push([wx, wy, intensity, radius]);
+                light_colors.push([torch_rgb[0], torch_rgb[1], torch_rgb[2], 0.0]);
             }
         }
     }
@@ -768,45 +1098,71 @@ fn collect_torch_lights(
         torch_ambient
     };
 
-    SceneLighting { lights, ambient }
+    let ambient_color = room_ambient_color(center_theme);
+    let (grade_shadows, grade_highlights, grade_contrast, saturation) =
+        room_color_grading(center_theme);
+
+    SceneLighting {
+        lights,
+        light_colors,
+        ambient,
+        ambient_color,
+        grade_shadows,
+        grade_highlights,
+        grade_contrast,
+        saturation,
+    }
 }
 
-/// Add parallax background layers (3 behind, 1 foreground) to the scene.
+/// Map room theme to background atlas ID (10-13, falling back to BG_ATLAS_ID).
+fn room_theme_bg_atlas(theme: breakpoint_platformer::course_gen::RoomTheme) -> u8 {
+    use breakpoint_platformer::course_gen::RoomTheme;
+    match theme {
+        RoomTheme::Entrance
+        | RoomTheme::Corridor
+        | RoomTheme::GreatHall
+        | RoomTheme::ThroneRoom => 10, // Castle Interior
+        RoomTheme::Crypt | RoomTheme::Dungeon => 11, // Underground
+        RoomTheme::Chapel | RoomTheme::Library => 12, // Sacred
+        RoomTheme::Armory | RoomTheme::Tower => 13,  // Fortress/Tower
+    }
+}
+
+/// 6-layer parallax configuration: (scroll_factor, z_depth, v_start, v_height, alpha).
+const PARALLAX_LAYERS: [(f32, f32, f32, f32, f32); 6] = [
+    (0.05, -6.0, 0.0, 1.0 / 6.0, 1.0),       // Layer 0: far sky/void
+    (0.15, -5.0, 1.0 / 6.0, 1.0 / 6.0, 1.0), // Layer 1: distant architecture
+    (0.3, -3.5, 2.0 / 6.0, 1.0 / 6.0, 1.0),  // Layer 2: mid architecture
+    (0.6, -1.5, 3.0 / 6.0, 1.0 / 6.0, 1.0),  // Layer 3: near architecture
+    (1.2, 0.4, 4.0 / 6.0, 1.0 / 6.0, 0.15),  // Layer 4: foreground pillars
+    (1.5, 0.5, 5.0 / 6.0, 1.0 / 6.0, 0.10),  // Layer 5: close dust/mist
+];
+
+/// Add parallax background layers (6 layers) to the scene.
 /// Scrolls in both X and Y directions for 2D exploration.
-fn add_parallax_layers(scene: &mut Scene, camera_x: f32, camera_y: f32) {
-    let layer_v = 1.0 / 3.0;
+fn add_parallax_layers(
+    scene: &mut Scene,
+    camera_x: f32,
+    camera_y: f32,
+    camera_theme: breakpoint_platformer::course_gen::RoomTheme,
+) {
+    // Try themed atlas first, fall back to default BG atlas
+    let _themed_atlas = room_theme_bg_atlas(camera_theme);
+    // For now, use the default BG atlas (themed atlases loaded when available)
+    let atlas = BG_ATLAS_ID;
 
-    // Background layers (behind gameplay)
-    let bg_layers: [(f32, f32, f32); 3] = [
-        (0.1, -5.0, 0.0),
-        (0.3, -3.0, layer_v),
-        (0.6, -1.0, layer_v * 2.0),
-    ];
-
-    for (scroll_factor, z, v_start) in bg_layers {
+    for &(scroll_factor, z, v_start, v_height, alpha) in &PARALLAX_LAYERS {
         let layer_y = camera_y * scroll_factor + 5.0 * (1.0 - scroll_factor);
+        let tint = Vec4::new(1.0, 1.0, 1.0, alpha);
         scene.add(
             MeshType::Quad,
             MaterialType::Parallax {
-                atlas_id: BG_ATLAS_ID,
-                layer_rect: Vec4::new(0.0, v_start, 1.0, v_start + layer_v),
+                atlas_id: atlas,
+                layer_rect: Vec4::new(0.0, v_start, 1.0, v_start + v_height),
                 scroll_factor,
-                tint: Vec4::ONE,
+                tint,
             },
             Transform::from_xyz(camera_x, layer_y, z).with_scale(Vec3::new(50.0, 40.0, 1.0)),
         );
     }
-
-    // Foreground layer (in front of gameplay, low alpha for depth)
-    let fg_y = camera_y * 1.5 + 5.0 * (1.0 - 1.5);
-    scene.add(
-        MeshType::Quad,
-        MaterialType::Parallax {
-            atlas_id: BG_ATLAS_ID,
-            layer_rect: Vec4::new(0.0, layer_v * 2.0, 1.0, 1.0),
-            scroll_factor: 1.5,
-            tint: Vec4::new(1.0, 1.0, 1.0, 0.15),
-        },
-        Transform::from_xyz(camera_x, fg_y, 0.5).with_scale(Vec3::new(50.0, 40.0, 1.0)),
-    );
 }

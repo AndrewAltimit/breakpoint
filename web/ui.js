@@ -520,9 +520,12 @@
     const platformerMinimap     = $("platformer-minimap");
     const platformerMinimapCtx  = platformerMinimap ? platformerMinimap.getContext("2d") : null;
     const platformerCheckpointToast = $("platformer-checkpoint-toast");
+    const platformerRoomToast = $("platformer-room-toast");
     let prevPlatformerCheckpoint = 0;
+    let prevPlatformerRoom = "";
     let platformerMinimapFrame  = 0;
     let checkpointToastTimer    = null;
+    let roomToastTimer          = null;
 
     const PLATFORMER_PLAYER_COLORS = [
         "#7cf", "#f93", "#7f7", "#f7f", "#97f", "#f90", "#0fb", "#f44",
@@ -571,6 +574,9 @@
 
         // Checkpoint toast
         updateCheckpointToast(hud);
+
+        // Room name reveal
+        updateRoomNameToast(hud);
 
         // Checkpoint progress
         const finished = hud.finishCount || 0;
@@ -636,6 +642,39 @@
             }
         }
         prevPlatformerCheckpoint = cp;
+    }
+
+    // Room theme display names
+    const ROOM_DISPLAY_NAMES = {
+        "Entrance": "Castle Entrance",
+        "Corridor": "Stone Corridor",
+        "GreatHall": "Great Hall",
+        "Library": "Ancient Library",
+        "Armory": "The Armory",
+        "Chapel": "Sacred Chapel",
+        "Crypt": "The Crypt",
+        "Tower": "Tower Ascent",
+        "Dungeon": "Dark Dungeon",
+        "ThroneRoom": "Throne Room",
+    };
+
+    function updateRoomNameToast(hud) {
+        const room = hud.roomName || "";
+        if (room && room !== prevPlatformerRoom && prevPlatformerRoom !== "") {
+            if (platformerRoomToast) {
+                const displayName = ROOM_DISPLAY_NAMES[room] || room;
+                platformerRoomToast.textContent = displayName;
+                platformerRoomToast.classList.remove("hidden", "show");
+                void platformerRoomToast.offsetWidth;
+                platformerRoomToast.classList.add("show");
+                if (roomToastTimer) clearTimeout(roomToastTimer);
+                roomToastTimer = setTimeout(() => {
+                    platformerRoomToast.classList.add("hidden");
+                    platformerRoomToast.classList.remove("show");
+                }, 2600);
+            }
+        }
+        prevPlatformerRoom = room;
     }
 
     function updatePlatformerMinimap(hud) {

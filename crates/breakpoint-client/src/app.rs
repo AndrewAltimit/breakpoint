@@ -346,6 +346,14 @@ impl App {
         self.weather.tick(dt);
         self.weather.render(&mut self.scene);
 
+        // Lightning flash overlay
+        if self.weather.lightning_intensity > 0.01 && !self.screen_flash.active {
+            self.screen_flash.trigger(
+                glam::Vec4::new(0.9, 0.9, 1.0, self.weather.lightning_intensity * 0.4),
+                0.1,
+            );
+        }
+
         // Render 3D scene — Tron uses pure black background + fog
         let is_tron = self
             .game
@@ -373,6 +381,17 @@ impl App {
             self.renderer.post_process.vignette_intensity =
                 self.theme.platformer.vignette_intensity;
             self.renderer.post_process.crt_curvature = self.theme.platformer.crt_curvature;
+            // Apply per-room color grading from scene lighting
+            self.renderer.post_process.grade_shadows = self.scene.lighting.grade_shadows;
+            self.renderer.post_process.grade_highlights = self.scene.lighting.grade_highlights;
+            self.renderer.post_process.grade_contrast = self.scene.lighting.grade_contrast;
+            self.renderer.post_process.saturation = self.scene.lighting.saturation;
+            // Film grain for dark rooms
+            self.renderer.post_process.film_grain = if self.scene.lighting.ambient < 0.5 {
+                0.03
+            } else {
+                0.0
+            };
         } else {
             self.renderer.post_process = crate::renderer::PostProcessConfig::default();
         }
@@ -914,6 +933,7 @@ impl App {
         #[cfg(feature = "platformer")]
         if game_id == GameId::Platformer {
             self.detect_platformer_events();
+            self.update_platformer_weather();
         }
     }
 
@@ -932,6 +952,26 @@ impl App {
         self.detect_enemy_kills(&state, &sheet);
         self.detect_powerup_collections(&state, &sheet);
         self.emit_torch_embers(&state, &sheet);
+    }
+
+    /// Configure weather system based on the current room theme under the camera.
+    #[cfg(feature = "platformer")]
+    fn update_platformer_weather(&mut self) {
+        let Some(ref active) = self.game else {
+            return;
+        };
+        let Some(state) = read_game_state::<breakpoint_platformer::PlatformerState>(active) else {
+            return;
+        };
+        let tile_size = breakpoint_platformer::physics::TILE_SIZE;
+        let theme = state.course.room_theme_at_tile(
+            (self.camera.position.x / tile_size) as i32,
+            (self.camera.position.y / tile_size) as i32,
+        );
+        let (raining, fog) = crate::game::platformer_render::room_theme_weather(theme);
+        self.weather.raining = raining;
+        self.weather.fog_density = fog;
+        self.weather.ambient_type = crate::game::platformer_render::room_theme_ambient_type(theme);
     }
 
     /// Emit continuous ember particles from visible torches.

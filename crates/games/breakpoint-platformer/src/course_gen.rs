@@ -169,6 +169,41 @@ pub enum RoomTheme {
     ThroneRoom,
 }
 
+/// Convert a `u8` to `RoomTheme`, defaulting to `Entrance` for unknown values.
+pub fn room_theme_from_u8(v: u8) -> RoomTheme {
+    match v {
+        0 => RoomTheme::Entrance,
+        1 => RoomTheme::Corridor,
+        2 => RoomTheme::GreatHall,
+        3 => RoomTheme::Library,
+        4 => RoomTheme::Armory,
+        5 => RoomTheme::Chapel,
+        6 => RoomTheme::Crypt,
+        7 => RoomTheme::Tower,
+        8 => RoomTheme::Dungeon,
+        9 => RoomTheme::ThroneRoom,
+        _ => RoomTheme::Entrance,
+    }
+}
+
+impl RoomTheme {
+    /// Convert to `u8` for compact storage.
+    pub fn as_u8(self) -> u8 {
+        match self {
+            RoomTheme::Entrance => 0,
+            RoomTheme::Corridor => 1,
+            RoomTheme::GreatHall => 2,
+            RoomTheme::Library => 3,
+            RoomTheme::Armory => 4,
+            RoomTheme::Chapel => 5,
+            RoomTheme::Crypt => 6,
+            RoomTheme::Tower => 7,
+            RoomTheme::Dungeon => 8,
+            RoomTheme::ThroneRoom => 9,
+        }
+    }
+}
+
 /// A room placed in the labyrinth grid.
 #[derive(Debug, Clone)]
 pub struct PlacedRoom {
@@ -214,6 +249,9 @@ pub struct Course {
     /// Room distances from start, indexed by (col * GRID_ROWS + row).
     /// Used for rubber-banding and race position.
     pub room_distances: Vec<u16>,
+    /// Room themes, indexed by (col * GRID_ROWS + row).
+    /// Stored as `RoomTheme as u8` for compact serialization. Default 0 = Entrance.
+    pub room_themes: Vec<u8>,
 }
 
 // ================================================================
@@ -227,7 +265,7 @@ impl Serialize for Course {
         // RLE-encode tiles
         let rle = rle_encode(&self.tiles);
 
-        let mut s = serializer.serialize_struct("Course", 8)?;
+        let mut s = serializer.serialize_struct("Course", 9)?;
         s.serialize_field("width", &self.width)?;
         s.serialize_field("height", &self.height)?;
         s.serialize_field("tiles_rle", &rle)?;
@@ -236,6 +274,7 @@ impl Serialize for Course {
         s.serialize_field("enemy_spawns", &self.enemy_spawns)?;
         s.serialize_field("checkpoint_positions", &self.checkpoint_positions)?;
         s.serialize_field("room_distances", &self.room_distances)?;
+        s.serialize_field("room_themes", &self.room_themes)?;
         s.end()
     }
 }
@@ -252,10 +291,19 @@ impl<'de> Deserialize<'de> for Course {
             enemy_spawns: Vec<EnemySpawn>,
             checkpoint_positions: Vec<CheckpointDef>,
             room_distances: Vec<u16>,
+            #[serde(default)]
+            room_themes: Vec<u8>,
         }
 
         let raw = CourseRaw::deserialize(deserializer)?;
         let tiles = rle_decode(&raw.tiles_rle).map_err(serde::de::Error::custom)?;
+
+        // If room_themes is missing (old format), default to all Entrance (0)
+        let room_themes = if raw.room_themes.is_empty() {
+            vec![0; (GRID_COLS * GRID_ROWS) as usize]
+        } else {
+            raw.room_themes
+        };
 
         Ok(Course {
             width: raw.width,
@@ -266,6 +314,7 @@ impl<'de> Deserialize<'de> for Course {
             enemy_spawns: raw.enemy_spawns,
             checkpoint_positions: raw.checkpoint_positions,
             room_distances: raw.room_distances,
+            room_themes,
         })
     }
 }
@@ -333,6 +382,23 @@ impl Course {
         0
     }
 
+    /// Look up the room theme at a given tile position.
+    /// Returns `RoomTheme::Entrance` for positions outside the grid or unset rooms.
+    pub fn room_theme_at_tile(&self, tx: i32, ty: i32) -> RoomTheme {
+        if tx < 0 || ty < 0 {
+            return RoomTheme::Entrance;
+        }
+        let col = tx as u32 / ROOM_W;
+        let row = ty as u32 / ROOM_H;
+        if col < GRID_COLS && row < GRID_ROWS {
+            let idx = col as usize * GRID_ROWS as usize + row as usize;
+            if idx < self.room_themes.len() {
+                return room_theme_from_u8(self.room_themes[idx]);
+            }
+        }
+        RoomTheme::Entrance
+    }
+
     /// Find the checkpoint ID at a given tile coordinate, if any.
     pub fn find_checkpoint_id(&self, tx: i32, ty: i32) -> Option<u16> {
         let world_x = tx as f32 * TILE_SIZE + TILE_SIZE / 2.0;
@@ -361,6 +427,7 @@ pub fn generate_course(seed: u64) -> Course {
         enemy_spawns: Vec::new(),
         checkpoint_positions: Vec::new(),
         room_distances: vec![0; (GRID_COLS * GRID_ROWS) as usize],
+        room_themes: vec![0; (GRID_COLS * GRID_ROWS) as usize],
     };
 
     let mut rng = StdRng::seed_from_u64(seed);
@@ -374,10 +441,11 @@ pub fn generate_course(seed: u64) -> Course {
     // Step 3: Assign themes based on distance from start
     let rooms = assign_themes(rooms, &edges);
 
-    // Step 4: Store room distances
+    // Step 4: Store room distances and themes
     for room in &rooms {
         let idx = room.grid_pos.col as usize * GRID_ROWS as usize + room.grid_pos.row as usize;
         course.room_distances[idx] = room.distance_from_start;
+        course.room_themes[idx] = room.theme.as_u8();
     }
 
     // Step 5: Stamp the labyrinth (carve rooms and doorways)
@@ -1083,6 +1151,15 @@ fn gen_armory(course: &mut Course, rng: &mut StdRng, bx: u32, by: u32, doors: &[
         });
     }
 
+    // Gargoyle that swoops from above
+    course.enemy_spawns.push(EnemySpawn {
+        x: (bx + ROOM_W / 2) as f32 * TILE_SIZE,
+        y: (by + 14) as f32 * TILE_SIZE,
+        enemy_type: EnemyType::Gargoyle,
+        patrol_min_x: (bx + 4) as f32 * TILE_SIZE,
+        patrol_max_x: (bx + ROOM_W - 5) as f32 * TILE_SIZE,
+    });
+
     // Weapon rack decoration (chains)
     course.set_tile(bx + 4, by + 4, Tile::DecoChain);
     course.set_tile(bx + ROOM_W - 5, by + 4, Tile::DecoChain);
@@ -1211,6 +1288,15 @@ fn gen_crypt(course: &mut Course, rng: &mut StdRng, bx: u32, by: u32, doors: &[D
         });
     }
 
+    // Ghost that drifts through walls
+    course.enemy_spawns.push(EnemySpawn {
+        x: (bx + ROOM_W / 2) as f32 * TILE_SIZE,
+        y: (by + 8) as f32 * TILE_SIZE,
+        enemy_type: EnemyType::Ghost,
+        patrol_min_x: (bx + 4) as f32 * TILE_SIZE,
+        patrol_max_x: (bx + ROOM_W - 5) as f32 * TILE_SIZE,
+    });
+
     // Decorations
     course.set_tile(bx + 2, by + 4, Tile::DecoTorch);
     course.set_tile(bx + ROOM_W - 3, by + 4, Tile::DecoTorch);
@@ -1329,6 +1415,15 @@ fn gen_dungeon(course: &mut Course, rng: &mut StdRng, bx: u32, by: u32, doors: &
         enemy_type: EnemyType::Skeleton,
         patrol_min_x: (bx + 2 * ROOM_W / 3 + 1) as f32 * TILE_SIZE,
         patrol_max_x: (bx + ROOM_W - 3) as f32 * TILE_SIZE,
+    });
+
+    // Ghost that phases through dungeon walls
+    course.enemy_spawns.push(EnemySpawn {
+        x: (bx + ROOM_W / 2) as f32 * TILE_SIZE,
+        y: (by + 10) as f32 * TILE_SIZE,
+        enemy_type: EnemyType::Ghost,
+        patrol_min_x: (bx + 3) as f32 * TILE_SIZE,
+        patrol_max_x: (bx + ROOM_W - 4) as f32 * TILE_SIZE,
     });
 
     // Decorations

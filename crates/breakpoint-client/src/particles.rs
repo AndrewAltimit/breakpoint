@@ -155,6 +155,7 @@ impl ParticleSystem {
                     sprite_rect: p.sprite.to_vec4(),
                     tint,
                     flip_x: false,
+                    dissolve: 0.0,
                 },
                 Transform::from_xyz(p.x, p.y, 0.1).with_scale(glam::Vec3::new(p.size, p.size, 1.0)),
             );
@@ -330,20 +331,35 @@ impl ParticleSystem {
     }
 
     fn emit_water_splash(&mut self, x: f32, y: f32, sheet: &SpriteSheet) {
-        for i in 0..6 {
+        // Primary splash droplets (fan upward)
+        for i in 0..8 {
             let p = self.alloc();
             p.x = x + rand_spread(0.3);
             p.y = y;
             let angle = std::f32::consts::FRAC_PI_4 + fastrand::f32() * std::f32::consts::FRAC_PI_2;
-            let speed = 2.0 + fastrand::f32() * 1.5;
-            p.vx = (i as f32 / 3.0 - 1.0) * speed * 0.5;
+            let speed = 2.5 + fastrand::f32() * 2.0;
+            p.vx = (i as f32 / 4.0 - 1.0) * speed * 0.6;
             p.vy = angle.sin() * speed;
-            p.lifetime = 0.3 + fastrand::f32() * 0.2;
+            p.lifetime = 0.35 + fastrand::f32() * 0.25;
             p.max_lifetime = p.lifetime;
             p.sprite = sheet.get_or_default(water_frame(i));
             p.tint = Vec4::new(0.4, 0.7, 1.0, 0.8);
             p.size = 0.1 + fastrand::f32() * 0.08;
-            p.gravity = -6.0;
+            p.gravity = -7.0;
+        }
+        // Rising mist ring (slow upward drift)
+        for i in 0..3 {
+            let p = self.alloc();
+            p.x = x + rand_spread(0.4);
+            p.y = y + 0.1;
+            p.vx = rand_spread(0.3);
+            p.vy = 0.3 + fastrand::f32() * 0.4;
+            p.lifetime = 0.4 + fastrand::f32() * 0.2;
+            p.max_lifetime = p.lifetime;
+            p.sprite = sheet.get_or_default(water_frame(i));
+            p.tint = Vec4::new(0.6, 0.8, 1.0, 0.3);
+            p.size = 0.15 + fastrand::f32() * 0.1;
+            p.gravity = -1.0;
         }
     }
 

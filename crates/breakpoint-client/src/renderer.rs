@@ -30,16 +30,20 @@ struct ShaderProgram {
     u_tint: Option<WebGlUniformLocation>,
     u_flip_x: Option<WebGlUniformLocation>,
     u_texture: Option<WebGlUniformLocation>,
+    u_outline_width: Option<WebGlUniformLocation>,
+    u_dissolve: Option<WebGlUniformLocation>,
     // Parallax shader uniforms
     u_uv_offset: Option<WebGlUniformLocation>,
     u_uv_scale: Option<WebGlUniformLocation>,
     // Water shader uniforms
     u_depth: Option<WebGlUniformLocation>,
     u_wave_speed: Option<WebGlUniformLocation>,
-    // Lighting uniforms (for lit sprite shader)
+    // Lighting uniforms (for lit sprite shader, 32 colored lights)
     u_lights: Vec<Option<WebGlUniformLocation>>,
+    u_light_color: Vec<Option<WebGlUniformLocation>>,
     u_light_count: Option<WebGlUniformLocation>,
     u_ambient: Option<WebGlUniformLocation>,
+    u_ambient_color: Option<WebGlUniformLocation>,
     // Whip trail uniforms
     u_arc_progress: Option<WebGlUniformLocation>,
     // Post-process uniforms
@@ -48,6 +52,12 @@ struct ShaderProgram {
     u_bloom_intensity: Option<WebGlUniformLocation>,
     u_vignette_intensity: Option<WebGlUniformLocation>,
     u_crt_curvature: Option<WebGlUniformLocation>,
+    u_grade_shadows: Option<WebGlUniformLocation>,
+    u_grade_highlights: Option<WebGlUniformLocation>,
+    u_grade_contrast: Option<WebGlUniformLocation>,
+    u_saturation: Option<WebGlUniformLocation>,
+    u_chromatic_aberration: Option<WebGlUniformLocation>,
+    u_film_grain: Option<WebGlUniformLocation>,
 }
 
 /// Cached mesh GPU buffers.
@@ -71,6 +81,18 @@ pub struct PostProcessConfig {
     pub bloom_intensity: f32,
     pub vignette_intensity: f32,
     pub crt_curvature: f32,
+    /// Per-room color grading: shadow tint (RGB).
+    pub grade_shadows: [f32; 3],
+    /// Per-room color grading: highlight tint (RGB).
+    pub grade_highlights: [f32; 3],
+    /// Contrast adjustment (1.0 = neutral).
+    pub grade_contrast: f32,
+    /// Color saturation (1.0 = neutral, 0.0 = grayscale).
+    pub saturation: f32,
+    /// Chromatic aberration strength in pixels (0.0 = off, triggered on damage).
+    pub chromatic_aberration: f32,
+    /// Film grain intensity (0.0 = off).
+    pub film_grain: f32,
 }
 
 impl Default for PostProcessConfig {
@@ -80,6 +102,12 @@ impl Default for PostProcessConfig {
             bloom_intensity: 0.0,
             vignette_intensity: 0.0,
             crt_curvature: 0.0,
+            grade_shadows: [1.0, 1.0, 1.0],
+            grade_highlights: [1.0, 1.0, 1.0],
+            grade_contrast: 1.0,
+            saturation: 1.0,
+            chromatic_aberration: 0.0,
+            film_grain: 0.0,
         }
     }
 }
@@ -329,7 +357,11 @@ impl Renderer {
         let use_postfx = self.post_process.scanline_intensity > 0.01
             || self.post_process.bloom_intensity > 0.01
             || self.post_process.vignette_intensity > 0.01
-            || self.post_process.crt_curvature > 0.01;
+            || self.post_process.crt_curvature > 0.01
+            || self.post_process.chromatic_aberration > 0.01
+            || self.post_process.film_grain > 0.01
+            || (self.post_process.grade_contrast - 1.0).abs() > 0.01
+            || (self.post_process.saturation - 1.0).abs() > 0.01;
 
         if use_postfx {
             self.ensure_post_fbo();
@@ -382,6 +414,11 @@ impl Renderer {
                 MaterialType::Parallax { .. } => "parallax",
                 MaterialType::Water { .. } => "water",
                 MaterialType::WhipTrail { .. } => "whip",
+                MaterialType::SlashArc { .. } => "slash_arc",
+                MaterialType::MagicCircle { .. } => "magic_circle",
+                MaterialType::GodRays { .. } => "godrays",
+                MaterialType::FogLayer { .. } => "fog_layer",
+                MaterialType::HealthBar { .. } => "health_bar",
             };
 
             let Some(prog) = self.programs.get(program_name) else {
@@ -437,6 +474,7 @@ impl Renderer {
                     sprite_rect,
                     tint,
                     flip_x,
+                    dissolve,
                 } => {
                     // Bind atlas texture
                     gl.active_texture(GL::TEXTURE0);
@@ -449,15 +487,31 @@ impl Renderer {
                     set_vec4(gl, &prog.u_sprite_rect, sprite_rect);
                     set_vec4(gl, &prog.u_tint, tint);
                     set_f32(gl, &prog.u_flip_x, if *flip_x { 1.0 } else { 0.0 });
-                    // Set lighting uniforms
-                    let light_count = scene.lighting.lights.len().min(16) as i32;
+                    set_f32(gl, &prog.u_outline_width, 0.0);
+                    set_f32(gl, &prog.u_dissolve, *dissolve);
+                    // Set lighting uniforms (32 colored lights)
+                    let light_count = scene.lighting.lights.len().min(32) as i32;
                     if let Some(loc) = &prog.u_light_count {
                         gl.uniform1i(Some(loc), light_count);
                     }
                     set_f32(gl, &prog.u_ambient, scene.lighting.ambient);
-                    for (i, light) in scene.lighting.lights.iter().take(16).enumerate() {
+                    if let Some(loc) = &prog.u_ambient_color {
+                        let ac = &scene.lighting.ambient_color;
+                        gl.uniform3f(Some(loc), ac[0], ac[1], ac[2]);
+                    }
+                    for (i, light) in scene.lighting.lights.iter().take(32).enumerate() {
                         if let Some(loc) = prog.u_lights.get(i).and_then(|l| l.as_ref()) {
                             gl.uniform4f(Some(loc), light[0], light[1], light[2], light[3]);
+                        }
+                        // Upload light color (default white if not provided)
+                        if let Some(loc) = prog.u_light_color.get(i).and_then(|l| l.as_ref()) {
+                            let c = scene
+                                .lighting
+                                .light_colors
+                                .get(i)
+                                .copied()
+                                .unwrap_or([1.0, 1.0, 1.0, 0.0]);
+                            gl.uniform4f(Some(loc), c[0], c[1], c[2], c[3]);
                         }
                     }
                     // Disable backface culling for sprites
@@ -482,6 +536,9 @@ impl Renderer {
                     // UV scale: full width, layer height portion
                     set_vec2(gl, &prog.u_uv_scale, 1.0, layer_rect.w - layer_rect.y);
                     set_vec4(gl, &prog.u_tint, tint);
+                    set_f32(gl, &prog.u_time, self.time);
+                    set_f32(gl, &prog.u_intensity, 0.0); // sway amplitude
+                    set_f32(gl, &prog.u_speed, 1.0); // crossfade alpha (fully visible)
                     // Disable backface culling + depth write for background
                     gl.disable(GL::CULL_FACE);
                     gl.depth_mask(false);
@@ -504,6 +561,55 @@ impl Renderer {
                     set_f32(gl, &prog.u_time, self.time);
                     // Additive blending for bright whip effect
                     gl.blend_func(GL::SRC_ALPHA, GL::ONE);
+                    gl.disable(GL::CULL_FACE);
+                    gl.disable(GL::DEPTH_TEST);
+                },
+                MaterialType::SlashArc {
+                    progress,
+                    angle,
+                    color,
+                } => {
+                    set_vec4(gl, &prog.u_color, color);
+                    set_f32(gl, &prog.u_arc_progress, *progress);
+                    set_f32(gl, &prog.u_intensity, *angle); // reuse u_intensity for arc_angle
+                    set_f32(gl, &prog.u_time, self.time);
+                    gl.blend_func(GL::SRC_ALPHA, GL::ONE);
+                    gl.disable(GL::CULL_FACE);
+                    gl.disable(GL::DEPTH_TEST);
+                },
+                MaterialType::MagicCircle {
+                    rotation,
+                    pulse,
+                    color,
+                } => {
+                    set_vec4(gl, &prog.u_color, color);
+                    set_f32(gl, &prog.u_time, self.time);
+                    set_f32(gl, &prog.u_speed, *rotation); // reuse u_speed for rotation
+                    set_f32(gl, &prog.u_intensity, *pulse); // reuse u_intensity for pulse
+                    gl.blend_func(GL::SRC_ALPHA, GL::ONE);
+                    gl.disable(GL::CULL_FACE);
+                    gl.disable(GL::DEPTH_TEST);
+                },
+                MaterialType::GodRays { intensity, color } => {
+                    set_vec4(gl, &prog.u_color, color);
+                    set_f32(gl, &prog.u_intensity, *intensity);
+                    set_f32(gl, &prog.u_time, self.time);
+                    set_f32(gl, &prog.u_speed, 0.5);
+                    gl.blend_func(GL::SRC_ALPHA, GL::ONE);
+                    gl.disable(GL::CULL_FACE);
+                    gl.disable(GL::DEPTH_TEST);
+                },
+                MaterialType::FogLayer { density, color } => {
+                    set_vec4(gl, &prog.u_color, color);
+                    set_f32(gl, &prog.u_intensity, *density);
+                    set_f32(gl, &prog.u_time, self.time);
+                    gl.disable(GL::CULL_FACE);
+                    gl.depth_mask(false);
+                },
+                MaterialType::HealthBar { fill, color } => {
+                    set_vec4(gl, &prog.u_color, color);
+                    set_f32(gl, &prog.u_intensity, *fill);
+                    set_f32(gl, &prog.u_time, self.time);
                     gl.disable(GL::CULL_FACE);
                     gl.disable(GL::DEPTH_TEST);
                 },
@@ -573,16 +679,47 @@ impl Renderer {
                 include_str!("shaders_gl/postprocess.vert"),
                 include_str!("shaders_gl/postprocess.frag"),
             ),
+            (
+                "slash_arc",
+                include_str!("shaders_gl/slash_arc.vert"),
+                include_str!("shaders_gl/slash_arc.frag"),
+            ),
+            (
+                "magic_circle",
+                include_str!("shaders_gl/magic_circle.vert"),
+                include_str!("shaders_gl/magic_circle.frag"),
+            ),
+            (
+                "godrays",
+                include_str!("shaders_gl/godrays.vert"),
+                include_str!("shaders_gl/godrays.frag"),
+            ),
+            (
+                "fog_layer",
+                include_str!("shaders_gl/fog_layer.vert"),
+                include_str!("shaders_gl/fog_layer.frag"),
+            ),
+            (
+                "health_bar",
+                include_str!("shaders_gl/health_bar.vert"),
+                include_str!("shaders_gl/health_bar.frag"),
+            ),
         ];
 
         for (name, vs, frag_src) in configs {
             let program = link_program(&self.gl, vs, frag_src)?;
 
-            // Cache light uniform locations (u_lights[0] .. u_lights[15])
-            let u_lights: Vec<Option<WebGlUniformLocation>> = (0..16)
+            // Cache light uniform locations (u_lights[0] .. u_lights[31])
+            let u_lights: Vec<Option<WebGlUniformLocation>> = (0..32)
                 .map(|i| {
                     self.gl
                         .get_uniform_location(&program, &format!("u_lights[{i}]"))
+                })
+                .collect();
+            let u_light_color: Vec<Option<WebGlUniformLocation>> = (0..32)
+                .map(|i| {
+                    self.gl
+                        .get_uniform_location(&program, &format!("u_light_color[{i}]"))
                 })
                 .collect();
 
@@ -603,13 +740,17 @@ impl Renderer {
                 u_tint: self.gl.get_uniform_location(&program, "u_tint"),
                 u_flip_x: self.gl.get_uniform_location(&program, "u_flip_x"),
                 u_texture: self.gl.get_uniform_location(&program, "u_texture"),
+                u_outline_width: self.gl.get_uniform_location(&program, "u_outline_width"),
+                u_dissolve: self.gl.get_uniform_location(&program, "u_dissolve"),
                 u_uv_offset: self.gl.get_uniform_location(&program, "u_uv_offset"),
                 u_uv_scale: self.gl.get_uniform_location(&program, "u_uv_scale"),
                 u_depth: self.gl.get_uniform_location(&program, "u_depth"),
                 u_wave_speed: self.gl.get_uniform_location(&program, "u_wave_speed"),
                 u_lights,
+                u_light_color,
                 u_light_count: self.gl.get_uniform_location(&program, "u_light_count"),
                 u_ambient: self.gl.get_uniform_location(&program, "u_ambient"),
+                u_ambient_color: self.gl.get_uniform_location(&program, "u_ambient_color"),
                 u_arc_progress: self.gl.get_uniform_location(&program, "u_arc_progress"),
                 u_scene_texture: self.gl.get_uniform_location(&program, "u_scene"),
                 u_scanline_intensity: self
@@ -620,6 +761,14 @@ impl Renderer {
                     .gl
                     .get_uniform_location(&program, "u_vignette_intensity"),
                 u_crt_curvature: self.gl.get_uniform_location(&program, "u_crt_curvature"),
+                u_grade_shadows: self.gl.get_uniform_location(&program, "u_grade_shadows"),
+                u_grade_highlights: self.gl.get_uniform_location(&program, "u_grade_highlights"),
+                u_grade_contrast: self.gl.get_uniform_location(&program, "u_grade_contrast"),
+                u_saturation: self.gl.get_uniform_location(&program, "u_saturation"),
+                u_chromatic_aberration: self
+                    .gl
+                    .get_uniform_location(&program, "u_chromatic_aberration"),
+                u_film_grain: self.gl.get_uniform_location(&program, "u_film_grain"),
                 program,
             };
             self.programs.insert(name, sp);
@@ -806,6 +955,26 @@ impl Renderer {
         if let Some(loc) = &prog.u_crt_curvature {
             gl.uniform1f(Some(loc), self.post_process.crt_curvature);
         }
+        if let Some(loc) = &prog.u_grade_shadows {
+            let s = &self.post_process.grade_shadows;
+            gl.uniform3f(Some(loc), s[0], s[1], s[2]);
+        }
+        if let Some(loc) = &prog.u_grade_highlights {
+            let h = &self.post_process.grade_highlights;
+            gl.uniform3f(Some(loc), h[0], h[1], h[2]);
+        }
+        if let Some(loc) = &prog.u_grade_contrast {
+            gl.uniform1f(Some(loc), self.post_process.grade_contrast);
+        }
+        if let Some(loc) = &prog.u_saturation {
+            gl.uniform1f(Some(loc), self.post_process.saturation);
+        }
+        if let Some(loc) = &prog.u_chromatic_aberration {
+            gl.uniform1f(Some(loc), self.post_process.chromatic_aberration);
+        }
+        if let Some(loc) = &prog.u_film_grain {
+            gl.uniform1f(Some(loc), self.post_process.film_grain);
+        }
 
         // Draw fullscreen quad
         gl.disable(GL::DEPTH_TEST);
@@ -935,6 +1104,11 @@ fn material_sort_key(m: &MaterialType) -> u8 {
         MaterialType::Ripple { .. } => 6,
         MaterialType::TronWall { .. } => 7,
         MaterialType::WhipTrail { .. } => 8,
+        MaterialType::SlashArc { .. } => 9,
+        MaterialType::MagicCircle { .. } => 10,
+        MaterialType::GodRays { .. } => 11,
+        MaterialType::FogLayer { .. } => 12,
+        MaterialType::HealthBar { .. } => 13,
     }
 }
 

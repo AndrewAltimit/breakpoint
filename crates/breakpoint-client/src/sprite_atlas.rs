@@ -93,270 +93,787 @@ impl SpriteAnimation {
     }
 }
 
-/// Build the platformer sprite sheet with all named regions.
-/// Atlas is 1024x512, sprites are 16x16 (tiles/items), 16x32 (characters), or 8x8 (particles).
-pub fn build_platformer_atlas() -> SpriteSheet {
-    let mut sheet = SpriteSheet::new(1024, 512);
+// ================================================================
+// Atlas layout constants (2048x1024)
+// ================================================================
 
-    // ── Player sprites (16x32) — Y 0-63 ───────────────────
+/// Atlas dimensions.
+pub const ATLAS_W: u32 = 2048;
+pub const ATLAS_H: u32 = 1024;
+
+// Y-range assignments:
+// 0-127:   Player sprites (32x64) — 2 rows of 64 columns
+// 128-319: Enemy sprites (32x64) — 3 rows of 64 columns
+// 320-575: Tile sprites (16x16) — per-theme, 16 rows x 128 cols
+// 576-703: UI, props, HUD, power-ups (16x16 & 32x32)
+// 704-831: Particles + combat VFX (8x8 & 64x64)
+// 832-1023: Reserved (caustic tex, foam, LUT strips)
+
+/// Build the platformer sprite sheet with all named regions.
+/// Atlas is 2048x1024 with 32x64 characters, 16x16 tiles, and 8x8 particles.
+pub fn build_platformer_atlas() -> SpriteSheet {
+    let mut sheet = SpriteSheet::new(ATLAS_W, ATLAS_H);
+
+    // ── Player sprites (32x64) — Y 0-127 ───────────────────
     add_player_sprites(&mut sheet);
 
-    // ── Enemy sprites (16x32) — Y 64-127 ──────────────────
+    // ── Enemy sprites (32x64) — Y 128-319 ──────────────────
     add_enemy_sprites(&mut sheet);
 
-    // ── Tile sprites (16x16) — Y 128-191 ──────────────────
+    // ── Tile sprites (16x16) — Y 320-575 ──────────────────
     add_tile_sprites(&mut sheet);
 
-    // ── Power-ups, HUD, props (16x16) — Y 192-255 ────────
+    // ── Power-ups, HUD, props (16x16 & 32x32) — Y 576-703 ─
     add_ui_sprites(&mut sheet);
 
-    // ── Particle sprites (8x8) — Y 256-383 ────────────────
+    // ── Particle + VFX sprites (8x8 & 64x64) — Y 704-831 ──
     add_particle_sprites(&mut sheet);
+
+    // ── Combat VFX sprites (64x64) — Y 704-831 ─────────────
+    add_combat_vfx_sprites(&mut sheet);
 
     sheet
 }
 
-/// Add player animation frames to the sprite sheet.
+// ================================================================
+// Player sprites (32x64) — Y 0-127
+// Row 0 (Y 0-63):  idle(8f), walk(8f), run(8f), jump(4f), fall(4f)
+// Row 1 (Y 64-127): attack(8f), hurt(4f), death(6f), wall_slide(3f), crouch(3f), dash(4f)
+// ================================================================
+
 fn add_player_sprites(sheet: &mut SpriteSheet) {
-    // Idle: 6 frames
+    let w = 32u32;
+    let h = 64u32;
+
+    // Row 0 (Y=0)
+    let mut x = 0u32;
+
+    // Idle: 8 frames
+    for i in 0..8u32 {
+        let name = player_frame_name("player_idle_", i);
+        sheet.add(name, x + i * w, 0, w, h);
+    }
+    x += 8 * w; // 256
+
+    // Walk: 8 frames
+    for i in 0..8u32 {
+        let name = player_frame_name("player_walk_", i);
+        sheet.add(name, x + i * w, 0, w, h);
+    }
+    x += 8 * w; // 512
+
+    // Run: 8 frames
+    for i in 0..8u32 {
+        let name = player_frame_name("player_run_", i);
+        sheet.add(name, x + i * w, 0, w, h);
+    }
+    x += 8 * w; // 768
+
+    // Jump: 4 frames
+    for i in 0..4u32 {
+        let name = player_frame_name("player_jump_", i);
+        sheet.add(name, x + i * w, 0, w, h);
+    }
+    x += 4 * w; // 896
+
+    // Fall: 4 frames
+    for i in 0..4u32 {
+        let name = player_frame_name("player_fall_", i);
+        sheet.add(name, x + i * w, 0, w, h);
+    }
+
+    // Row 1 (Y=64)
+    x = 0;
+
+    // Attack: 8 frames
+    for i in 0..8u32 {
+        let name = player_frame_name("player_attack_", i);
+        sheet.add(name, x + i * w, h, w, h);
+    }
+    x += 8 * w; // 256
+
+    // Hurt: 4 frames
+    for i in 0..4u32 {
+        let name = player_frame_name("player_hurt_", i);
+        sheet.add(name, x + i * w, h, w, h);
+    }
+    x += 4 * w; // 384
+
+    // Dead: 6 frames
     for i in 0..6u32 {
-        let name = match i {
+        let name = player_frame_name("player_dead_", i);
+        sheet.add(name, x + i * w, h, w, h);
+    }
+    x += 6 * w; // 576
+
+    // Wall slide: 3 frames
+    for i in 0..3u32 {
+        let name = player_frame_name("player_wall_slide_", i);
+        sheet.add(name, x + i * w, h, w, h);
+    }
+    x += 3 * w; // 672
+
+    // Crouch: 3 frames
+    for i in 0..3u32 {
+        let name = player_frame_name("player_crouch_", i);
+        sheet.add(name, x + i * w, h, w, h);
+    }
+    x += 3 * w; // 768
+
+    // Dash: 4 frames
+    for i in 0..4u32 {
+        let name = player_frame_name("player_dash_", i);
+        sheet.add(name, x + i * w, h, w, h);
+    }
+}
+
+/// Map index to static frame name for player sprites.
+fn player_frame_name(prefix: &str, idx: u32) -> &'static str {
+    match prefix {
+        "player_idle_" => match idx {
             0 => "player_idle_0",
             1 => "player_idle_1",
             2 => "player_idle_2",
             3 => "player_idle_3",
             4 => "player_idle_4",
-            _ => "player_idle_5",
-        };
-        sheet.add(name, i * 16, 0, 16, 32);
-    }
-    // Walk: 6 frames
-    for i in 0..6u32 {
-        let name = match i {
+            5 => "player_idle_5",
+            6 => "player_idle_6",
+            _ => "player_idle_7",
+        },
+        "player_walk_" => match idx {
             0 => "player_walk_0",
             1 => "player_walk_1",
             2 => "player_walk_2",
             3 => "player_walk_3",
             4 => "player_walk_4",
-            _ => "player_walk_5",
-        };
-        sheet.add(name, 96 + i * 16, 0, 16, 32);
-    }
-    // Jump: 3 frames
-    for i in 0..3u32 {
-        let name = match i {
+            5 => "player_walk_5",
+            6 => "player_walk_6",
+            _ => "player_walk_7",
+        },
+        "player_run_" => match idx {
+            0 => "player_run_0",
+            1 => "player_run_1",
+            2 => "player_run_2",
+            3 => "player_run_3",
+            4 => "player_run_4",
+            5 => "player_run_5",
+            6 => "player_run_6",
+            _ => "player_run_7",
+        },
+        "player_jump_" => match idx {
             0 => "player_jump_0",
             1 => "player_jump_1",
-            _ => "player_jump_2",
-        };
-        sheet.add(name, 192 + i * 16, 0, 16, 32);
-    }
-    // Fall: 3 frames
-    for i in 0..3u32 {
-        let name = match i {
+            2 => "player_jump_2",
+            _ => "player_jump_3",
+        },
+        "player_fall_" => match idx {
             0 => "player_fall_0",
             1 => "player_fall_1",
-            _ => "player_fall_2",
-        };
-        sheet.add(name, 240 + i * 16, 0, 16, 32);
-    }
-    // Attack: 6 frames
-    for i in 0..6u32 {
-        let name = match i {
+            2 => "player_fall_2",
+            _ => "player_fall_3",
+        },
+        "player_attack_" => match idx {
             0 => "player_attack_0",
             1 => "player_attack_1",
             2 => "player_attack_2",
             3 => "player_attack_3",
             4 => "player_attack_4",
-            _ => "player_attack_5",
-        };
-        sheet.add(name, 288 + i * 16, 0, 16, 32);
-    }
-    // Hurt: 2 frames
-    sheet.add("player_hurt_0", 384, 0, 16, 32);
-    sheet.add("player_hurt_1", 400, 0, 16, 32);
-    // Dead: 4 frames
-    for i in 0..4u32 {
-        let name = match i {
+            5 => "player_attack_5",
+            6 => "player_attack_6",
+            _ => "player_attack_7",
+        },
+        "player_hurt_" => match idx {
+            0 => "player_hurt_0",
+            1 => "player_hurt_1",
+            2 => "player_hurt_2",
+            _ => "player_hurt_3",
+        },
+        "player_dead_" => match idx {
             0 => "player_dead_0",
             1 => "player_dead_1",
             2 => "player_dead_2",
-            _ => "player_dead_3",
-        };
-        sheet.add(name, 416 + i * 16, 0, 16, 32);
+            3 => "player_dead_3",
+            4 => "player_dead_4",
+            _ => "player_dead_5",
+        },
+        "player_wall_slide_" => match idx {
+            0 => "player_wall_slide_0",
+            1 => "player_wall_slide_1",
+            _ => "player_wall_slide_2",
+        },
+        "player_crouch_" => match idx {
+            0 => "player_crouch_0",
+            1 => "player_crouch_1",
+            _ => "player_crouch_2",
+        },
+        "player_dash_" => match idx {
+            0 => "player_dash_0",
+            1 => "player_dash_1",
+            2 => "player_dash_2",
+            _ => "player_dash_3",
+        },
+        _ => "player_idle_0",
     }
 }
 
-/// Add enemy animation frames to the sprite sheet.
+// ================================================================
+// Enemy sprites (32x64) — Y 128-319
+// Row 0 (Y 128-191): Skeleton walk(4f), attack(3f), death(4f)
+//                     Bat fly(4f), death(2f)
+// Row 1 (Y 192-255): Knight walk(4f), attack(3f), death(4f)
+//                     Medusa float(4f), death(2f)
+// Row 2 (Y 256-319): Ghost drift(4f), phase(3f), death(3f)
+//                     Gargoyle perch(2f), swoop(4f), death(3f)
+//                     Projectile(3f)
+// ================================================================
+
 fn add_enemy_sprites(sheet: &mut SpriteSheet) {
+    let w = 32u32;
+    let h = 64u32;
+
+    // Row 0 (Y=128): Skeleton + Bat
+    let y0 = 128u32;
+    let mut x = 0u32;
+
     // Skeleton walk: 4 frames
     for i in 0..4u32 {
-        let name = match i {
+        let name = enemy_frame_name("skeleton_walk_", i);
+        sheet.add(name, x + i * w, y0, w, h);
+    }
+    x += 4 * w;
+
+    // Skeleton attack: 3 frames
+    for i in 0..3u32 {
+        let name = enemy_frame_name("skeleton_attack_", i);
+        sheet.add(name, x + i * w, y0, w, h);
+    }
+    x += 3 * w;
+
+    // Skeleton death: 4 frames
+    for i in 0..4u32 {
+        let name = enemy_frame_name("skeleton_death_", i);
+        sheet.add(name, x + i * w, y0, w, h);
+    }
+    x += 4 * w;
+
+    // Bat fly: 4 frames
+    for i in 0..4u32 {
+        let name = enemy_frame_name("bat_fly_", i);
+        sheet.add(name, x + i * w, y0, w, h);
+    }
+    x += 4 * w;
+
+    // Bat death: 2 frames
+    for i in 0..2u32 {
+        let name = enemy_frame_name("bat_death_", i);
+        sheet.add(name, x + i * w, y0, w, h);
+    }
+
+    // Row 1 (Y=192): Knight + Medusa
+    let y1 = 192u32;
+    x = 0;
+
+    // Knight walk: 4 frames
+    for i in 0..4u32 {
+        let name = enemy_frame_name("knight_walk_", i);
+        sheet.add(name, x + i * w, y1, w, h);
+    }
+    x += 4 * w;
+
+    // Knight attack: 3 frames
+    for i in 0..3u32 {
+        let name = enemy_frame_name("knight_attack_", i);
+        sheet.add(name, x + i * w, y1, w, h);
+    }
+    x += 3 * w;
+
+    // Knight death: 4 frames
+    for i in 0..4u32 {
+        let name = enemy_frame_name("knight_death_", i);
+        sheet.add(name, x + i * w, y1, w, h);
+    }
+    x += 4 * w;
+
+    // Medusa float: 4 frames
+    for i in 0..4u32 {
+        let name = enemy_frame_name("medusa_float_", i);
+        sheet.add(name, x + i * w, y1, w, h);
+    }
+    x += 4 * w;
+
+    // Medusa death: 2 frames
+    for i in 0..2u32 {
+        let name = enemy_frame_name("medusa_death_", i);
+        sheet.add(name, x + i * w, y1, w, h);
+    }
+
+    // Row 2 (Y=256): Ghost + Gargoyle + Projectile
+    let y2 = 256u32;
+    x = 0;
+
+    // Ghost drift: 4 frames
+    for i in 0..4u32 {
+        let name = enemy_frame_name("ghost_drift_", i);
+        sheet.add(name, x + i * w, y2, w, h);
+    }
+    x += 4 * w;
+
+    // Ghost phase: 3 frames
+    for i in 0..3u32 {
+        let name = enemy_frame_name("ghost_phase_", i);
+        sheet.add(name, x + i * w, y2, w, h);
+    }
+    x += 3 * w;
+
+    // Ghost death: 3 frames
+    for i in 0..3u32 {
+        let name = enemy_frame_name("ghost_death_", i);
+        sheet.add(name, x + i * w, y2, w, h);
+    }
+    x += 3 * w;
+
+    // Gargoyle perch: 2 frames
+    for i in 0..2u32 {
+        let name = enemy_frame_name("gargoyle_perch_", i);
+        sheet.add(name, x + i * w, y2, w, h);
+    }
+    x += 2 * w;
+
+    // Gargoyle swoop: 4 frames
+    for i in 0..4u32 {
+        let name = enemy_frame_name("gargoyle_swoop_", i);
+        sheet.add(name, x + i * w, y2, w, h);
+    }
+    x += 4 * w;
+
+    // Gargoyle death: 3 frames
+    for i in 0..3u32 {
+        let name = enemy_frame_name("gargoyle_death_", i);
+        sheet.add(name, x + i * w, y2, w, h);
+    }
+    x += 3 * w;
+
+    // Projectile: 3 frames (16x16 within the 32x64 row)
+    sheet.add("projectile_0", x, y2, 16, 16);
+    sheet.add("projectile_1", x + 16, y2, 16, 16);
+    sheet.add("projectile_2", x + 32, y2, 16, 16);
+}
+
+fn enemy_frame_name(prefix: &str, idx: u32) -> &'static str {
+    match prefix {
+        "skeleton_walk_" => match idx {
             0 => "skeleton_walk_0",
             1 => "skeleton_walk_1",
             2 => "skeleton_walk_2",
             _ => "skeleton_walk_3",
-        };
-        sheet.add(name, i * 16, 64, 16, 32);
-    }
-    // Skeleton attack: 3 frames
-    for i in 0..3u32 {
-        let name = match i {
+        },
+        "skeleton_attack_" => match idx {
             0 => "skeleton_attack_0",
             1 => "skeleton_attack_1",
             _ => "skeleton_attack_2",
-        };
-        sheet.add(name, 64 + i * 16, 64, 16, 32);
-    }
-    // Skeleton death: 4 frames
-    for i in 0..4u32 {
-        let name = match i {
+        },
+        "skeleton_death_" => match idx {
             0 => "skeleton_death_0",
             1 => "skeleton_death_1",
             2 => "skeleton_death_2",
             _ => "skeleton_death_3",
-        };
-        sheet.add(name, 112 + i * 16, 64, 16, 32);
-    }
-    // Bat fly: 4 frames
-    for i in 0..4u32 {
-        let name = match i {
+        },
+        "bat_fly_" => match idx {
             0 => "bat_fly_0",
             1 => "bat_fly_1",
             2 => "bat_fly_2",
             _ => "bat_fly_3",
-        };
-        sheet.add(name, 176 + i * 16, 64, 16, 32);
-    }
-    // Bat death: 2 frames
-    sheet.add("bat_death_0", 240, 64, 16, 32);
-    sheet.add("bat_death_1", 256, 64, 16, 32);
-    // Knight walk: 4 frames
-    for i in 0..4u32 {
-        let name = match i {
+        },
+        "bat_death_" => match idx {
+            0 => "bat_death_0",
+            _ => "bat_death_1",
+        },
+        "knight_walk_" => match idx {
             0 => "knight_walk_0",
             1 => "knight_walk_1",
             2 => "knight_walk_2",
             _ => "knight_walk_3",
-        };
-        sheet.add(name, 272 + i * 16, 64, 16, 32);
-    }
-    // Knight attack: 3 frames
-    for i in 0..3u32 {
-        let name = match i {
+        },
+        "knight_attack_" => match idx {
             0 => "knight_attack_0",
             1 => "knight_attack_1",
             _ => "knight_attack_2",
-        };
-        sheet.add(name, 336 + i * 16, 64, 16, 32);
-    }
-    // Knight death: 4 frames
-    for i in 0..4u32 {
-        let name = match i {
+        },
+        "knight_death_" => match idx {
             0 => "knight_death_0",
             1 => "knight_death_1",
             2 => "knight_death_2",
             _ => "knight_death_3",
-        };
-        sheet.add(name, 384 + i * 16, 64, 16, 32);
-    }
-    // Medusa float: 4 frames
-    for i in 0..4u32 {
-        let name = match i {
+        },
+        "medusa_float_" => match idx {
             0 => "medusa_float_0",
             1 => "medusa_float_1",
             2 => "medusa_float_2",
             _ => "medusa_float_3",
-        };
-        sheet.add(name, i * 16, 96, 16, 32);
+        },
+        "medusa_death_" => match idx {
+            0 => "medusa_death_0",
+            _ => "medusa_death_1",
+        },
+        "ghost_drift_" => match idx {
+            0 => "ghost_drift_0",
+            1 => "ghost_drift_1",
+            2 => "ghost_drift_2",
+            _ => "ghost_drift_3",
+        },
+        "ghost_phase_" => match idx {
+            0 => "ghost_phase_0",
+            1 => "ghost_phase_1",
+            _ => "ghost_phase_2",
+        },
+        "ghost_death_" => match idx {
+            0 => "ghost_death_0",
+            1 => "ghost_death_1",
+            _ => "ghost_death_2",
+        },
+        "gargoyle_perch_" => match idx {
+            0 => "gargoyle_perch_0",
+            _ => "gargoyle_perch_1",
+        },
+        "gargoyle_swoop_" => match idx {
+            0 => "gargoyle_swoop_0",
+            1 => "gargoyle_swoop_1",
+            2 => "gargoyle_swoop_2",
+            _ => "gargoyle_swoop_3",
+        },
+        "gargoyle_death_" => match idx {
+            0 => "gargoyle_death_0",
+            1 => "gargoyle_death_1",
+            _ => "gargoyle_death_2",
+        },
+        _ => "skeleton_walk_0",
     }
-    // Medusa death: 2 frames
-    sheet.add("medusa_death_0", 64, 96, 16, 32);
-    sheet.add("medusa_death_1", 80, 96, 16, 32);
-    // Projectile: 3 frames
-    sheet.add("projectile_0", 96, 96, 16, 16);
-    sheet.add("projectile_1", 112, 96, 16, 16);
-    sheet.add("projectile_2", 128, 96, 16, 16);
 }
 
-/// Add tile sprites to the sprite sheet.
+// ================================================================
+// Tile sprites (16x16) — Y 320-575
+// 4 visual groups × 16 bitmask tiles + shared tiles
+//
+// Layout at Y=320:
+//   Row 0-1 (Y 320-351): Castle Interior tiles (16 bitmask + decoratives)
+//   Row 2-3 (Y 352-383): Underground tiles (16 bitmask + decoratives)
+//   Row 4-5 (Y 384-415): Sacred tiles (16 bitmask + decoratives)
+//   Row 6-7 (Y 416-447): Fortress tiles (16 bitmask + decoratives)
+//   Row 8-9 (Y 448-479): Shared tiles (platform, spikes, checkpoint, etc.)
+//   Row 10-15 (Y 480-575): Decorative tiles, theme-specific props
+// ================================================================
+
+/// Tileset visual group for theme-based tile selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TileGroup {
+    CastleInterior,
+    Underground,
+    Sacred,
+    Fortress,
+}
+
 fn add_tile_sprites(sheet: &mut SpriteSheet) {
-    // Stone brick variants
-    sheet.add("stone_brick_top", 0, 128, 16, 16);
-    sheet.add("stone_brick_inner", 16, 128, 16, 16);
-    sheet.add("stone_brick_left", 32, 128, 16, 16);
-    sheet.add("stone_brick_right", 48, 128, 16, 16);
-    sheet.add("stone_brick_top_left", 64, 128, 16, 16);
-    sheet.add("stone_brick_top_right", 80, 128, 16, 16);
-    sheet.add("stone_brick_bottom_left", 96, 128, 16, 16);
-    sheet.add("stone_brick_bottom_right", 112, 128, 16, 16);
+    let tile = 16u32;
+
+    // Per-group bitmask tiles: 16 tiles per group (4-neighbor: UDLR = 16 combos)
+    // Each group starts at a known Y offset from the tile region base (320)
+    add_bitmask_tiles(sheet, "castle", 0, 320, tile);
+    add_bitmask_tiles(sheet, "underground", 0, 352, tile);
+    add_bitmask_tiles(sheet, "sacred", 0, 384, tile);
+    add_bitmask_tiles(sheet, "fortress", 0, 416, tile);
+
+    // Theme-specific decorative tiles (after bitmask tiles in each row)
+    let deco_x = 16 * tile; // X=256
+
+    // Castle decoratives
+    sheet.add("castle_bookshelf", deco_x, 320, tile, tile);
+    sheet.add("castle_banner", deco_x + tile, 320, tile, tile);
+    sheet.add("castle_pillar_top", deco_x + 2 * tile, 320, tile, tile);
+    sheet.add("castle_pillar_mid", deco_x + 3 * tile, 320, tile, tile);
+
+    // Underground decoratives
+    sheet.add("underground_coffin", deco_x, 352, tile, tile);
+    sheet.add("underground_bones", deco_x + tile, 352, tile, tile);
+    sheet.add("underground_mushroom", deco_x + 2 * tile, 352, tile, tile);
+
+    // Sacred decoratives
+    sheet.add("sacred_altar", deco_x, 384, tile, tile);
+    sheet.add("sacred_candle", deco_x + tile, 384, tile, tile);
+    sheet.add("sacred_rune", deco_x + 2 * tile, 384, tile, tile);
+
+    // Fortress decoratives
+    sheet.add("fortress_weapon_rack", deco_x, 416, tile, tile);
+    sheet.add("fortress_anvil", deco_x + tile, 416, tile, tile);
+    sheet.add("fortress_shield", deco_x + 2 * tile, 416, tile, tile);
+
+    // Shared tiles (Y=448)
+    let sy = 448u32;
+    let mut x = 0u32;
 
     // Platform: 3 variants
-    sheet.add("platform_0", 128, 128, 16, 16);
-    sheet.add("platform_1", 144, 128, 16, 16);
-    sheet.add("platform_2", 160, 128, 16, 16);
+    sheet.add("platform_0", x, sy, tile, tile);
+    sheet.add("platform_1", x + tile, sy, tile, tile);
+    sheet.add("platform_2", x + 2 * tile, sy, tile, tile);
+    x += 3 * tile;
 
     // Spikes: 2 variants
-    sheet.add("spikes_0", 176, 128, 16, 16);
-    sheet.add("spikes_1", 192, 128, 16, 16);
+    sheet.add("spikes_0", x, sy, tile, tile);
+    sheet.add("spikes_1", x + tile, sy, tile, tile);
+    x += 2 * tile;
 
     // Checkpoint flags
-    sheet.add("checkpoint_flag_down_0", 0, 144, 16, 16);
-    sheet.add("checkpoint_flag_down_1", 16, 144, 16, 16);
-    sheet.add("checkpoint_flag_up_0", 32, 144, 16, 16);
-    sheet.add("checkpoint_flag_up_1", 48, 144, 16, 16);
+    sheet.add("checkpoint_flag_down_0", x, sy, tile, tile);
+    sheet.add("checkpoint_flag_down_1", x + tile, sy, tile, tile);
+    sheet.add("checkpoint_flag_up_0", x + 2 * tile, sy, tile, tile);
+    sheet.add("checkpoint_flag_up_1", x + 3 * tile, sy, tile, tile);
+    x += 4 * tile;
 
     // Finish gate: 2 frames
-    sheet.add("finish_gate_0", 64, 144, 16, 16);
-    sheet.add("finish_gate_1", 80, 144, 16, 16);
+    sheet.add("finish_gate_0", x, sy, tile, tile);
+    sheet.add("finish_gate_1", x + tile, sy, tile, tile);
+    x += 2 * tile;
 
     // Ladder
-    sheet.add("ladder", 96, 144, 16, 16);
+    sheet.add("ladder", x, sy, tile, tile);
+    x += tile;
 
     // Breakable wall: 2 variants
-    sheet.add("breakable_wall_0", 112, 144, 16, 16);
-    sheet.add("breakable_wall_1", 128, 144, 16, 16);
+    sheet.add("breakable_wall_0", x, sy, tile, tile);
+    sheet.add("breakable_wall_1", x + tile, sy, tile, tile);
+    x += 2 * tile;
 
     // Torch: 4 frames
-    sheet.add("torch_0", 144, 144, 16, 16);
-    sheet.add("torch_1", 160, 144, 16, 16);
-    sheet.add("torch_2", 176, 144, 16, 16);
-    sheet.add("torch_3", 192, 144, 16, 16);
+    sheet.add("torch_0", x, sy, tile, tile);
+    sheet.add("torch_1", x + tile, sy, tile, tile);
+    sheet.add("torch_2", x + 2 * tile, sy, tile, tile);
+    sheet.add("torch_3", x + 3 * tile, sy, tile, tile);
+    x += 4 * tile;
 
     // Stained glass
-    sheet.add("stained_glass", 208, 144, 16, 16);
+    sheet.add("stained_glass", x, sy, tile, tile);
+    x += tile;
 
     // Water tiles
-    sheet.add("water_surface", 224, 144, 16, 16);
-    sheet.add("water_body", 240, 144, 16, 16);
+    sheet.add("water_surface", x, sy, tile, tile);
+    sheet.add("water_body", x + tile, sy, tile, tile);
+    x += 2 * tile;
 
     // Decorative tiles
-    sheet.add("cobweb", 256, 144, 16, 16);
-    sheet.add("chain_0", 272, 144, 16, 16);
-    sheet.add("chain_1", 288, 144, 16, 16);
+    sheet.add("cobweb", x, sy, tile, tile);
+    sheet.add("chain_0", x + tile, sy, tile, tile);
+    sheet.add("chain_1", x + 2 * tile, sy, tile, tile);
+
+    // Legacy aliases: map old stone_brick_* names to castle bitmask tiles
+    // so existing code that references stone_brick_top etc. still works.
+    add_legacy_stone_aliases(sheet);
 }
 
-/// Add power-up, HUD, and prop sprites to the sprite sheet.
+/// Add 16 bitmask tiles for a given visual group.
+/// Bitmask: bit 0=Up, bit 1=Down, bit 2=Left, bit 3=Right (4 neighbors = 16 combos).
+fn add_bitmask_tiles(sheet: &mut SpriteSheet, group: &str, base_x: u32, base_y: u32, tile: u32) {
+    for i in 0..16u32 {
+        let name = bitmask_tile_name(group, i);
+        sheet.add(name, base_x + i * tile, base_y, tile, tile);
+    }
+}
+
+/// Get the static name for a bitmask tile. Index 0-15 encodes neighbor presence.
+fn bitmask_tile_name(group: &str, idx: u32) -> &'static str {
+    match group {
+        "castle" => match idx {
+            0 => "castle_tile_0",
+            1 => "castle_tile_1",
+            2 => "castle_tile_2",
+            3 => "castle_tile_3",
+            4 => "castle_tile_4",
+            5 => "castle_tile_5",
+            6 => "castle_tile_6",
+            7 => "castle_tile_7",
+            8 => "castle_tile_8",
+            9 => "castle_tile_9",
+            10 => "castle_tile_10",
+            11 => "castle_tile_11",
+            12 => "castle_tile_12",
+            13 => "castle_tile_13",
+            14 => "castle_tile_14",
+            _ => "castle_tile_15",
+        },
+        "underground" => match idx {
+            0 => "underground_tile_0",
+            1 => "underground_tile_1",
+            2 => "underground_tile_2",
+            3 => "underground_tile_3",
+            4 => "underground_tile_4",
+            5 => "underground_tile_5",
+            6 => "underground_tile_6",
+            7 => "underground_tile_7",
+            8 => "underground_tile_8",
+            9 => "underground_tile_9",
+            10 => "underground_tile_10",
+            11 => "underground_tile_11",
+            12 => "underground_tile_12",
+            13 => "underground_tile_13",
+            14 => "underground_tile_14",
+            _ => "underground_tile_15",
+        },
+        "sacred" => match idx {
+            0 => "sacred_tile_0",
+            1 => "sacred_tile_1",
+            2 => "sacred_tile_2",
+            3 => "sacred_tile_3",
+            4 => "sacred_tile_4",
+            5 => "sacred_tile_5",
+            6 => "sacred_tile_6",
+            7 => "sacred_tile_7",
+            8 => "sacred_tile_8",
+            9 => "sacred_tile_9",
+            10 => "sacred_tile_10",
+            11 => "sacred_tile_11",
+            12 => "sacred_tile_12",
+            13 => "sacred_tile_13",
+            14 => "sacred_tile_14",
+            _ => "sacred_tile_15",
+        },
+        _ => match idx {
+            0 => "fortress_tile_0",
+            1 => "fortress_tile_1",
+            2 => "fortress_tile_2",
+            3 => "fortress_tile_3",
+            4 => "fortress_tile_4",
+            5 => "fortress_tile_5",
+            6 => "fortress_tile_6",
+            7 => "fortress_tile_7",
+            8 => "fortress_tile_8",
+            9 => "fortress_tile_9",
+            10 => "fortress_tile_10",
+            11 => "fortress_tile_11",
+            12 => "fortress_tile_12",
+            13 => "fortress_tile_13",
+            14 => "fortress_tile_14",
+            _ => "fortress_tile_15",
+        },
+    }
+}
+
+/// Compute 4-neighbor bitmask for a stone brick tile.
+/// bit 0 = solid above, bit 1 = solid below, bit 2 = solid left, bit 3 = solid right.
+pub fn stone_brick_bitmask(
+    course: &breakpoint_platformer::course_gen::Course,
+    tx: i32,
+    ty: i32,
+) -> u32 {
+    use breakpoint_platformer::course_gen::Tile;
+    let is_solid = |dx: i32, dy: i32| -> bool {
+        matches!(course.get_tile(tx + dx, ty + dy), Tile::StoneBrick)
+    };
+    let mut mask = 0u32;
+    if is_solid(0, 1) {
+        mask |= 1;
+    } // up
+    if is_solid(0, -1) {
+        mask |= 2;
+    } // down
+    if is_solid(-1, 0) {
+        mask |= 4;
+    } // left
+    if is_solid(1, 0) {
+        mask |= 8;
+    } // right
+    mask
+}
+
+/// Get the bitmask tile name for a given group and bitmask value.
+pub fn bitmask_tile_for_group(group: TileGroup, mask: u32) -> &'static str {
+    let group_name = match group {
+        TileGroup::CastleInterior => "castle",
+        TileGroup::Underground => "underground",
+        TileGroup::Sacred => "sacred",
+        TileGroup::Fortress => "fortress",
+    };
+    bitmask_tile_name(group_name, mask.min(15))
+}
+
+/// Map room themes to visual tile groups.
+pub fn room_theme_to_tile_group(theme: &breakpoint_platformer::course_gen::RoomTheme) -> TileGroup {
+    use breakpoint_platformer::course_gen::RoomTheme;
+    match theme {
+        RoomTheme::Entrance
+        | RoomTheme::Corridor
+        | RoomTheme::GreatHall
+        | RoomTheme::ThroneRoom => TileGroup::CastleInterior,
+        RoomTheme::Crypt | RoomTheme::Dungeon => TileGroup::Underground,
+        RoomTheme::Chapel | RoomTheme::Library => TileGroup::Sacred,
+        RoomTheme::Armory | RoomTheme::Tower => TileGroup::Fortress,
+    }
+}
+
+/// Legacy aliases so old code referencing stone_brick_top etc. still works.
+fn add_legacy_stone_aliases(sheet: &mut SpriteSheet) {
+    // Map old 8-variant names to nearest bitmask equivalents using castle tiles.
+    // stone_brick_top = exposed top (no solid above) = mask where bit0=0
+    // We alias to the bitmask tile with appropriate neighbor pattern.
+    let copy_region = |sheet: &mut SpriteSheet, src: &str, dst: &'static str| {
+        if let Some(r) = sheet.get(src).copied() {
+            sheet.regions.insert(dst, r);
+        }
+    };
+
+    // Bitmask: bit0=up, bit1=down, bit2=left, bit3=right
+    // top exposed (no above, left+right present) = 0b1110 = 14
+    copy_region(sheet, "castle_tile_14", "stone_brick_top");
+    // inner (all surrounded) = 0b1111 = 15
+    copy_region(sheet, "castle_tile_15", "stone_brick_inner");
+    // left edge (no left, above+below+right) = 0b1011 = 11
+    copy_region(sheet, "castle_tile_11", "stone_brick_left");
+    // right edge (no right, above+below+left) = 0b0111 = 7
+    copy_region(sheet, "castle_tile_7", "stone_brick_right");
+    // top-left corner (no above, no left) = 0b1010 = 10
+    copy_region(sheet, "castle_tile_10", "stone_brick_top_left");
+    // top-right corner (no above, no right) = 0b0110 = 6
+    copy_region(sheet, "castle_tile_6", "stone_brick_top_right");
+    // bottom-left corner (no below, no left) = 0b1001 = 9
+    copy_region(sheet, "castle_tile_9", "stone_brick_bottom_left");
+    // bottom-right corner (no below, no right) = 0b0101 = 5
+    copy_region(sheet, "castle_tile_5", "stone_brick_bottom_right");
+}
+
+// ================================================================
+// UI / Power-up / Props sprites — Y 576-703
+// ================================================================
+
 fn add_ui_sprites(sheet: &mut SpriteSheet) {
-    sheet.add("powerup_holy_water", 0, 192, 16, 16);
-    sheet.add("powerup_crucifix", 16, 192, 16, 16);
-    sheet.add("powerup_speed_boots", 32, 192, 16, 16);
-    sheet.add("powerup_double_jump", 48, 192, 16, 16);
-    sheet.add("powerup_armor", 64, 192, 16, 16);
-    sheet.add("powerup_invincibility", 80, 192, 16, 16);
-    sheet.add("powerup_whip_extend", 96, 192, 16, 16);
+    let tile = 16u32;
+    let y = 576u32;
 
-    sheet.add("heart_full", 0, 208, 16, 16);
-    sheet.add("heart_empty", 16, 208, 16, 16);
+    // Power-ups (16x16)
+    sheet.add("powerup_holy_water", 0, y, tile, tile);
+    sheet.add("powerup_crucifix", tile, y, tile, tile);
+    sheet.add("powerup_speed_boots", 2 * tile, y, tile, tile);
+    sheet.add("powerup_double_jump", 3 * tile, y, tile, tile);
+    sheet.add("powerup_armor", 4 * tile, y, tile, tile);
+    sheet.add("powerup_invincibility", 5 * tile, y, tile, tile);
+    sheet.add("powerup_whip_extend", 6 * tile, y, tile, tile);
 
-    sheet.add("prop_candelabra", 32, 208, 16, 16);
-    sheet.add("prop_cross", 48, 208, 16, 16);
-    sheet.add("prop_gravestone", 64, 208, 16, 16);
+    // Hearts (16x16)
+    sheet.add("heart_full", 0, y + tile, tile, tile);
+    sheet.add("heart_empty", tile, y + tile, tile, tile);
+
+    // Props (16x16)
+    sheet.add("prop_candelabra", 2 * tile, y + tile, tile, tile);
+    sheet.add("prop_cross", 3 * tile, y + tile, tile, tile);
+    sheet.add("prop_gravestone", 4 * tile, y + tile, tile, tile);
+
+    // Health bar elements (32x8 — procedural bar frame)
+    sheet.add("health_bar_frame", 0, y + 2 * tile, 32, 8);
+    sheet.add("health_bar_fill", 32, y + 2 * tile, 32, 8);
 }
 
-/// Add particle sprites (8x8) to the sprite sheet.
+// ================================================================
+// Particle sprites (8x8) — Y 704-767
+// ================================================================
+
 fn add_particle_sprites(sheet: &mut SpriteSheet) {
-    let y = 256;
+    let y = 704u32;
     let mut x = 0u32;
 
     for i in 0..4u32 {
@@ -441,18 +958,76 @@ fn add_particle_sprites(sheet: &mut SpriteSheet) {
         };
         sheet.add(name, x + i * 8, y, 8, 8);
     }
+
+    // Ambient particle types (Y=712)
+    let ay = 712u32;
+    sheet.add("particle_sparkle_0", 0, ay, 8, 8);
+    sheet.add("particle_sparkle_1", 8, ay, 8, 8);
+    sheet.add("particle_snowflake_0", 16, ay, 8, 8);
+    sheet.add("particle_snowflake_1", 24, ay, 8, 8);
+    sheet.add("particle_page_0", 32, ay, 8, 8);
+    sheet.add("particle_page_1", 40, ay, 8, 8);
 }
+
+// ================================================================
+// Combat VFX sprites (64x64) — Y 768-831
+// ================================================================
+
+fn add_combat_vfx_sprites(sheet: &mut SpriteSheet) {
+    let vfx_y = 768u32;
+    let size = 64u32;
+    let mut x = 0u32;
+
+    // Slash arc VFX: 5 frames
+    for i in 0..5u32 {
+        let name = match i {
+            0 => "vfx_slash_0",
+            1 => "vfx_slash_1",
+            2 => "vfx_slash_2",
+            3 => "vfx_slash_3",
+            _ => "vfx_slash_4",
+        };
+        sheet.add(name, x + i * size, vfx_y, size, size);
+    }
+    x += 5 * size; // 320
+
+    // Magic circle: 4 frames
+    for i in 0..4u32 {
+        let name = match i {
+            0 => "vfx_magic_circle_0",
+            1 => "vfx_magic_circle_1",
+            2 => "vfx_magic_circle_2",
+            _ => "vfx_magic_circle_3",
+        };
+        sheet.add(name, x + i * size, vfx_y, size, size);
+    }
+    x += 4 * size; // 576
+
+    // Hit sparks: 4 frames
+    for i in 0..4u32 {
+        let name = match i {
+            0 => "vfx_hit_spark_0",
+            1 => "vfx_hit_spark_1",
+            2 => "vfx_hit_spark_2",
+            _ => "vfx_hit_spark_3",
+        };
+        sheet.add(name, x + i * size, vfx_y, size, size);
+    }
+}
+
+// ================================================================
+// Animation lookup table
+// ================================================================
 
 /// Build animation lookup table from the sprite sheet.
 pub fn build_platformer_animations(sheet: &SpriteSheet) -> HashMap<&'static str, SpriteAnimation> {
     let mut anims = HashMap::new();
 
-    // Helper to collect frames
     let frames = |names: &[&str]| -> Vec<SpriteRegion> {
         names.iter().map(|n| sheet.get_or_default(n)).collect()
     };
 
-    // Player animations
+    // Player animations (expanded)
     anims.insert(
         "player_idle",
         SpriteAnimation {
@@ -463,6 +1038,8 @@ pub fn build_platformer_animations(sheet: &SpriteSheet) -> HashMap<&'static str,
                 "player_idle_3",
                 "player_idle_4",
                 "player_idle_5",
+                "player_idle_6",
+                "player_idle_7",
             ]),
             frame_duration: 0.15,
             looping: true,
@@ -478,15 +1055,39 @@ pub fn build_platformer_animations(sheet: &SpriteSheet) -> HashMap<&'static str,
                 "player_walk_3",
                 "player_walk_4",
                 "player_walk_5",
+                "player_walk_6",
+                "player_walk_7",
             ]),
             frame_duration: 0.1,
             looping: true,
         },
     );
     anims.insert(
+        "player_run",
+        SpriteAnimation {
+            frames: frames(&[
+                "player_run_0",
+                "player_run_1",
+                "player_run_2",
+                "player_run_3",
+                "player_run_4",
+                "player_run_5",
+                "player_run_6",
+                "player_run_7",
+            ]),
+            frame_duration: 0.08,
+            looping: true,
+        },
+    );
+    anims.insert(
         "player_jump",
         SpriteAnimation {
-            frames: frames(&["player_jump_0", "player_jump_1", "player_jump_2"]),
+            frames: frames(&[
+                "player_jump_0",
+                "player_jump_1",
+                "player_jump_2",
+                "player_jump_3",
+            ]),
             frame_duration: 0.12,
             looping: true,
         },
@@ -494,7 +1095,12 @@ pub fn build_platformer_animations(sheet: &SpriteSheet) -> HashMap<&'static str,
     anims.insert(
         "player_fall",
         SpriteAnimation {
-            frames: frames(&["player_fall_0", "player_fall_1", "player_fall_2"]),
+            frames: frames(&[
+                "player_fall_0",
+                "player_fall_1",
+                "player_fall_2",
+                "player_fall_3",
+            ]),
             frame_duration: 0.15,
             looping: true,
         },
@@ -509,16 +1115,23 @@ pub fn build_platformer_animations(sheet: &SpriteSheet) -> HashMap<&'static str,
                 "player_attack_3",
                 "player_attack_4",
                 "player_attack_5",
+                "player_attack_6",
+                "player_attack_7",
             ]),
-            frame_duration: 0.05,
+            frame_duration: 0.04,
             looping: false,
         },
     );
     anims.insert(
         "player_hurt",
         SpriteAnimation {
-            frames: frames(&["player_hurt_0", "player_hurt_1"]),
-            frame_duration: 0.2,
+            frames: frames(&[
+                "player_hurt_0",
+                "player_hurt_1",
+                "player_hurt_2",
+                "player_hurt_3",
+            ]),
+            frame_duration: 0.12,
             looping: false,
         },
     );
@@ -530,8 +1143,43 @@ pub fn build_platformer_animations(sheet: &SpriteSheet) -> HashMap<&'static str,
                 "player_dead_1",
                 "player_dead_2",
                 "player_dead_3",
+                "player_dead_4",
+                "player_dead_5",
             ]),
             frame_duration: 0.15,
+            looping: false,
+        },
+    );
+    anims.insert(
+        "player_wall_slide",
+        SpriteAnimation {
+            frames: frames(&[
+                "player_wall_slide_0",
+                "player_wall_slide_1",
+                "player_wall_slide_2",
+            ]),
+            frame_duration: 0.15,
+            looping: true,
+        },
+    );
+    anims.insert(
+        "player_crouch",
+        SpriteAnimation {
+            frames: frames(&["player_crouch_0", "player_crouch_1", "player_crouch_2"]),
+            frame_duration: 0.15,
+            looping: true,
+        },
+    );
+    anims.insert(
+        "player_dash",
+        SpriteAnimation {
+            frames: frames(&[
+                "player_dash_0",
+                "player_dash_1",
+                "player_dash_2",
+                "player_dash_3",
+            ]),
+            frame_duration: 0.06,
             looping: false,
         },
     );
@@ -589,6 +1237,48 @@ pub fn build_platformer_animations(sheet: &SpriteSheet) -> HashMap<&'static str,
         },
     );
 
+    // VFX animations
+    anims.insert(
+        "vfx_slash",
+        SpriteAnimation {
+            frames: frames(&[
+                "vfx_slash_0",
+                "vfx_slash_1",
+                "vfx_slash_2",
+                "vfx_slash_3",
+                "vfx_slash_4",
+            ]),
+            frame_duration: 0.05,
+            looping: false,
+        },
+    );
+    anims.insert(
+        "vfx_magic_circle",
+        SpriteAnimation {
+            frames: frames(&[
+                "vfx_magic_circle_0",
+                "vfx_magic_circle_1",
+                "vfx_magic_circle_2",
+                "vfx_magic_circle_3",
+            ]),
+            frame_duration: 0.1,
+            looping: true,
+        },
+    );
+    anims.insert(
+        "vfx_hit_spark",
+        SpriteAnimation {
+            frames: frames(&[
+                "vfx_hit_spark_0",
+                "vfx_hit_spark_1",
+                "vfx_hit_spark_2",
+                "vfx_hit_spark_3",
+            ]),
+            frame_duration: 0.04,
+            looping: false,
+        },
+    );
+
     anims
 }
 
@@ -598,6 +1288,7 @@ fn add_enemy_animations(anims: &mut HashMap<&'static str, SpriteAnimation>, shee
         names.iter().map(|n| sheet.get_or_default(n)).collect()
     };
 
+    // Skeleton
     anims.insert(
         "skeleton_walk",
         SpriteAnimation {
@@ -609,6 +1300,18 @@ fn add_enemy_animations(anims: &mut HashMap<&'static str, SpriteAnimation>, shee
             ]),
             frame_duration: 0.15,
             looping: true,
+        },
+    );
+    anims.insert(
+        "skeleton_attack",
+        SpriteAnimation {
+            frames: frames(&[
+                "skeleton_attack_0",
+                "skeleton_attack_1",
+                "skeleton_attack_2",
+            ]),
+            frame_duration: 0.1,
+            looping: false,
         },
     );
     anims.insert(
@@ -624,6 +1327,8 @@ fn add_enemy_animations(anims: &mut HashMap<&'static str, SpriteAnimation>, shee
             looping: false,
         },
     );
+
+    // Bat
     anims.insert(
         "bat_fly",
         SpriteAnimation {
@@ -640,6 +1345,8 @@ fn add_enemy_animations(anims: &mut HashMap<&'static str, SpriteAnimation>, shee
             looping: false,
         },
     );
+
+    // Knight
     anims.insert(
         "knight_walk",
         SpriteAnimation {
@@ -651,6 +1358,14 @@ fn add_enemy_animations(anims: &mut HashMap<&'static str, SpriteAnimation>, shee
             ]),
             frame_duration: 0.18,
             looping: true,
+        },
+    );
+    anims.insert(
+        "knight_attack",
+        SpriteAnimation {
+            frames: frames(&["knight_attack_0", "knight_attack_1", "knight_attack_2"]),
+            frame_duration: 0.1,
+            looping: false,
         },
     );
     anims.insert(
@@ -666,6 +1381,8 @@ fn add_enemy_animations(anims: &mut HashMap<&'static str, SpriteAnimation>, shee
             looping: false,
         },
     );
+
+    // Medusa
     anims.insert(
         "medusa_float",
         SpriteAnimation {
@@ -684,6 +1401,68 @@ fn add_enemy_animations(anims: &mut HashMap<&'static str, SpriteAnimation>, shee
         SpriteAnimation {
             frames: frames(&["medusa_death_0", "medusa_death_1"]),
             frame_duration: 0.2,
+            looping: false,
+        },
+    );
+
+    // Ghost (new enemy type)
+    anims.insert(
+        "ghost_drift",
+        SpriteAnimation {
+            frames: frames(&[
+                "ghost_drift_0",
+                "ghost_drift_1",
+                "ghost_drift_2",
+                "ghost_drift_3",
+            ]),
+            frame_duration: 0.2,
+            looping: true,
+        },
+    );
+    anims.insert(
+        "ghost_phase",
+        SpriteAnimation {
+            frames: frames(&["ghost_phase_0", "ghost_phase_1", "ghost_phase_2"]),
+            frame_duration: 0.15,
+            looping: false,
+        },
+    );
+    anims.insert(
+        "ghost_death",
+        SpriteAnimation {
+            frames: frames(&["ghost_death_0", "ghost_death_1", "ghost_death_2"]),
+            frame_duration: 0.15,
+            looping: false,
+        },
+    );
+
+    // Gargoyle (new enemy type)
+    anims.insert(
+        "gargoyle_perch",
+        SpriteAnimation {
+            frames: frames(&["gargoyle_perch_0", "gargoyle_perch_1"]),
+            frame_duration: 0.5,
+            looping: true,
+        },
+    );
+    anims.insert(
+        "gargoyle_swoop",
+        SpriteAnimation {
+            frames: frames(&[
+                "gargoyle_swoop_0",
+                "gargoyle_swoop_1",
+                "gargoyle_swoop_2",
+                "gargoyle_swoop_3",
+            ]),
+            frame_duration: 0.08,
+            looping: false,
+        },
+    );
+    anims.insert(
+        "gargoyle_death",
+        SpriteAnimation {
+            frames: frames(&["gargoyle_death_0", "gargoyle_death_1", "gargoyle_death_2"]),
+            frame_duration: 0.15,
             looping: false,
         },
     );
@@ -720,11 +1499,11 @@ mod tests {
     fn sprite_sheet_uv_coords() {
         let sheet = build_platformer_atlas();
         let r = sheet.get("player_idle_0").unwrap();
-        // 0,0 -> 16,32 on 1024x512 atlas
+        // 0,0 -> 32,64 on 2048x1024 atlas
         assert!((r.u0 - 0.0).abs() < 1e-6);
         assert!((r.v0 - 0.0).abs() < 1e-6);
-        assert!((r.u1 - 16.0 / 1024.0).abs() < 1e-6);
-        assert!((r.v1 - 32.0 / 512.0).abs() < 1e-6);
+        assert!((r.u1 - 32.0 / 2048.0).abs() < 1e-6);
+        assert!((r.v1 - 64.0 / 1024.0).abs() < 1e-6);
     }
 
     #[test]
@@ -795,11 +1574,15 @@ mod tests {
         let anims = build_platformer_animations(&sheet);
         assert!(anims.contains_key("player_idle"));
         assert!(anims.contains_key("player_walk"));
+        assert!(anims.contains_key("player_run"));
         assert!(anims.contains_key("player_jump"));
         assert!(anims.contains_key("player_fall"));
         assert!(anims.contains_key("player_attack"));
         assert!(anims.contains_key("player_hurt"));
         assert!(anims.contains_key("player_dead"));
+        assert!(anims.contains_key("player_wall_slide"));
+        assert!(anims.contains_key("player_crouch"));
+        assert!(anims.contains_key("player_dash"));
     }
 
     #[test]
@@ -814,13 +1597,19 @@ mod tests {
         assert!(anims.contains_key("knight_death"));
         assert!(anims.contains_key("medusa_float"));
         assert!(anims.contains_key("medusa_death"));
+        // New enemy types
+        assert!(anims.contains_key("ghost_drift"));
+        assert!(anims.contains_key("ghost_death"));
+        assert!(anims.contains_key("gargoyle_perch"));
+        assert!(anims.contains_key("gargoyle_swoop"));
+        assert!(anims.contains_key("gargoyle_death"));
     }
 
     #[test]
-    fn player_idle_animation_has_6_frames() {
+    fn player_idle_animation_has_8_frames() {
         let sheet = build_platformer_atlas();
         let anims = build_platformer_animations(&sheet);
-        assert_eq!(anims["player_idle"].frames.len(), 6);
+        assert_eq!(anims["player_idle"].frames.len(), 8);
     }
 
     #[test]
@@ -840,5 +1629,68 @@ mod tests {
         assert!(sheet.get("checkpoint_flag_down_0").is_some());
         assert!(sheet.get("checkpoint_flag_up_0").is_some());
         assert!(sheet.get("torch_0").is_some());
+    }
+
+    #[test]
+    fn bitmask_tiles_exist_for_all_groups() {
+        let sheet = build_platformer_atlas();
+        for i in 0..16 {
+            assert!(
+                sheet.get(&format!("castle_tile_{i}")).is_some(),
+                "castle_tile_{i} missing"
+            );
+            assert!(
+                sheet.get(&format!("underground_tile_{i}")).is_some(),
+                "underground_tile_{i} missing"
+            );
+            assert!(
+                sheet.get(&format!("sacred_tile_{i}")).is_some(),
+                "sacred_tile_{i} missing"
+            );
+            assert!(
+                sheet.get(&format!("fortress_tile_{i}")).is_some(),
+                "fortress_tile_{i} missing"
+            );
+        }
+    }
+
+    #[test]
+    fn new_enemy_sprites_exist() {
+        let sheet = build_platformer_atlas();
+        assert!(sheet.get("ghost_drift_0").is_some());
+        assert!(sheet.get("gargoyle_perch_0").is_some());
+        assert!(sheet.get("gargoyle_swoop_0").is_some());
+    }
+
+    #[test]
+    fn vfx_sprites_exist() {
+        let sheet = build_platformer_atlas();
+        assert!(sheet.get("vfx_slash_0").is_some());
+        assert!(sheet.get("vfx_magic_circle_0").is_some());
+        assert!(sheet.get("vfx_hit_spark_0").is_some());
+    }
+
+    #[test]
+    fn combat_vfx_animations_exist() {
+        let sheet = build_platformer_atlas();
+        let anims = build_platformer_animations(&sheet);
+        assert!(anims.contains_key("vfx_slash"));
+        assert!(anims.contains_key("vfx_magic_circle"));
+        assert!(anims.contains_key("vfx_hit_spark"));
+    }
+
+    #[test]
+    fn atlas_dimensions_are_2048x1024() {
+        assert_eq!(ATLAS_W, 2048);
+        assert_eq!(ATLAS_H, 1024);
+    }
+
+    #[test]
+    fn bitmask_tile_for_group_returns_valid() {
+        let sheet = build_platformer_atlas();
+        for mask in 0..16u32 {
+            let name = bitmask_tile_for_group(TileGroup::CastleInterior, mask);
+            assert!(sheet.get(name).is_some(), "Missing tile: {name}");
+        }
     }
 }

@@ -250,6 +250,17 @@ fn build_platformer_hud(app: &App) -> serde_json::Value {
     // Minimap: compact course + player data (sent each frame but very small)
     let minimap = build_platformer_minimap(&state, &app.lobby.players);
 
+    // Room name from local player position
+    let room_name = local_ps
+        .map(|ps| {
+            let tile_size = breakpoint_platformer::physics::TILE_SIZE;
+            let theme = state
+                .course
+                .room_theme_at_tile((ps.x / tile_size) as i32, (ps.y / tile_size) as i32);
+            format!("{theme:?}")
+        })
+        .unwrap_or_default();
+
     serde_json::json!({
         "mode": "Race",
         "players": players_json,
@@ -267,6 +278,7 @@ fn build_platformer_hud(app: &App) -> serde_json::Value {
         "localCheckpoint": local_checkpoint,
         "totalCheckpoints": total_checkpoints,
         "minimap": minimap,
+        "roomName": room_name,
     })
 }
 

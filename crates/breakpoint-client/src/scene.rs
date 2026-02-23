@@ -96,6 +96,8 @@ pub enum MaterialType {
         sprite_rect: Vec4,
         tint: Vec4,
         flip_x: bool,
+        /// Dissolve amount: 0.0 = solid, 1.0 = fully dissolved. Used for death effects.
+        dissolve: f32,
     },
     /// Parallax background layer (scrolling textured quad).
     Parallax {
@@ -117,14 +119,53 @@ pub enum MaterialType {
         progress: f32,
         color: Vec4,
     },
+    /// Anime-style slash arc VFX.
+    SlashArc {
+        progress: f32,
+        angle: f32,
+        color: Vec4,
+    },
+    /// Rotating magic circle VFX (power-up activation).
+    MagicCircle {
+        rotation: f32,
+        pulse: f32,
+        color: Vec4,
+    },
+    /// Volumetric god rays from stained glass or bright light sources.
+    GodRays {
+        intensity: f32,
+        color: Vec4,
+    },
+    /// Ground fog layer with scrolling noise.
+    FogLayer {
+        density: f32,
+        color: Vec4,
+    },
+    /// Procedural health bar (fill amount = intensity).
+    HealthBar {
+        fill: f32,
+        color: Vec4,
+    },
 }
 
 /// Lighting information for the scene (torch lights, ambient).
 pub struct SceneLighting {
-    /// Up to 16 lights: (x, y, intensity, radius).
+    /// Up to 32 lights: (x, y, intensity, radius).
     pub lights: Vec<[f32; 4]>,
+    /// Per-light color: (r, g, b, type). Type 0=point, 1=directional.
+    pub light_colors: Vec<[f32; 4]>,
     /// Ambient light level (0.0 = pitch black, 1.0 = fully lit).
     pub ambient: f32,
+    /// Per-room ambient color (RGB). Defaults to neutral white.
+    pub ambient_color: [f32; 3],
+    /// Per-room color grading: shadow tint (RGB, 1.0=neutral).
+    pub grade_shadows: [f32; 3],
+    /// Per-room color grading: highlight tint (RGB, 1.0=neutral).
+    pub grade_highlights: [f32; 3],
+    /// Per-room contrast (1.0=neutral).
+    pub grade_contrast: f32,
+    /// Per-room saturation (1.0=neutral).
+    pub saturation: f32,
 }
 
 /// A renderable object in the scene.
@@ -151,7 +192,13 @@ impl Scene {
             next_id: 1,
             lighting: SceneLighting {
                 lights: Vec::new(),
+                light_colors: Vec::new(),
                 ambient: 1.0,
+                ambient_color: [1.0, 1.0, 1.0],
+                grade_shadows: [1.0, 1.0, 1.0],
+                grade_highlights: [1.0, 1.0, 1.0],
+                grade_contrast: 1.0,
+                saturation: 1.0,
             },
         }
     }

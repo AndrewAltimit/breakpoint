@@ -11,6 +11,10 @@ pub enum EnemyType {
     Knight,
     /// Floating shooter, 1 HP, fires projectiles every 3s.
     Medusa,
+    /// Phases through walls, drifts toward nearest player. 1 HP, speed 1.5.
+    Ghost,
+    /// Perches on walls, swoops to attack. 2 HP, speed 4.0 during swoop.
+    Gargoyle,
 }
 
 /// A single enemy instance in the game world.
@@ -39,7 +43,7 @@ impl Enemy {
     /// Create a new enemy from a spawn definition.
     pub fn from_spawn(id: u16, spawn: &EnemySpawn) -> Self {
         let hp = match spawn.enemy_type {
-            EnemyType::Knight => 2,
+            EnemyType::Knight | EnemyType::Gargoyle => 2,
             _ => 1,
         };
         Self {
@@ -63,7 +67,7 @@ impl Enemy {
     /// Reset this enemy to its spawned state (used for respawning).
     pub fn respawn(&mut self) {
         self.hp = match self.enemy_type {
-            EnemyType::Knight => 2,
+            EnemyType::Knight | EnemyType::Gargoyle => 2,
             _ => 1,
         };
         self.alive = true;
@@ -201,6 +205,55 @@ fn tick_medusa(e: &mut Enemy, dt: f32, projectiles: &mut Vec<EnemyProjectile>) {
     }
 }
 
+/// Tick a ghost enemy: drifts toward patrol center with phase-through movement.
+/// Moves in a slow sine-wave pattern, ignoring walls.
+fn tick_ghost(e: &mut Enemy, dt: f32) {
+    let speed = 1.5;
+    let center_x = (e.patrol_min_x + e.patrol_max_x) / 2.0;
+    let drift_range = (e.patrol_max_x - e.patrol_min_x) / 2.0;
+
+    // Slow sinusoidal drift around center
+    let target_x = center_x + drift_range * (e.anim_time * 0.4).sin();
+    let dx = target_x - e.x;
+    e.vx = dx.clamp(-speed, speed);
+    e.x += e.vx * dt;
+
+    // Gentle vertical bob
+    e.vy = 0.8 * (e.anim_time * 1.2).cos();
+    e.y += e.vy * dt;
+
+    e.facing_right = e.vx > 0.0;
+}
+
+/// Tick a gargoyle enemy: perches at patrol midpoint, swoops outward periodically.
+fn tick_gargoyle(e: &mut Enemy, dt: f32) {
+    let center_x = (e.patrol_min_x + e.patrol_max_x) / 2.0;
+    let swoop_speed = 4.0;
+    let swoop_cycle = 4.0; // seconds between swoops
+    let swoop_duration = 1.0;
+
+    let cycle_t = e.anim_time % swoop_cycle;
+    if cycle_t < swoop_duration {
+        // Swooping phase: fly outward then return
+        let t = cycle_t / swoop_duration;
+        let direction = if e.facing_right { 1.0 } else { -1.0 };
+        // Triangle wave: go out for first half, return for second half
+        let offset = if t < 0.5 { t * 2.0 } else { 2.0 - t * 2.0 };
+        let range = (e.patrol_max_x - e.patrol_min_x) / 2.0;
+        e.x = center_x + direction * offset * range;
+        e.vx = direction * swoop_speed;
+    } else {
+        // Perching phase: stay at center, slowly settle
+        let drift = (e.x - center_x) * 0.95;
+        e.x = center_x + drift * (1.0 - 2.0 * dt).max(0.0);
+        e.vx = 0.0;
+        // Toggle direction for next swoop near the end
+        if cycle_t > swoop_cycle - 0.1 {
+            e.facing_right = !e.facing_right;
+        }
+    }
+}
+
 /// Tick all enemies. Dead enemies count down their respawn timer.
 pub fn tick_enemies(
     enemies: &mut [Enemy],
@@ -224,6 +277,8 @@ pub fn tick_enemies(
             EnemyType::Bat => tick_bat(e, dt, time),
             EnemyType::Knight => tick_knight(e, dt),
             EnemyType::Medusa => tick_medusa(e, dt, projectiles),
+            EnemyType::Ghost => tick_ghost(e, dt),
+            EnemyType::Gargoyle => tick_gargoyle(e, dt),
         }
     }
 }

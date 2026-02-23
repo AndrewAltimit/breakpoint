@@ -528,7 +528,7 @@ pub(crate) fn check_tile_effects(player: &mut PlatformerPlayerState, course: &Co
     }
 }
 
-pub(crate) fn is_solid(tile: Tile) -> bool {
+pub fn is_solid(tile: Tile) -> bool {
     matches!(tile, Tile::StoneBrick | Tile::BreakableWall)
 }
 
@@ -902,6 +902,7 @@ mod tests {
             enemy_spawns: Vec::new(),
             checkpoint_positions,
             room_distances: Vec::new(),
+            room_themes: Vec::new(),
         }
     }
 
@@ -1032,6 +1033,7 @@ mod tests {
             enemy_spawns: Vec::new(),
             checkpoint_positions: Vec::new(),
             room_distances: Vec::new(),
+            room_themes: Vec::new(),
         };
 
         let mut player = PlatformerPlayerState::new(5.5, 3.0);
