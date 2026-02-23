@@ -33,7 +33,7 @@ pub struct Enemy {
 }
 
 /// Enemy respawn delay in seconds.
-const RESPAWN_DELAY: f32 = 5.0;
+pub const RESPAWN_DELAY: f32 = 5.0;
 
 impl Enemy {
     /// Create a new enemy from a spawn definition.

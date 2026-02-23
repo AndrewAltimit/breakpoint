@@ -1,12 +1,5 @@
 {
-  "meta": {
-    "image": "platformer_atlas.png",
-    "size": {
-      "w": 256,
-      "h": 256
-    },
-    "format": "RGBA8888"
-  },
+  "atlas_size": 512,
   "sprites": {
     "player_idle_0": {
       "x": 0,
@@ -20,68 +13,170 @@
       "w": 16,
       "h": 32
     },
-    "player_walk_0": {
+    "player_idle_2": {
       "x": 32,
       "y": 0,
       "w": 16,
       "h": 32
     },
-    "player_walk_1": {
+    "player_idle_3": {
       "x": 48,
       "y": 0,
       "w": 16,
       "h": 32
     },
-    "player_walk_2": {
+    "player_idle_4": {
       "x": 64,
       "y": 0,
       "w": 16,
       "h": 32
     },
-    "player_walk_3": {
+    "player_idle_5": {
       "x": 80,
       "y": 0,
       "w": 16,
       "h": 32
     },
-    "player_jump": {
+    "player_walk_0": {
       "x": 96,
       "y": 0,
       "w": 16,
       "h": 32
     },
-    "player_fall": {
+    "player_walk_1": {
       "x": 112,
       "y": 0,
       "w": 16,
       "h": 32
     },
-    "player_attack_0": {
+    "player_walk_2": {
       "x": 128,
       "y": 0,
       "w": 16,
       "h": 32
     },
-    "player_attack_1": {
+    "player_walk_3": {
       "x": 144,
       "y": 0,
       "w": 16,
       "h": 32
     },
-    "player_attack_2": {
+    "player_walk_4": {
       "x": 160,
       "y": 0,
       "w": 16,
       "h": 32
     },
-    "player_hurt": {
+    "player_walk_5": {
       "x": 176,
       "y": 0,
       "w": 16,
       "h": 32
     },
-    "player_dead": {
+    "player_jump_0": {
       "x": 192,
+      "y": 0,
+      "w": 16,
+      "h": 32
+    },
+    "player_jump_1": {
+      "x": 208,
+      "y": 0,
+      "w": 16,
+      "h": 32
+    },
+    "player_jump_2": {
+      "x": 224,
+      "y": 0,
+      "w": 16,
+      "h": 32
+    },
+    "player_fall_0": {
+      "x": 240,
+      "y": 0,
+      "w": 16,
+      "h": 32
+    },
+    "player_fall_1": {
+      "x": 256,
+      "y": 0,
+      "w": 16,
+      "h": 32
+    },
+    "player_fall_2": {
+      "x": 272,
+      "y": 0,
+      "w": 16,
+      "h": 32
+    },
+    "player_attack_0": {
+      "x": 288,
+      "y": 0,
+      "w": 16,
+      "h": 32
+    },
+    "player_attack_1": {
+      "x": 304,
+      "y": 0,
+      "w": 16,
+      "h": 32
+    },
+    "player_attack_2": {
+      "x": 320,
+      "y": 0,
+      "w": 16,
+      "h": 32
+    },
+    "player_attack_3": {
+      "x": 336,
+      "y": 0,
+      "w": 16,
+      "h": 32
+    },
+    "player_attack_4": {
+      "x": 352,
+      "y": 0,
+      "w": 16,
+      "h": 32
+    },
+    "player_attack_5": {
+      "x": 368,
+      "y": 0,
+      "w": 16,
+      "h": 32
+    },
+    "player_hurt_0": {
+      "x": 384,
+      "y": 0,
+      "w": 16,
+      "h": 32
+    },
+    "player_hurt_1": {
+      "x": 400,
+      "y": 0,
+      "w": 16,
+      "h": 32
+    },
+    "player_dead_0": {
+      "x": 416,
+      "y": 0,
+      "w": 16,
+      "h": 32
+    },
+    "player_dead_1": {
+      "x": 432,
+      "y": 0,
+      "w": 16,
+      "h": 32
+    },
+    "player_dead_2": {
+      "x": 448,
+      "y": 0,
+      "w": 16,
+      "h": 32
+    },
+    "player_dead_3": {
+      "x": 464,
       "y": 0,
       "w": 16,
       "h": 32
@@ -98,155 +193,610 @@
       "w": 16,
       "h": 32
     },
-    "bat_fly_0": {
+    "skeleton_walk_2": {
       "x": 32,
+      "y": 64,
+      "w": 16,
+      "h": 32
+    },
+    "skeleton_walk_3": {
+      "x": 48,
+      "y": 64,
+      "w": 16,
+      "h": 32
+    },
+    "skeleton_attack_0": {
+      "x": 64,
+      "y": 64,
+      "w": 16,
+      "h": 32
+    },
+    "skeleton_attack_1": {
+      "x": 80,
+      "y": 64,
+      "w": 16,
+      "h": 32
+    },
+    "skeleton_attack_2": {
+      "x": 96,
+      "y": 64,
+      "w": 16,
+      "h": 32
+    },
+    "skeleton_death_0": {
+      "x": 112,
+      "y": 64,
+      "w": 16,
+      "h": 32
+    },
+    "skeleton_death_1": {
+      "x": 128,
+      "y": 64,
+      "w": 16,
+      "h": 32
+    },
+    "skeleton_death_2": {
+      "x": 144,
+      "y": 64,
+      "w": 16,
+      "h": 32
+    },
+    "skeleton_death_3": {
+      "x": 160,
+      "y": 64,
+      "w": 16,
+      "h": 32
+    },
+    "bat_fly_0": {
+      "x": 176,
       "y": 64,
       "w": 16,
       "h": 32
     },
     "bat_fly_1": {
-      "x": 48,
+      "x": 192,
+      "y": 64,
+      "w": 16,
+      "h": 32
+    },
+    "bat_fly_2": {
+      "x": 208,
+      "y": 64,
+      "w": 16,
+      "h": 32
+    },
+    "bat_fly_3": {
+      "x": 224,
+      "y": 64,
+      "w": 16,
+      "h": 32
+    },
+    "bat_death_0": {
+      "x": 240,
+      "y": 64,
+      "w": 16,
+      "h": 32
+    },
+    "bat_death_1": {
+      "x": 256,
       "y": 64,
       "w": 16,
       "h": 32
     },
     "knight_walk_0": {
-      "x": 64,
+      "x": 272,
       "y": 64,
       "w": 16,
       "h": 32
     },
     "knight_walk_1": {
-      "x": 80,
+      "x": 288,
+      "y": 64,
+      "w": 16,
+      "h": 32
+    },
+    "knight_walk_2": {
+      "x": 304,
+      "y": 64,
+      "w": 16,
+      "h": 32
+    },
+    "knight_walk_3": {
+      "x": 320,
+      "y": 64,
+      "w": 16,
+      "h": 32
+    },
+    "knight_attack_0": {
+      "x": 336,
+      "y": 64,
+      "w": 16,
+      "h": 32
+    },
+    "knight_attack_1": {
+      "x": 352,
+      "y": 64,
+      "w": 16,
+      "h": 32
+    },
+    "knight_attack_2": {
+      "x": 368,
+      "y": 64,
+      "w": 16,
+      "h": 32
+    },
+    "knight_death_0": {
+      "x": 384,
+      "y": 64,
+      "w": 16,
+      "h": 32
+    },
+    "knight_death_1": {
+      "x": 400,
+      "y": 64,
+      "w": 16,
+      "h": 32
+    },
+    "knight_death_2": {
+      "x": 416,
+      "y": 64,
+      "w": 16,
+      "h": 32
+    },
+    "knight_death_3": {
+      "x": 432,
       "y": 64,
       "w": 16,
       "h": 32
     },
     "medusa_float_0": {
-      "x": 96,
-      "y": 64,
+      "x": 0,
+      "y": 96,
       "w": 16,
       "h": 32
     },
     "medusa_float_1": {
-      "x": 112,
-      "y": 64,
-      "w": 16,
-      "h": 32
-    },
-    "projectile": {
-      "x": 128,
-      "y": 64,
-      "w": 16,
-      "h": 16
-    },
-    "stone_brick": {
-      "x": 0,
-      "y": 96,
-      "w": 16,
-      "h": 16
-    },
-    "platform": {
       "x": 16,
       "y": 96,
       "w": 16,
-      "h": 16
+      "h": 32
     },
-    "spikes": {
+    "medusa_float_2": {
       "x": 32,
       "y": 96,
       "w": 16,
-      "h": 16
+      "h": 32
     },
-    "checkpoint_flag": {
+    "medusa_float_3": {
       "x": 48,
       "y": 96,
       "w": 16,
-      "h": 16
+      "h": 32
     },
-    "finish_gate": {
+    "medusa_death_0": {
       "x": 64,
       "y": 96,
       "w": 16,
-      "h": 16
+      "h": 32
     },
-    "ladder": {
+    "medusa_death_1": {
       "x": 80,
       "y": 96,
       "w": 16,
-      "h": 16
+      "h": 32
     },
-    "breakable_wall": {
+    "projectile_0": {
       "x": 96,
       "y": 96,
       "w": 16,
       "h": 16
     },
-    "torch": {
+    "projectile_1": {
       "x": 112,
       "y": 96,
       "w": 16,
       "h": 16
     },
-    "stained_glass": {
+    "projectile_2": {
       "x": 128,
       "y": 96,
+      "w": 16,
+      "h": 16
+    },
+    "stone_brick_top": {
+      "x": 0,
+      "y": 128,
+      "w": 16,
+      "h": 16
+    },
+    "stone_brick_inner": {
+      "x": 16,
+      "y": 128,
+      "w": 16,
+      "h": 16
+    },
+    "stone_brick_left": {
+      "x": 32,
+      "y": 128,
+      "w": 16,
+      "h": 16
+    },
+    "stone_brick_right": {
+      "x": 48,
+      "y": 128,
+      "w": 16,
+      "h": 16
+    },
+    "stone_brick_top_left": {
+      "x": 64,
+      "y": 128,
+      "w": 16,
+      "h": 16
+    },
+    "stone_brick_top_right": {
+      "x": 80,
+      "y": 128,
+      "w": 16,
+      "h": 16
+    },
+    "stone_brick_bottom_left": {
+      "x": 96,
+      "y": 128,
+      "w": 16,
+      "h": 16
+    },
+    "stone_brick_bottom_right": {
+      "x": 112,
+      "y": 128,
+      "w": 16,
+      "h": 16
+    },
+    "platform_0": {
+      "x": 128,
+      "y": 128,
+      "w": 16,
+      "h": 16
+    },
+    "platform_1": {
+      "x": 144,
+      "y": 128,
+      "w": 16,
+      "h": 16
+    },
+    "platform_2": {
+      "x": 160,
+      "y": 128,
+      "w": 16,
+      "h": 16
+    },
+    "spikes_0": {
+      "x": 176,
+      "y": 128,
+      "w": 16,
+      "h": 16
+    },
+    "spikes_1": {
+      "x": 192,
+      "y": 128,
+      "w": 16,
+      "h": 16
+    },
+    "checkpoint_flag_down_0": {
+      "x": 0,
+      "y": 144,
+      "w": 16,
+      "h": 16
+    },
+    "checkpoint_flag_down_1": {
+      "x": 16,
+      "y": 144,
+      "w": 16,
+      "h": 16
+    },
+    "checkpoint_flag_up_0": {
+      "x": 32,
+      "y": 144,
+      "w": 16,
+      "h": 16
+    },
+    "checkpoint_flag_up_1": {
+      "x": 48,
+      "y": 144,
+      "w": 16,
+      "h": 16
+    },
+    "finish_gate_0": {
+      "x": 64,
+      "y": 144,
+      "w": 16,
+      "h": 16
+    },
+    "finish_gate_1": {
+      "x": 80,
+      "y": 144,
+      "w": 16,
+      "h": 16
+    },
+    "ladder": {
+      "x": 96,
+      "y": 144,
+      "w": 16,
+      "h": 16
+    },
+    "breakable_wall_0": {
+      "x": 112,
+      "y": 144,
+      "w": 16,
+      "h": 16
+    },
+    "breakable_wall_1": {
+      "x": 128,
+      "y": 144,
+      "w": 16,
+      "h": 16
+    },
+    "torch_0": {
+      "x": 144,
+      "y": 144,
+      "w": 16,
+      "h": 16
+    },
+    "torch_1": {
+      "x": 160,
+      "y": 144,
+      "w": 16,
+      "h": 16
+    },
+    "torch_2": {
+      "x": 176,
+      "y": 144,
+      "w": 16,
+      "h": 16
+    },
+    "torch_3": {
+      "x": 192,
+      "y": 144,
+      "w": 16,
+      "h": 16
+    },
+    "stained_glass": {
+      "x": 208,
+      "y": 144,
       "w": 16,
       "h": 16
     },
     "powerup_holy_water": {
       "x": 0,
-      "y": 112,
+      "y": 192,
       "w": 16,
       "h": 16
     },
     "powerup_crucifix": {
       "x": 16,
-      "y": 112,
+      "y": 192,
       "w": 16,
       "h": 16
     },
     "powerup_speed_boots": {
       "x": 32,
-      "y": 112,
+      "y": 192,
       "w": 16,
       "h": 16
     },
     "powerup_double_jump": {
       "x": 48,
-      "y": 112,
+      "y": 192,
       "w": 16,
       "h": 16
     },
     "powerup_armor": {
       "x": 64,
-      "y": 112,
+      "y": 192,
       "w": 16,
       "h": 16
     },
     "powerup_invincibility": {
       "x": 80,
-      "y": 112,
+      "y": 192,
       "w": 16,
       "h": 16
     },
     "powerup_whip_extend": {
       "x": 96,
-      "y": 112,
+      "y": 192,
       "w": 16,
       "h": 16
     },
     "heart_full": {
       "x": 0,
-      "y": 128,
+      "y": 208,
       "w": 16,
       "h": 16
     },
     "heart_empty": {
       "x": 16,
-      "y": 128,
+      "y": 208,
       "w": 16,
       "h": 16
+    },
+    "prop_candelabra": {
+      "x": 32,
+      "y": 208,
+      "w": 16,
+      "h": 16
+    },
+    "prop_cross": {
+      "x": 48,
+      "y": 208,
+      "w": 16,
+      "h": 16
+    },
+    "prop_gravestone": {
+      "x": 64,
+      "y": 208,
+      "w": 16,
+      "h": 16
+    },
+    "particle_dust_0": {
+      "x": 0,
+      "y": 256,
+      "w": 8,
+      "h": 8
+    },
+    "particle_dust_1": {
+      "x": 8,
+      "y": 256,
+      "w": 8,
+      "h": 8
+    },
+    "particle_dust_2": {
+      "x": 16,
+      "y": 256,
+      "w": 8,
+      "h": 8
+    },
+    "particle_dust_3": {
+      "x": 24,
+      "y": 256,
+      "w": 8,
+      "h": 8
+    },
+    "particle_spark_0": {
+      "x": 32,
+      "y": 256,
+      "w": 8,
+      "h": 8
+    },
+    "particle_spark_1": {
+      "x": 40,
+      "y": 256,
+      "w": 8,
+      "h": 8
+    },
+    "particle_spark_2": {
+      "x": 48,
+      "y": 256,
+      "w": 8,
+      "h": 8
+    },
+    "particle_blood_0": {
+      "x": 56,
+      "y": 256,
+      "w": 8,
+      "h": 8
+    },
+    "particle_blood_1": {
+      "x": 64,
+      "y": 256,
+      "w": 8,
+      "h": 8
+    },
+    "particle_blood_2": {
+      "x": 72,
+      "y": 256,
+      "w": 8,
+      "h": 8
+    },
+    "particle_fire_0": {
+      "x": 80,
+      "y": 256,
+      "w": 8,
+      "h": 8
+    },
+    "particle_fire_1": {
+      "x": 88,
+      "y": 256,
+      "w": 8,
+      "h": 8
+    },
+    "particle_fire_2": {
+      "x": 96,
+      "y": 256,
+      "w": 8,
+      "h": 8
+    },
+    "particle_fire_3": {
+      "x": 104,
+      "y": 256,
+      "w": 8,
+      "h": 8
+    },
+    "particle_magic_0": {
+      "x": 112,
+      "y": 256,
+      "w": 8,
+      "h": 8
+    },
+    "particle_magic_1": {
+      "x": 120,
+      "y": 256,
+      "w": 8,
+      "h": 8
+    },
+    "particle_magic_2": {
+      "x": 128,
+      "y": 256,
+      "w": 8,
+      "h": 8
+    },
+    "particle_smoke_0": {
+      "x": 136,
+      "y": 256,
+      "w": 8,
+      "h": 8
+    },
+    "particle_smoke_1": {
+      "x": 144,
+      "y": 256,
+      "w": 8,
+      "h": 8
+    },
+    "particle_smoke_2": {
+      "x": 152,
+      "y": 256,
+      "w": 8,
+      "h": 8
+    },
+    "particle_debris_0": {
+      "x": 160,
+      "y": 256,
+      "w": 8,
+      "h": 8
+    },
+    "particle_debris_1": {
+      "x": 168,
+      "y": 256,
+      "w": 8,
+      "h": 8
+    },
+    "particle_debris_2": {
+      "x": 176,
+      "y": 256,
+      "w": 8,
+      "h": 8
     }
+  },
+  "legacy_aliases": {
+    "player_idle_0": "player_idle_0",
+    "player_walk_0": "player_walk_0",
+    "player_jump": "player_jump_0",
+    "player_fall": "player_fall_0",
+    "player_attack_0": "player_attack_0",
+    "player_hurt": "player_hurt_0",
+    "player_dead": "player_dead_0",
+    "skeleton_walk_0": "skeleton_walk_0",
+    "skeleton_walk_1": "skeleton_walk_1",
+    "bat_fly_0": "bat_fly_0",
+    "bat_fly_1": "bat_fly_1",
+    "knight_walk_0": "knight_walk_0",
+    "knight_walk_1": "knight_walk_1",
+    "medusa_float_0": "medusa_float_0",
+    "medusa_float_1": "medusa_float_1",
+    "projectile": "projectile_0",
+    "stone_brick": "stone_brick_top",
+    "checkpoint_flag": "checkpoint_flag_down_0",
+    "finish_gate": "finish_gate_0",
+    "breakable_wall": "breakable_wall_0",
+    "torch": "torch_0"
   }
 }

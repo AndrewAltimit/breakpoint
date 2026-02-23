@@ -30,6 +30,9 @@ struct ShaderProgram {
     u_tint: Option<WebGlUniformLocation>,
     u_flip_x: Option<WebGlUniformLocation>,
     u_texture: Option<WebGlUniformLocation>,
+    // Parallax shader uniforms
+    u_uv_offset: Option<WebGlUniformLocation>,
+    u_uv_scale: Option<WebGlUniformLocation>,
 }
 
 /// Cached mesh GPU buffers.
@@ -309,6 +312,7 @@ impl Renderer {
                 MaterialType::Glow { .. } => "glow",
                 MaterialType::TronWall { .. } => "tronwall",
                 MaterialType::Sprite { .. } => "sprite",
+                MaterialType::Parallax { .. } => "parallax",
             };
 
             let Some(prog) = self.programs.get(program_name) else {
@@ -379,6 +383,29 @@ impl Renderer {
                     // Disable backface culling for sprites
                     gl.disable(GL::CULL_FACE);
                 },
+                MaterialType::Parallax {
+                    atlas_id,
+                    layer_rect,
+                    scroll_factor,
+                    tint,
+                } => {
+                    gl.active_texture(GL::TEXTURE0);
+                    if let Some(tex) = self.atlases.get(atlas_id) {
+                        gl.bind_texture(GL::TEXTURE_2D, Some(tex));
+                    }
+                    if let Some(loc) = &prog.u_texture {
+                        gl.uniform1i(Some(loc), 0);
+                    }
+                    // UV offset: scroll based on camera X position
+                    let scroll_x = camera.position.x * scroll_factor * 0.05;
+                    set_vec2(gl, &prog.u_uv_offset, scroll_x, layer_rect.y);
+                    // UV scale: full width, layer height portion
+                    set_vec2(gl, &prog.u_uv_scale, 1.0, layer_rect.w - layer_rect.y);
+                    set_vec4(gl, &prog.u_tint, tint);
+                    // Disable backface culling + depth write for background
+                    gl.disable(GL::CULL_FACE);
+                    gl.depth_mask(false);
+                },
             }
 
             // Bind mesh and draw
@@ -389,8 +416,10 @@ impl Renderer {
             }
         }
 
-        // Re-enable CULL_FACE if disabled by sprite batch
+        // Re-enable CULL_FACE if disabled by sprite/parallax batch
         gl.enable(GL::CULL_FACE);
+        // Re-enable depth writes if disabled by parallax layers
+        gl.depth_mask(true);
         self.gl.bind_vertex_array(None);
     }
 
@@ -417,6 +446,11 @@ impl Renderer {
                 include_str!("shaders_gl/sprite.vert"),
                 include_str!("shaders_gl/sprite.frag"),
             ),
+            (
+                "parallax",
+                include_str!("shaders_gl/parallax.vert"),
+                include_str!("shaders_gl/parallax.frag"),
+            ),
         ];
 
         for (name, vs, frag_src) in configs {
@@ -439,6 +473,8 @@ impl Renderer {
                 u_tint: self.gl.get_uniform_location(&program, "u_tint"),
                 u_flip_x: self.gl.get_uniform_location(&program, "u_flip_x"),
                 u_texture: self.gl.get_uniform_location(&program, "u_texture"),
+                u_uv_offset: self.gl.get_uniform_location(&program, "u_uv_offset"),
+                u_uv_scale: self.gl.get_uniform_location(&program, "u_uv_scale"),
                 program,
             };
             self.programs.insert(name, sp);
@@ -449,6 +485,19 @@ impl Renderer {
     /// Load a texture atlas from an HtmlImageElement with NEAREST filtering.
     #[cfg(target_family = "wasm")]
     pub fn load_texture(&mut self, id: u8, img: &web_sys::HtmlImageElement) {
+        self.load_texture_with_wrap(id, img, false);
+    }
+
+    /// Load a texture with NEAREST filtering and configurable wrapping.
+    /// When `wrap_repeat` is true, uses GL::REPEAT for seamless tiling;
+    /// otherwise uses CLAMP_TO_EDGE.
+    #[cfg(target_family = "wasm")]
+    pub fn load_texture_with_wrap(
+        &mut self,
+        id: u8,
+        img: &web_sys::HtmlImageElement,
+        wrap_repeat: bool,
+    ) {
         let gl = &self.gl;
         let Some(texture) = gl.create_texture() else {
             return;
@@ -465,10 +514,63 @@ impl Renderer {
         // Pixel-art filtering: NEAREST (no blurring)
         gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_MIN_FILTER, GL::NEAREST as i32);
         gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_MAG_FILTER, GL::NEAREST as i32);
-        gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_WRAP_S, GL::CLAMP_TO_EDGE as i32);
-        gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_WRAP_T, GL::CLAMP_TO_EDGE as i32);
+        let wrap = if wrap_repeat {
+            GL::REPEAT as i32
+        } else {
+            GL::CLAMP_TO_EDGE as i32
+        };
+        gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_WRAP_S, wrap);
+        gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_WRAP_T, wrap);
         gl.bind_texture(GL::TEXTURE_2D, None);
         self.atlases.insert(id, texture);
+    }
+
+    /// Get the accumulated renderer time (for animations).
+    pub fn time(&self) -> f32 {
+        self.time
+    }
+
+    /// Draw a full-screen color overlay (for damage/pickup flashes).
+    /// Uses additive blending for a bright flash effect.
+    pub fn draw_screen_flash(&self, color: Vec4, alpha: f32) {
+        if alpha <= 0.001 {
+            return;
+        }
+        let gl = &self.gl;
+        let Some(prog) = self.programs.get("unlit") else {
+            return;
+        };
+        let Some(mesh) = self.meshes.get(&MeshKey::Quad) else {
+            return;
+        };
+
+        gl.use_program(Some(&prog.program));
+
+        // Full-screen NDC quad: identity MVP places quad at [-0.5, 0.5] in clip space
+        // Scale to fill screen: 2x2 in NDC
+        let mvp = glam::Mat4::from_scale(Vec3::new(2.0, 2.0, 1.0));
+        set_mat4(gl, &prog.u_mvp, &mvp);
+        set_mat4(gl, &prog.u_model, &glam::Mat4::IDENTITY);
+        set_vec4(
+            gl,
+            &prog.u_color,
+            &Vec4::new(color.x, color.y, color.z, alpha),
+        );
+        set_f32(gl, &prog.u_fog_density, 0.0);
+
+        // Additive blending for flash
+        gl.blend_func(GL::SRC_ALPHA, GL::ONE);
+        gl.disable(GL::DEPTH_TEST);
+        gl.disable(GL::CULL_FACE);
+
+        gl.bind_vertex_array(Some(&mesh.vao));
+        gl.draw_arrays(GL::TRIANGLES, 0, mesh.vertex_count);
+        gl.bind_vertex_array(None);
+
+        // Restore standard blending and depth
+        gl.blend_func(GL::SRC_ALPHA, GL::ONE_MINUS_SRC_ALPHA);
+        gl.enable(GL::DEPTH_TEST);
+        gl.enable(GL::CULL_FACE);
     }
 
     /// Generate mesh VBOs/VAOs for each primitive type.
@@ -530,14 +632,16 @@ fn set_mat4(gl: &GL, loc: &Option<WebGlUniformLocation>, m: &Mat4) {
 }
 
 /// Sort key for grouping objects by shader program (minimizes program switches).
+/// Parallax renders first (background), sprites last.
 fn material_sort_key(m: &MaterialType) -> u8 {
     match m {
-        MaterialType::Unlit { .. } => 0,
-        MaterialType::Gradient { .. } => 1,
-        MaterialType::Glow { .. } => 2,
-        MaterialType::Ripple { .. } => 3,
-        MaterialType::TronWall { .. } => 4,
-        MaterialType::Sprite { .. } => 5,
+        MaterialType::Parallax { .. } => 0,
+        MaterialType::Unlit { .. } => 1,
+        MaterialType::Gradient { .. } => 2,
+        MaterialType::Glow { .. } => 3,
+        MaterialType::Ripple { .. } => 4,
+        MaterialType::TronWall { .. } => 5,
+        MaterialType::Sprite { .. } => 6,
     }
 }
 

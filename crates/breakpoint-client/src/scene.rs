@@ -97,6 +97,15 @@ pub enum MaterialType {
         tint: Vec4,
         flip_x: bool,
     },
+    /// Parallax background layer (scrolling textured quad).
+    Parallax {
+        atlas_id: u8,
+        /// UV rect for the layer in the background texture (v0..v1 row).
+        layer_rect: Vec4,
+        /// Scroll speed multiplier (0.0 = static, 1.0 = camera speed).
+        scroll_factor: f32,
+        tint: Vec4,
+    },
 }
 
 /// A renderable object in the scene.

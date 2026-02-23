@@ -11,11 +11,12 @@ use breakpoint_core::player::Player;
 use crate::audio::{AudioEvent, AudioEventQueue, AudioManager, AudioSettings};
 use crate::bridge;
 use crate::camera_gl::{Camera, CameraMode};
-use crate::effects::ScreenShake;
+use crate::effects::{ScreenFlash, ScreenShake};
 use crate::game::{GameRegistry, read_game_state};
 use crate::input::InputState;
 use crate::net_client::WsClient;
 use crate::overlay::{OverlayEventQueue, OverlayNetEvent, OverlayState};
+use crate::particles::ParticleSystem;
 use crate::renderer::Renderer;
 use crate::scene::Scene;
 use crate::theme::Theme;
@@ -144,6 +145,14 @@ pub struct App {
     pub round_tracker: Option<RoundTracker>,
     pub registry: GameRegistry,
     pub screen_shake: ScreenShake,
+    pub screen_flash: ScreenFlash,
+    pub particle_system: ParticleSystem,
+    /// Previous frame HP per player (for detecting damage/heal events).
+    prev_player_hp: HashMap<PlayerId, u8>,
+    /// Previous frame enemy alive states (for detecting kills).
+    prev_enemy_alive: Vec<(u16, bool)>,
+    /// Previous frame powerup collected states (for detecting pickups).
+    prev_powerup_collected: Vec<bool>,
     pub was_connected: bool,
     pub reconnect_info: Option<ReconnectInfo>,
     /// Timestamp (ms) when between-round countdown expires.
@@ -248,6 +257,11 @@ impl App {
             round_tracker: None,
             registry,
             screen_shake: ScreenShake::default(),
+            screen_flash: ScreenFlash::default(),
+            particle_system: ParticleSystem::new(),
+            prev_player_hp: HashMap::new(),
+            prev_enemy_alive: Vec::new(),
+            prev_powerup_collected: Vec::new(),
             was_connected: false,
             reconnect_info: None,
             between_round_end_time: None,
@@ -309,6 +323,9 @@ impl App {
             self.camera.apply_shake(self.screen_shake.offset);
         }
 
+        // Screen flash
+        self.screen_flash.tick(dt);
+
         // Process audio
         if !self.audio_settings.muted {
             self.audio_events
@@ -316,6 +333,10 @@ impl App {
         } else {
             self.audio_events.clear();
         }
+
+        // Update and render particles into the scene
+        self.particle_system.tick(dt);
+        self.particle_system.render(&mut self.scene);
 
         // Render 3D scene — Tron uses pure black background + fog
         let is_tron = self
@@ -334,6 +355,12 @@ impl App {
         }
         self.renderer
             .draw(&self.scene, &self.camera, dt, clear_color, fog_density);
+
+        // Draw screen flash overlay after scene (additive blend)
+        if self.screen_flash.active {
+            self.renderer
+                .draw_screen_flash(self.screen_flash.color, self.screen_flash.alpha());
+        }
 
         // Push UI state to JS
         bridge::push_ui_state(self);
@@ -773,6 +800,11 @@ impl App {
     fn update_game(&mut self, dt: f32) {
         self.audio_frame_counter = self.audio_frame_counter.wrapping_add(1);
 
+        let game_id = match self.game {
+            Some(ref g) => g.game_id,
+            None => return,
+        };
+
         let Some(ref active) = self.game else {
             return;
         };
@@ -854,6 +886,136 @@ impl App {
         // Game-specific input and rendering
         self.update_game_input();
         self.sync_game_scene(dt);
+
+        // Detect platformer state changes for VFX (outside the `ref active` borrow)
+        #[cfg(feature = "platformer")]
+        if game_id == GameId::Platformer {
+            self.detect_platformer_events();
+        }
+    }
+
+    /// Detect HP changes and enemy kills in the platformer for particle/audio effects.
+    #[cfg(feature = "platformer")]
+    fn detect_platformer_events(&mut self) {
+        let Some(ref active) = self.game else {
+            return;
+        };
+        let Some(state) = read_game_state::<breakpoint_platformer::PlatformerState>(active) else {
+            return;
+        };
+        let sheet = crate::sprite_atlas::build_platformer_atlas();
+
+        self.detect_player_hp_changes(&state, &sheet);
+        self.detect_enemy_kills(&state, &sheet);
+        self.detect_powerup_collections(&state, &sheet);
+    }
+
+    /// Check for player HP decreases and trigger effects.
+    #[cfg(feature = "platformer")]
+    fn detect_player_hp_changes(
+        &mut self,
+        state: &breakpoint_platformer::PlatformerState,
+        sheet: &crate::sprite_atlas::SpriteSheet,
+    ) {
+        use crate::particles::ParticleEffect;
+        for (&pid, player) in &state.players {
+            if let Some(&prev_hp) = self.prev_player_hp.get(&pid) {
+                if player.hp < prev_hp {
+                    // Player took damage
+                    self.screen_shake.trigger(0.2, 0.2);
+                    self.screen_flash
+                        .trigger(Vec4::new(1.0, 0.0, 0.0, 0.3), 0.15);
+                    self.particle_system.emit(
+                        ParticleEffect::BloodDamage,
+                        player.x,
+                        player.y,
+                        sheet,
+                    );
+                    self.audio_events.push(AudioEvent::PlatformerHit);
+                }
+                if player.death_respawn_timer > 0.0 && prev_hp > 0 && player.hp == 0 {
+                    // Player died
+                    self.screen_shake.trigger(0.4, 0.3);
+                    self.audio_events.push(AudioEvent::PlatformerDeath);
+                }
+            }
+            self.prev_player_hp.insert(pid, player.hp);
+        }
+    }
+
+    /// Check for enemy death transitions and trigger effects.
+    #[cfg(feature = "platformer")]
+    fn detect_enemy_kills(
+        &mut self,
+        state: &breakpoint_platformer::PlatformerState,
+        sheet: &crate::sprite_atlas::SpriteSheet,
+    ) {
+        use crate::particles::ParticleEffect;
+        let new_alive: Vec<(u16, bool)> = state.enemies.iter().map(|e| (e.id, e.alive)).collect();
+
+        for &(id, alive) in &new_alive {
+            let was_alive = self
+                .prev_enemy_alive
+                .iter()
+                .find(|&&(eid, _)| eid == id)
+                .is_some_and(|&(_, a)| a);
+            if was_alive && !alive {
+                // Enemy was just killed
+                if let Some(e) = state.enemies.iter().find(|e| e.id == id) {
+                    self.particle_system
+                        .emit(ParticleEffect::EnemyDeath, e.x, e.y, sheet);
+                    self.screen_flash
+                        .trigger(Vec4::new(1.0, 1.0, 1.0, 0.2), 0.1);
+                    self.audio_events.push(AudioEvent::PlatformerEnemyKill);
+                }
+            }
+        }
+
+        self.prev_enemy_alive = new_alive;
+    }
+
+    /// Check for powerup collection events and emit colored burst particles.
+    #[cfg(feature = "platformer")]
+    fn detect_powerup_collections(
+        &mut self,
+        state: &breakpoint_platformer::PlatformerState,
+        sheet: &crate::sprite_atlas::SpriteSheet,
+    ) {
+        use crate::particles::ParticleEffect;
+        use breakpoint_platformer::powerups::PowerUpKind;
+
+        let current: Vec<bool> = state.powerups.iter().map(|p| p.collected).collect();
+
+        if current.len() == self.prev_powerup_collected.len() {
+            for (i, (&was, &is_now)) in self
+                .prev_powerup_collected
+                .iter()
+                .zip(current.iter())
+                .enumerate()
+            {
+                if !was && is_now {
+                    let pu = &state.powerups[i];
+                    let color = match pu.kind {
+                        PowerUpKind::HolyWater => Vec4::new(0.3, 0.5, 1.0, 1.0),
+                        PowerUpKind::Crucifix => Vec4::new(1.0, 0.9, 0.2, 1.0),
+                        PowerUpKind::SpeedBoots => Vec4::new(0.2, 1.0, 0.3, 1.0),
+                        PowerUpKind::DoubleJump => Vec4::new(0.2, 0.9, 1.0, 1.0),
+                        PowerUpKind::ArmorUp => Vec4::new(0.6, 0.6, 0.6, 1.0),
+                        PowerUpKind::Invincibility => Vec4::new(1.0, 0.85, 0.2, 1.0),
+                        PowerUpKind::WhipExtend => Vec4::new(1.0, 0.5, 0.1, 1.0),
+                    };
+                    self.particle_system.emit(
+                        ParticleEffect::GenericBurst { color, count: 8 },
+                        pu.x,
+                        pu.y,
+                        sheet,
+                    );
+                    self.audio_events.push(AudioEvent::PlatformerPowerUp);
+                }
+            }
+        }
+
+        self.prev_powerup_collected = current;
     }
 
     fn update_game_input(&mut self) {
@@ -951,6 +1113,8 @@ impl App {
                     active,
                     &self.theme,
                     dt,
+                    self.camera.position.x,
+                    self.renderer.time(),
                 );
             },
             #[cfg(feature = "lasertag")]
@@ -1073,7 +1237,7 @@ pub fn run() {
 
     let app = Rc::new(RefCell::new(App::new(renderer)));
 
-    // Load platformer sprite atlas
+    // Load platformer sprite atlas (ID 0, clamp-to-edge)
     {
         let app_atlas = Rc::clone(&app);
         let img = web_sys::HtmlImageElement::new().unwrap();
@@ -1085,6 +1249,23 @@ pub fn run() {
         img.set_onload(Some(onload.as_ref().unchecked_ref()));
         onload.forget();
         img.set_src("assets/sprites/platformer_atlas.png");
+    }
+
+    // Load parallax background texture (ID 1, repeat wrapping)
+    {
+        let app_bg = Rc::clone(&app);
+        let img = web_sys::HtmlImageElement::new().unwrap();
+        let img_clone = img.clone();
+        let onload = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || {
+            app_bg
+                .borrow_mut()
+                .renderer
+                .load_texture_with_wrap(1, &img_clone, true);
+            web_sys::console::log_1(&"Parallax background loaded".into());
+        });
+        img.set_onload(Some(onload.as_ref().unchecked_ref()));
+        onload.forget();
+        img.set_src("assets/sprites/platformer_bg.png");
     }
 
     // Attach input listeners
