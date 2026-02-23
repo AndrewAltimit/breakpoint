@@ -217,7 +217,7 @@ fn build_platformer_hud(app: &App) -> serde_json::Value {
         .unwrap_or_default();
 
     // Race position: rank by furthest X progress among non-eliminated players
-    let mut positions: Vec<(u32, f32)> = state
+    let mut positions: Vec<(u64, f32)> = state
         .players
         .iter()
         .filter(|(_, p)| !p.eliminated)
