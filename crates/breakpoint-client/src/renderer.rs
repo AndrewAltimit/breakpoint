@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use glam::{Mat4, Vec3, Vec4};
 use wasm_bindgen::JsCast;
 use web_sys::{
-    WebGl2RenderingContext as GL, WebGlProgram, WebGlShader, WebGlUniformLocation,
+    WebGl2RenderingContext as GL, WebGlProgram, WebGlShader, WebGlTexture, WebGlUniformLocation,
     WebGlVertexArrayObject,
 };
 
@@ -25,6 +25,11 @@ struct ShaderProgram {
     u_camera_pos: Option<WebGlUniformLocation>,
     u_fog_density: Option<WebGlUniformLocation>,
     u_resolution: Option<WebGlUniformLocation>,
+    // Sprite shader uniforms
+    u_sprite_rect: Option<WebGlUniformLocation>,
+    u_tint: Option<WebGlUniformLocation>,
+    u_flip_x: Option<WebGlUniformLocation>,
+    u_texture: Option<WebGlUniformLocation>,
 }
 
 /// Cached mesh GPU buffers.
@@ -43,6 +48,8 @@ pub struct Renderer {
     meshes: HashMap<MeshKey, MeshBuffers>,
     time: f32,
     context_lost: std::cell::Cell<bool>,
+    /// Texture atlases keyed by ID.
+    atlases: HashMap<u8, WebGlTexture>,
 }
 
 /// Key for mesh cache — identifies unique mesh configurations.
@@ -52,6 +59,7 @@ enum MeshKey {
     Cylinder { segments: u16 },
     Cuboid,
     Plane,
+    Quad,
 }
 
 impl From<&MeshType> for MeshKey {
@@ -61,6 +69,7 @@ impl From<&MeshType> for MeshKey {
             MeshType::Cylinder { segments } => MeshKey::Cylinder { segments },
             MeshType::Cuboid => MeshKey::Cuboid,
             MeshType::Plane => MeshKey::Plane,
+            MeshType::Quad => MeshKey::Quad,
         }
     }
 }
@@ -149,6 +158,7 @@ impl Renderer {
             meshes: HashMap::new(),
             time: 0.0,
             context_lost,
+            atlases: HashMap::new(),
         };
 
         renderer.compile_programs()?;
@@ -167,6 +177,7 @@ impl Renderer {
     pub fn rebuild_resources(&mut self) -> Result<(), String> {
         self.programs.clear();
         self.meshes.clear();
+        self.atlases.clear();
         self.compile_programs()?;
         self.generate_meshes();
         Ok(())
@@ -297,6 +308,7 @@ impl Renderer {
                 MaterialType::Ripple { .. } => "ripple",
                 MaterialType::Glow { .. } => "glow",
                 MaterialType::TronWall { .. } => "tronwall",
+                MaterialType::Sprite { .. } => "sprite",
             };
 
             let Some(prog) = self.programs.get(program_name) else {
@@ -347,6 +359,26 @@ impl Renderer {
                     let tiles = width / s.y.max(0.01);
                     set_vec2(gl, &prog.u_resolution, tiles, 3.0);
                 },
+                MaterialType::Sprite {
+                    atlas_id,
+                    sprite_rect,
+                    tint,
+                    flip_x,
+                } => {
+                    // Bind atlas texture
+                    gl.active_texture(GL::TEXTURE0);
+                    if let Some(tex) = self.atlases.get(atlas_id) {
+                        gl.bind_texture(GL::TEXTURE_2D, Some(tex));
+                    }
+                    if let Some(loc) = &prog.u_texture {
+                        gl.uniform1i(Some(loc), 0);
+                    }
+                    set_vec4(gl, &prog.u_sprite_rect, sprite_rect);
+                    set_vec4(gl, &prog.u_tint, tint);
+                    set_f32(gl, &prog.u_flip_x, if *flip_x { 1.0 } else { 0.0 });
+                    // Disable backface culling for sprites
+                    gl.disable(GL::CULL_FACE);
+                },
             }
 
             // Bind mesh and draw
@@ -357,6 +389,8 @@ impl Renderer {
             }
         }
 
+        // Re-enable CULL_FACE if disabled by sprite batch
+        gl.enable(GL::CULL_FACE);
         self.gl.bind_vertex_array(None);
     }
 
@@ -364,16 +398,29 @@ impl Renderer {
     fn compile_programs(&mut self) -> Result<(), String> {
         let vert_src = include_str!("shaders_gl/unlit.vert");
 
-        let configs: Vec<(&str, &str)> = vec![
-            ("unlit", include_str!("shaders_gl/unlit.frag")),
-            ("gradient", include_str!("shaders_gl/gradient.frag")),
-            ("ripple", include_str!("shaders_gl/ripple.frag")),
-            ("glow", include_str!("shaders_gl/glow.frag")),
-            ("tronwall", include_str!("shaders_gl/tronwall.frag")),
+        let configs: Vec<(&str, &str, &str)> = vec![
+            ("unlit", vert_src, include_str!("shaders_gl/unlit.frag")),
+            (
+                "gradient",
+                vert_src,
+                include_str!("shaders_gl/gradient.frag"),
+            ),
+            ("ripple", vert_src, include_str!("shaders_gl/ripple.frag")),
+            ("glow", vert_src, include_str!("shaders_gl/glow.frag")),
+            (
+                "tronwall",
+                vert_src,
+                include_str!("shaders_gl/tronwall.frag"),
+            ),
+            (
+                "sprite",
+                include_str!("shaders_gl/sprite.vert"),
+                include_str!("shaders_gl/sprite.frag"),
+            ),
         ];
 
-        for (name, frag_src) in configs {
-            let program = link_program(&self.gl, vert_src, frag_src)?;
+        for (name, vs, frag_src) in configs {
+            let program = link_program(&self.gl, vs, frag_src)?;
 
             let sp = ShaderProgram {
                 u_mvp: self.gl.get_uniform_location(&program, "u_mvp"),
@@ -388,11 +435,40 @@ impl Renderer {
                 u_camera_pos: self.gl.get_uniform_location(&program, "u_camera_pos"),
                 u_fog_density: self.gl.get_uniform_location(&program, "u_fog_density"),
                 u_resolution: self.gl.get_uniform_location(&program, "u_resolution"),
+                u_sprite_rect: self.gl.get_uniform_location(&program, "u_sprite_rect"),
+                u_tint: self.gl.get_uniform_location(&program, "u_tint"),
+                u_flip_x: self.gl.get_uniform_location(&program, "u_flip_x"),
+                u_texture: self.gl.get_uniform_location(&program, "u_texture"),
                 program,
             };
             self.programs.insert(name, sp);
         }
         Ok(())
+    }
+
+    /// Load a texture atlas from an HtmlImageElement with NEAREST filtering.
+    #[cfg(target_family = "wasm")]
+    pub fn load_texture(&mut self, id: u8, img: &web_sys::HtmlImageElement) {
+        let gl = &self.gl;
+        let Some(texture) = gl.create_texture() else {
+            return;
+        };
+        gl.bind_texture(GL::TEXTURE_2D, Some(&texture));
+        let _ = gl.tex_image_2d_with_u32_and_u32_and_html_image_element(
+            GL::TEXTURE_2D,
+            0,
+            GL::RGBA as i32,
+            GL::RGBA,
+            GL::UNSIGNED_BYTE,
+            img,
+        );
+        // Pixel-art filtering: NEAREST (no blurring)
+        gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_MIN_FILTER, GL::NEAREST as i32);
+        gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_MAG_FILTER, GL::NEAREST as i32);
+        gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_WRAP_S, GL::CLAMP_TO_EDGE as i32);
+        gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_WRAP_T, GL::CLAMP_TO_EDGE as i32);
+        gl.bind_texture(GL::TEXTURE_2D, None);
+        self.atlases.insert(id, texture);
     }
 
     /// Generate mesh VBOs/VAOs for each primitive type.
@@ -402,6 +478,7 @@ impl Renderer {
             (MeshKey::Plane, generate_plane()),
             (MeshKey::Sphere { segments: 16 }, generate_sphere(16)),
             (MeshKey::Cylinder { segments: 16 }, generate_cylinder(16)),
+            (MeshKey::Quad, generate_quad()),
         ];
 
         for (key, vertices) in configs {
@@ -460,6 +537,7 @@ fn material_sort_key(m: &MaterialType) -> u8 {
         MaterialType::Glow { .. } => 2,
         MaterialType::Ripple { .. } => 3,
         MaterialType::TronWall { .. } => 4,
+        MaterialType::Sprite { .. } => 5,
     }
 }
 
@@ -715,5 +793,24 @@ fn generate_cylinder(segments: u16) -> Vec<f32> {
         push_vertex(&mut buf, p1_bot, -Vec3::Y, u1, 0.0);
         push_vertex(&mut buf, p0_bot, -Vec3::Y, u0, 0.0);
     }
+    buf
+}
+
+/// Unit quad on the XY plane at Z=0, facing -Z (for side-view camera).
+fn generate_quad() -> Vec<f32> {
+    let mut buf = Vec::with_capacity(6 * 8);
+    let normal = -Vec3::Z;
+    let h = 0.5;
+    // Quad corners on XY plane
+    let v00 = Vec3::new(-h, -h, 0.0);
+    let v10 = Vec3::new(h, -h, 0.0);
+    let v11 = Vec3::new(h, h, 0.0);
+    let v01 = Vec3::new(-h, h, 0.0);
+    push_vertex(&mut buf, v00, normal, 0.0, 0.0);
+    push_vertex(&mut buf, v10, normal, 1.0, 0.0);
+    push_vertex(&mut buf, v11, normal, 1.0, 1.0);
+    push_vertex(&mut buf, v00, normal, 0.0, 0.0);
+    push_vertex(&mut buf, v11, normal, 1.0, 1.0);
+    push_vertex(&mut buf, v01, normal, 0.0, 1.0);
     buf
 }

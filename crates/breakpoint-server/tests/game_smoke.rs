@@ -120,6 +120,7 @@ async fn platformer_input_processed_by_server() {
         move_dir: 1.0,
         jump: true,
         use_powerup: false,
+        attack: false,
     };
     let input_data = rmp_serde::to_vec(&plat_input).unwrap();
     let msg = ClientMessage::PlayerInput(PlayerInputMsg {
@@ -392,6 +393,7 @@ async fn platformer_jump_changes_y() {
         move_dir: 0.0,
         jump: true,
         use_powerup: false,
+        attack: false,
     };
     let data = rmp_serde::to_vec(&input).unwrap();
     game.apply_input(1, &data);

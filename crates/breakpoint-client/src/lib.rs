@@ -10,6 +10,7 @@ pub mod net_client;
 pub mod overlay;
 mod renderer;
 mod scene;
+pub mod sprite_atlas;
 mod storage;
 pub mod theme;
 

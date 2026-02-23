@@ -55,10 +55,16 @@ impl Transform {
 /// Mesh primitive types.
 #[derive(Debug, Clone, Copy)]
 pub enum MeshType {
-    Sphere { segments: u16 },
-    Cylinder { segments: u16 },
+    Sphere {
+        segments: u16,
+    },
+    Cylinder {
+        segments: u16,
+    },
     Cuboid,
     Plane,
+    /// XY-plane billboard quad (faces -Z, for side-view camera).
+    Quad,
 }
 
 /// Material types matching the GLSL shader programs.
@@ -83,6 +89,13 @@ pub enum MaterialType {
     TronWall {
         color: Vec4,
         intensity: f32,
+    },
+    /// Textured sprite from a texture atlas.
+    Sprite {
+        atlas_id: u8,
+        sprite_rect: Vec4,
+        tint: Vec4,
+        flip_x: bool,
     },
 }
 

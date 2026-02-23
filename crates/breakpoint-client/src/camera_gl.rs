@@ -97,10 +97,15 @@ impl Camera {
                 self.up = Vec3::Y;
             },
             CameraMode::PlatformerFollow { player_pos } => {
-                let camera_z = -25.0;
+                let camera_z = -15.0;
                 let look_y_offset = 3.0;
-                let target_pos = Vec3::new(player_pos.x, player_pos.y + look_y_offset, camera_z);
-                let look_at = Vec3::new(player_pos.x, player_pos.y + look_y_offset, 0.0);
+                let lead_x = 3.0; // Lead camera in race direction (right)
+                let target_pos = Vec3::new(
+                    player_pos.x + lead_x,
+                    player_pos.y + look_y_offset,
+                    camera_z,
+                );
+                let look_at = Vec3::new(player_pos.x + lead_x, player_pos.y + look_y_offset, 0.0);
 
                 self.position = self.position.lerp(target_pos, lerp_factor);
                 self.target = self.target.lerp(look_at, lerp_factor);

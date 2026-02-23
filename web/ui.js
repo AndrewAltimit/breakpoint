@@ -508,9 +508,11 @@
     }
 
     // ── Platformer HUD ─────────────────────────────────
-    const platformerHudEl   = $("platformer-hud");
-    const platformerMode    = $("platformer-mode");
-    const platformerHazard  = $("platformer-hazard");
+    const platformerHudEl    = $("platformer-hud");
+    const platformerMode     = $("platformer-mode");
+    const platformerRacePos  = $("platformer-race-pos");
+    const platformerHp       = $("platformer-hp");
+    const platformerStatus   = $("platformer-status");
     const platformerRankings = $("platformer-rankings");
 
     function updatePlatformerHud(state) {
@@ -521,7 +523,32 @@
         }
         platformerHudEl.classList.remove("hidden");
         platformerMode.textContent = hud.mode || "Race";
-        platformerHazard.textContent = hud.mode === "Survival" ? `Hazard: ${Math.round(hud.hazardY)}` : "";
+
+        // Race position
+        if (hud.racePosition && hud.totalRacers) {
+            platformerRacePos.textContent = `${hud.racePosition}/${hud.totalRacers}`;
+        } else {
+            platformerRacePos.textContent = "";
+        }
+
+        // HP hearts
+        const hp = hud.localPlayerHp || 0;
+        const maxHp = hud.localPlayerMaxHp || 3;
+        let heartsHtml = "";
+        for (let i = 0; i < maxHp; i++) {
+            heartsHtml += i < hp
+                ? '<span class="heart full">\u2764</span>'
+                : '<span class="heart empty">\u2764</span>';
+        }
+        platformerHp.innerHTML = heartsHtml;
+
+        // Status line: deaths + active powerup
+        let statusParts = [];
+        const deaths = hud.localPlayerDeaths || 0;
+        if (deaths > 0) statusParts.push(`Deaths: ${deaths}`);
+        const powerup = hud.localPlayerPowerup;
+        if (powerup) statusParts.push(powerup);
+        platformerStatus.textContent = statusParts.join(" | ");
 
         // Checkpoint progress
         const finished = hud.finishCount || 0;
@@ -534,6 +561,10 @@
             let status = "";
             if (p.eliminated) { cls = " eliminated"; status = "OUT"; }
             else if (p.finished) { cls = " finished"; status = p.finishRank ? `#${p.finishRank}` : "DONE"; }
+            else {
+                const hpText = `${p.hp}/${p.maxHp}`;
+                status = hpText;
+            }
             html += `<div class="hud-player-row${cls}">
                 <span class="name">${escapeHtml(p.name)}</span>
                 <span class="value">${status}</span>

@@ -55,6 +55,8 @@ web-sys = { version = "0.3", features = [
     "WebGlBuffer",
     "WebGlVertexArrayObject",
     "WebGlUniformLocation",
+    "WebGlTexture",
+    "HtmlImageElement",
     "KeyboardEvent",
     "MouseEvent",
     "Event",

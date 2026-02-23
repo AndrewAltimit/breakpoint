@@ -697,6 +697,25 @@ input[type="text"]:focus-visible {
     font-size: 0.8rem;
 }
 
+.platformer-hp {
+    margin-bottom: 4px;
+}
+.platformer-hp .heart {
+    font-size: 1rem;
+    margin-right: 2px;
+}
+.platformer-hp .heart.full {
+    color: #cc2020;
+}
+.platformer-hp .heart.empty {
+    color: #403030;
+}
+.platformer-status {
+    font-size: 0.7rem;
+    color: #aab;
+    margin-bottom: 6px;
+}
+
 .hud-player-row {
     display: flex;
     justify-content: space-between;

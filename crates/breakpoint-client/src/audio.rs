@@ -9,6 +9,11 @@ pub enum AudioEvent {
     PlatformerJump,
     PlatformerPowerUp,
     PlatformerFinish,
+    PlatformerAttack,
+    PlatformerHit,
+    PlatformerDeath,
+    PlatformerEnemyKill,
+    PlatformerCheckpoint,
     LaserFire,
     LaserHit,
     TronCrash,
@@ -47,6 +52,17 @@ impl AudioEventQueue {
                 AudioEvent::PlatformerPowerUp => (440.0, 0.2, WaveType::Sine, SoundCategory::Game),
                 AudioEvent::PlatformerFinish => {
                     (520.0, 0.5, WaveType::Triangle, SoundCategory::Game)
+                },
+                AudioEvent::PlatformerAttack => {
+                    (200.0, 0.1, WaveType::Sawtooth, SoundCategory::Game)
+                },
+                AudioEvent::PlatformerHit => (150.0, 0.15, WaveType::Square, SoundCategory::Game),
+                AudioEvent::PlatformerDeath => (120.0, 0.4, WaveType::Square, SoundCategory::Game),
+                AudioEvent::PlatformerEnemyKill => {
+                    (400.0, 0.12, WaveType::Triangle, SoundCategory::Game)
+                },
+                AudioEvent::PlatformerCheckpoint => {
+                    (480.0, 0.3, WaveType::Sine, SoundCategory::Game)
                 },
                 AudioEvent::LaserFire => (280.0, 0.06, WaveType::Sawtooth, SoundCategory::Game),
                 AudioEvent::LaserHit => (180.0, 0.15, WaveType::Square, SoundCategory::Game),

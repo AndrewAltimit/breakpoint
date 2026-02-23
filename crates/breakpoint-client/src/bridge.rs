@@ -176,11 +176,6 @@ fn build_platformer_hud(app: &App) -> serde_json::Value {
         return serde_json::Value::Null;
     };
 
-    let mode_str = match state.mode {
-        breakpoint_platformer::GameMode::Race => "Race",
-        breakpoint_platformer::GameMode::Survival => "Survival",
-    };
-
     let players_json: Vec<serde_json::Value> = app
         .lobby
         .players
@@ -189,6 +184,9 @@ fn build_platformer_hud(app: &App) -> serde_json::Value {
             let ps = state.players.get(&p.id);
             let eliminated = ps.map(|s| s.eliminated).unwrap_or(false);
             let finished = ps.map(|s| s.finished).unwrap_or(false);
+            let hp = ps.map(|s| s.hp).unwrap_or(0);
+            let max_hp = ps.map(|s| s.max_hp).unwrap_or(3);
+            let deaths = ps.map(|s| s.deaths).unwrap_or(0);
             let finish_rank = state
                 .finish_order
                 .iter()
@@ -200,17 +198,50 @@ fn build_platformer_hud(app: &App) -> serde_json::Value {
                 "eliminated": eliminated,
                 "finished": finished,
                 "finishRank": finish_rank,
+                "hp": hp,
+                "maxHp": max_hp,
+                "deaths": deaths,
             })
         })
         .collect();
 
+    // Local player HUD data
+    let local_id = app.network_role.as_ref().map(|r| r.local_player_id);
+    let local_ps = local_id.and_then(|id| state.players.get(&id));
+    let local_hp = local_ps.map(|s| s.hp).unwrap_or(0);
+    let local_max_hp = local_ps.map(|s| s.max_hp).unwrap_or(3);
+    let local_deaths = local_ps.map(|s| s.deaths).unwrap_or(0);
+    let local_powerup = local_ps
+        .and_then(|s| s.active_powerup.as_ref())
+        .map(|p| format!("{p:?}"))
+        .unwrap_or_default();
+
+    // Race position: rank by furthest X progress among non-eliminated players
+    let mut positions: Vec<(u32, f32)> = state
+        .players
+        .iter()
+        .filter(|(_, p)| !p.eliminated)
+        .map(|(id, p)| (*id, p.x))
+        .collect();
+    positions.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    let race_pos = local_id
+        .and_then(|id| positions.iter().position(|(pid, _)| *pid == id))
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let total_racers = positions.len();
+
     serde_json::json!({
-        "mode": mode_str,
+        "mode": "Race",
         "players": players_json,
-        "hazardY": state.hazard_y,
-        "eliminationCount": state.elimination_order.len(),
+        "enemyCount": state.enemies.iter().filter(|e| e.alive).count(),
         "finishCount": state.finish_order.len(),
         "roundTimer": state.round_timer,
+        "localPlayerHp": local_hp,
+        "localPlayerMaxHp": local_max_hp,
+        "localPlayerDeaths": local_deaths,
+        "localPlayerPowerup": local_powerup,
+        "racePosition": race_pos,
+        "totalRacers": total_racers,
     })
 }
 

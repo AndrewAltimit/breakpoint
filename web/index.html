@@ -63,7 +63,6 @@
                             <span>Mode</span>
                             <select id="setting-platformer-mode" data-testid="setting-platformer-mode">
                                 <option value="race">Race</option>
-                                <option value="survival">Survival</option>
                             </select>
                         </div>
                     </div>
@@ -131,8 +130,10 @@
             <div id="platformer-hud" class="game-specific-hud hidden">
                 <div class="platformer-info">
                     <span id="platformer-mode"></span>
-                    <span id="platformer-hazard"></span>
+                    <span id="platformer-race-pos"></span>
                 </div>
+                <div id="platformer-hp" class="platformer-hp"></div>
+                <div id="platformer-status" class="platformer-status"></div>
                 <div id="platformer-rankings" class="platformer-rankings"></div>
             </div>
             <!-- LaserTag HUD -->

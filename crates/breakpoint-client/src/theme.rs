@@ -80,6 +80,10 @@ pub struct PlatformerTheme {
     pub platform_tile: [f32; 3],
     pub finish_tile: [f32; 3],
     pub hud_text: [f32; 4],
+    pub hp_full: [f32; 3],
+    pub hp_empty: [f32; 3],
+    pub enemy_tint: [f32; 3],
+    pub invincibility_flash: [f32; 3],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,12 +187,17 @@ impl Default for GolfTheme {
 impl Default for PlatformerTheme {
     fn default() -> Self {
         Self {
-            solid_tile: [0.4, 0.4, 0.5],
-            grass_tile: [0.3, 0.6, 0.3],
-            hazard_tile: [0.9, 0.2, 0.1],
-            platform_tile: [0.2, 0.5, 0.9],
-            finish_tile: [1.0, 0.85, 0.1],
+            // Dark gothic palette
+            solid_tile: [0.35, 0.3, 0.4],
+            grass_tile: [0.25, 0.35, 0.25],
+            hazard_tile: [0.7, 0.1, 0.1],
+            platform_tile: [0.4, 0.3, 0.2],
+            finish_tile: [0.9, 0.75, 0.1],
             hud_text: [0.9, 0.9, 0.9, 0.85],
+            hp_full: [0.8, 0.1, 0.1],
+            hp_empty: [0.25, 0.2, 0.2],
+            enemy_tint: [0.9, 0.9, 0.85],
+            invincibility_flash: [1.0, 1.0, 0.8],
         }
     }
 }

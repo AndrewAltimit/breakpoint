@@ -799,8 +799,9 @@ mod tests {
             other => panic!("Expected EncodedMessage, got: {other:?}"),
         }
 
-        // Should receive GameState ticks
-        let msg = tokio::time::timeout(Duration::from_millis(500), broadcast_rx.recv())
+        // Should receive GameState ticks (platformer state is large: 300x30 course
+        // with enemies, so allow extra time in debug builds)
+        let msg = tokio::time::timeout(Duration::from_millis(2000), broadcast_rx.recv())
             .await
             .expect("should receive tick within timeout")
             .expect("channel should not be closed");
