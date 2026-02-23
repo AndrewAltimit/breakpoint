@@ -63,7 +63,7 @@ pub enum MeshType {
     },
     Cuboid,
     Plane,
-    /// XY-plane billboard quad (faces -Z, for side-view camera).
+    /// XY-plane billboard quad (faces +Z, toward camera at Z<0).
     Quad,
 }
 

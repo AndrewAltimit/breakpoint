@@ -796,21 +796,21 @@ fn generate_cylinder(segments: u16) -> Vec<f32> {
     buf
 }
 
-/// Unit quad on the XY plane at Z=0, facing -Z (for side-view camera).
+/// Unit quad on the XY plane at Z=0, facing +Z (toward the side-view camera at Z<0).
 fn generate_quad() -> Vec<f32> {
     let mut buf = Vec::with_capacity(6 * 8);
-    let normal = -Vec3::Z;
+    let normal = Vec3::Z;
     let h = 0.5;
-    // Quad corners on XY plane
+    // Quad corners on XY plane — wound CCW when viewed from +Z
     let v00 = Vec3::new(-h, -h, 0.0);
     let v10 = Vec3::new(h, -h, 0.0);
     let v11 = Vec3::new(h, h, 0.0);
     let v01 = Vec3::new(-h, h, 0.0);
     push_vertex(&mut buf, v00, normal, 0.0, 0.0);
+    push_vertex(&mut buf, v11, normal, 1.0, 1.0);
     push_vertex(&mut buf, v10, normal, 1.0, 0.0);
-    push_vertex(&mut buf, v11, normal, 1.0, 1.0);
     push_vertex(&mut buf, v00, normal, 0.0, 0.0);
-    push_vertex(&mut buf, v11, normal, 1.0, 1.0);
     push_vertex(&mut buf, v01, normal, 0.0, 1.0);
+    push_vertex(&mut buf, v11, normal, 1.0, 1.0);
     buf
 }
