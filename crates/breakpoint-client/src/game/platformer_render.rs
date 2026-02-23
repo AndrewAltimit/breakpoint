@@ -289,6 +289,7 @@ pub fn sync_platformer_scene(
     theme: &Theme,
     dt: f32,
     camera_x: f32,
+    camera_y: f32,
     time: f32,
 ) {
     let state: Option<breakpoint_platformer::PlatformerState> = read_game_state(active);
@@ -298,18 +299,23 @@ pub fn sync_platformer_scene(
 
     scene.clear();
 
-    // Parallax background layers
-    add_parallax_layers(scene, camera_x);
+    // Parallax background layers (scroll in both X and Y)
+    add_parallax_layers(scene, camera_x, camera_y);
 
     let tile_size = breakpoint_platformer::physics::TILE_SIZE;
     let white = Vec4::ONE;
 
-    // Tile culling: only render visible columns
-    let visible_half = 15.0;
-    let min_col = ((camera_x - visible_half) / tile_size).floor().max(0.0) as u32;
-    let max_col = ((camera_x + visible_half) / tile_size)
+    // Tile culling: only render visible columns and rows
+    let visible_half_x = 20.0;
+    let visible_half_y = 15.0;
+    let min_col = ((camera_x - visible_half_x) / tile_size).floor().max(0.0) as u32;
+    let max_col = ((camera_x + visible_half_x) / tile_size)
         .ceil()
         .min(state.course.width as f32) as u32;
+    let min_row = ((camera_y - visible_half_y) / tile_size).floor().max(0.0) as u32;
+    let max_row = ((camera_y + visible_half_y) / tile_size)
+        .ceil()
+        .min(state.course.height as f32) as u32;
 
     // Collect torch lights for dynamic lighting
     scene.lighting = collect_torch_lights(
@@ -317,6 +323,8 @@ pub fn sync_platformer_scene(
         tile_size,
         min_col,
         max_col,
+        min_row,
+        max_row,
         time,
         theme.platformer.torch_ambient,
     );
@@ -330,6 +338,8 @@ pub fn sync_platformer_scene(
         tile_size,
         min_col,
         max_col,
+        min_row,
+        max_row,
         time,
         water_color,
     );
@@ -347,18 +357,21 @@ pub fn sync_platformer_scene(
     render_powerups(scene, &state, tile_size, white);
 }
 
-/// Render course tiles within the visible column range.
+/// Render course tiles within the visible column and row range.
+#[allow(clippy::too_many_arguments)]
 fn render_tiles(
     scene: &mut Scene,
     state: &breakpoint_platformer::PlatformerState,
     tile_size: f32,
     min_col: u32,
     max_col: u32,
+    min_row: u32,
+    max_row: u32,
     time: f32,
     water_color: Vec4,
 ) {
     let white = Vec4::ONE;
-    for y in 0..state.course.height {
+    for y in min_row..max_row {
         for x in min_col..max_col {
             let tile = state.course.get_tile(x as i32, y as i32);
 
@@ -716,11 +729,14 @@ fn render_powerups(
 }
 
 /// Collect torch light sources from visible DecoTorch tiles.
+#[allow(clippy::too_many_arguments)]
 fn collect_torch_lights(
     state: &breakpoint_platformer::PlatformerState,
     tile_size: f32,
     min_col: u32,
     max_col: u32,
+    min_row: u32,
+    max_row: u32,
     time: f32,
     torch_ambient: f32,
 ) -> SceneLighting {
@@ -728,7 +744,7 @@ fn collect_torch_lights(
 
     let mut lights: Vec<[f32; 4]> = Vec::with_capacity(16);
 
-    for y in 0..state.course.height {
+    for y in min_row..max_row {
         for x in min_col..max_col {
             if lights.len() >= 16 {
                 break;
@@ -756,7 +772,8 @@ fn collect_torch_lights(
 }
 
 /// Add parallax background layers (3 behind, 1 foreground) to the scene.
-fn add_parallax_layers(scene: &mut Scene, camera_x: f32) {
+/// Scrolls in both X and Y directions for 2D exploration.
+fn add_parallax_layers(scene: &mut Scene, camera_x: f32, camera_y: f32) {
     let layer_v = 1.0 / 3.0;
 
     // Background layers (behind gameplay)
@@ -767,6 +784,7 @@ fn add_parallax_layers(scene: &mut Scene, camera_x: f32) {
     ];
 
     for (scroll_factor, z, v_start) in bg_layers {
+        let layer_y = camera_y * scroll_factor + 5.0 * (1.0 - scroll_factor);
         scene.add(
             MeshType::Quad,
             MaterialType::Parallax {
@@ -775,12 +793,12 @@ fn add_parallax_layers(scene: &mut Scene, camera_x: f32) {
                 scroll_factor,
                 tint: Vec4::ONE,
             },
-            Transform::from_xyz(camera_x, 5.0, z).with_scale(Vec3::new(50.0, 30.0, 1.0)),
+            Transform::from_xyz(camera_x, layer_y, z).with_scale(Vec3::new(50.0, 40.0, 1.0)),
         );
     }
 
     // Foreground layer (in front of gameplay, low alpha for depth)
-    // Reuses bottom layer texture with faster scroll
+    let fg_y = camera_y * 1.5 + 5.0 * (1.0 - 1.5);
     scene.add(
         MeshType::Quad,
         MaterialType::Parallax {
@@ -789,6 +807,6 @@ fn add_parallax_layers(scene: &mut Scene, camera_x: f32) {
             scroll_factor: 1.5,
             tint: Vec4::new(1.0, 1.0, 1.0, 0.15),
         },
-        Transform::from_xyz(camera_x, 5.0, 0.5).with_scale(Vec3::new(50.0, 30.0, 1.0)),
+        Transform::from_xyz(camera_x, fg_y, 0.5).with_scale(Vec3::new(50.0, 40.0, 1.0)),
     );
 }

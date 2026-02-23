@@ -642,7 +642,7 @@
         if (!platformerMinimapCtx || !hud.minimap) return;
 
         const mm = hud.minimap;
-        if (!mm.w || !mm.h || !mm.tiles) return;
+        if (!mm.rooms || !mm.gridCols) return;
 
         platformerMinimap.classList.add("visible");
         const ctx = platformerMinimapCtx;
@@ -651,43 +651,84 @@
 
         ctx.clearRect(0, 0, cw, ch);
 
-        // Scale: map course tiles to canvas pixels
-        const scaleX = cw / mm.w;
-        const scaleY = ch / mm.h;
+        const cols = mm.gridCols;
+        const rows = mm.gridRows;
+        const pad = 4;
+        const roomW = (cw - pad * 2) / cols;
+        const roomH = (ch - pad * 2) / rows;
+        const inset = 2;
 
-        // Draw tiles (batch by color for performance)
-        const TILE_COLORS = {
-            "#": "rgba(100, 90, 110, 0.8)",   // solid
-            "-": "rgba(80, 70, 60, 0.6)",      // platform
-            "^": "rgba(200, 40, 40, 0.8)",     // spikes
-            "~": "rgba(40, 80, 160, 0.6)",     // water
-            "C": "rgba(255, 221, 102, 0.8)",   // checkpoint
-            "F": "rgba(100, 255, 100, 0.9)",   // finish
-        };
+        // Distance-based color palette
+        const DIST_COLORS = [
+            "rgba(80, 180, 80, 0.7)",   // 0 entrance (green)
+            "rgba(100, 140, 180, 0.7)", // 1 corridor (blue-gray)
+            "rgba(130, 120, 160, 0.7)", // 2-3 halls
+            "rgba(160, 100, 100, 0.7)", // 4-5 armory
+            "rgba(120, 80, 140, 0.7)",  // 6-7 tower
+            "rgba(180, 60, 80, 0.7)",   // 8+ deep
+        ];
 
-        for (let i = 0; i < mm.tiles.length; i++) {
-            const ch2 = mm.tiles[i];
-            const color = TILE_COLORS[ch2];
-            if (!color) continue;
-
-            const tx = i % mm.w;
-            const ty = Math.floor(i / mm.w);
-            ctx.fillStyle = color;
-            ctx.fillRect(tx * scaleX, ty * scaleY, Math.max(scaleX, 1), Math.max(scaleY, 1));
+        // Draw connections first (behind rooms)
+        ctx.strokeStyle = "rgba(150, 140, 130, 0.5)";
+        ctx.lineWidth = 2;
+        if (mm.connections) {
+            for (const c of mm.connections) {
+                const x1 = pad + c[0] * roomW + roomW / 2;
+                const y1 = ch - (pad + c[1] * roomH + roomH / 2);
+                const x2 = pad + c[2] * roomW + roomW / 2;
+                const y2 = ch - (pad + c[3] * roomH + roomH / 2);
+                ctx.beginPath();
+                ctx.moveTo(x1, y1);
+                ctx.lineTo(x2, y2);
+                ctx.stroke();
+            }
         }
 
-        // Draw player dots
+        // Draw rooms as rectangles
+        for (const r of mm.rooms) {
+            const col = r[0], row = r[1], dist = r[2];
+            const hasFinish = r[3], hasCheckpoint = r[4];
+            const rx = pad + col * roomW + inset;
+            const ry = ch - (pad + (row + 1) * roomH) + inset;
+            const rw = roomW - inset * 2;
+            const rh = roomH - inset * 2;
+
+            // Color by distance tier
+            const colorIdx = Math.min(Math.floor(dist / 2), DIST_COLORS.length - 1);
+            ctx.fillStyle = DIST_COLORS[colorIdx];
+            ctx.fillRect(rx, ry, rw, rh);
+
+            // Highlight finish room
+            if (hasFinish) {
+                ctx.strokeStyle = "rgba(100, 255, 100, 0.9)";
+                ctx.lineWidth = 2;
+                ctx.strokeRect(rx, ry, rw, rh);
+            }
+            // Highlight checkpoint rooms
+            if (hasCheckpoint) {
+                ctx.strokeStyle = "rgba(255, 221, 102, 0.8)";
+                ctx.lineWidth = 1.5;
+                ctx.strokeRect(rx + 1, ry + 1, rw - 2, rh - 2);
+            }
+        }
+
+        // Draw player dots positioned within the room grid
         if (mm.dots) {
+            const tileRoomW = mm.roomW || 32;
+            const tileRoomH = mm.roomH || 24;
             for (const dot of mm.dots) {
-                if (!dot[3]) continue; // skip eliminated
-                const px = (dot[0] / 1.0) * scaleX; // x is in world units = tile units
-                const py = (dot[1] / 1.0) * scaleY;
+                if (!dot[3]) continue;
+                // Convert world position to grid position
+                const gridX = dot[0] / tileRoomW;
+                const gridY = dot[1] / tileRoomH;
+                const px = pad + gridX * roomW;
+                const py = ch - (pad + gridY * roomH);
                 const color = PLATFORMER_PLAYER_COLORS[dot[2] % 8];
                 ctx.fillStyle = color;
                 ctx.shadowColor = color;
-                ctx.shadowBlur = 3;
+                ctx.shadowBlur = 4;
                 ctx.beginPath();
-                ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+                ctx.arc(px, py, 3, 0, Math.PI * 2);
                 ctx.fill();
             }
             ctx.shadowBlur = 0;

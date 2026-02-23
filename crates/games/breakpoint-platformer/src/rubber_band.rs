@@ -23,21 +23,21 @@ impl Default for RubberBandFactor {
     }
 }
 
-/// Compute rubber-banding factors for all players based on their relative positions.
+/// Compute rubber-banding factors for all players based on their room distance.
 ///
-/// Players are ranked by x position (furthest ahead = rank 0 = leader).
-/// Dead or eliminated players are ignored. If only 1 active player exists, defaults
-/// are returned for everyone.
+/// Players are ranked by current_room_distance (highest = leader, rank 0).
+/// Ties are broken by last_checkpoint_id. Dead or eliminated players are ignored.
+/// If only 1 active player exists, defaults are returned for everyone.
 pub fn compute_rubber_band(
     players: &HashMap<PlayerId, PlatformerPlayerState>,
 ) -> HashMap<PlayerId, RubberBandFactor> {
     let mut result = HashMap::new();
 
-    // Collect active players and their x positions
-    let mut active: Vec<(PlayerId, f32)> = players
+    // Collect active players with room distance and checkpoint for tiebreaking
+    let mut active: Vec<(PlayerId, u16, u16)> = players
         .iter()
         .filter(|(_, p)| !p.eliminated && p.death_respawn_timer <= 0.0)
-        .map(|(&id, p)| (id, p.x))
+        .map(|(&id, p)| (id, p.current_room_distance, p.last_checkpoint_id))
         .collect();
 
     // If 0 or 1 active player, return defaults for all
@@ -48,11 +48,11 @@ pub fn compute_rubber_band(
         return result;
     }
 
-    // Sort by x position descending (leader first)
-    active.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    // Sort by room distance descending (leader first), tiebreak by checkpoint_id
+    active.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| b.2.cmp(&a.2)));
 
     let n = active.len();
-    for (rank, &(pid, _)) in active.iter().enumerate() {
+    for (rank, &(pid, _, _)) in active.iter().enumerate() {
         // Normalize rank to [0, 1] where 0 = leader, 1 = last
         let t = if n > 1 {
             rank as f32 / (n - 1) as f32
@@ -87,16 +87,17 @@ mod tests {
     use super::*;
     use crate::physics::PlatformerPlayerState;
 
-    fn make_player_at_x(x: f32) -> PlatformerPlayerState {
-        let mut p = PlatformerPlayerState::new(x, 5.0);
+    fn make_player_at_distance(dist: u16) -> PlatformerPlayerState {
+        let mut p = PlatformerPlayerState::new(5.0, 5.0);
         p.eliminated = false;
+        p.current_room_distance = dist;
         p
     }
 
     #[test]
     fn single_player_gets_defaults() {
         let mut players = HashMap::new();
-        players.insert(1, make_player_at_x(10.0));
+        players.insert(1, make_player_at_distance(3));
 
         let factors = compute_rubber_band(&players);
 
@@ -114,8 +115,8 @@ mod tests {
     #[test]
     fn leader_gets_harder_enemies_weaker_items() {
         let mut players = HashMap::new();
-        players.insert(1, make_player_at_x(50.0)); // leader
-        players.insert(2, make_player_at_x(10.0)); // last
+        players.insert(1, make_player_at_distance(8)); // leader
+        players.insert(2, make_player_at_distance(2)); // last
 
         let factors = compute_rubber_band(&players);
 
@@ -139,9 +140,9 @@ mod tests {
     #[test]
     fn three_players_interpolation() {
         let mut players = HashMap::new();
-        players.insert(1, make_player_at_x(50.0)); // leader
-        players.insert(2, make_player_at_x(30.0)); // middle
-        players.insert(3, make_player_at_x(10.0)); // last
+        players.insert(1, make_player_at_distance(8)); // leader
+        players.insert(2, make_player_at_distance(5)); // middle
+        players.insert(3, make_player_at_distance(1)); // last
 
         let factors = compute_rubber_band(&players);
 
@@ -161,11 +162,11 @@ mod tests {
     #[test]
     fn eliminated_players_ignored_in_ranking() {
         let mut players = HashMap::new();
-        players.insert(1, make_player_at_x(50.0)); // leader
-        let mut elim = make_player_at_x(100.0); // would be "leader" but eliminated
+        players.insert(1, make_player_at_distance(8)); // leader
+        let mut elim = make_player_at_distance(10); // would be "leader" but eliminated
         elim.eliminated = true;
         players.insert(2, elim);
-        players.insert(3, make_player_at_x(10.0)); // last
+        players.insert(3, make_player_at_distance(2)); // last
 
         let factors = compute_rubber_band(&players);
 
@@ -185,11 +186,11 @@ mod tests {
     #[test]
     fn dead_players_ignored_in_ranking() {
         let mut players = HashMap::new();
-        players.insert(1, make_player_at_x(50.0));
-        let mut dead = make_player_at_x(100.0);
+        players.insert(1, make_player_at_distance(8));
+        let mut dead = make_player_at_distance(10);
         dead.death_respawn_timer = 1.5; // currently dead, awaiting respawn
         players.insert(2, dead);
-        players.insert(3, make_player_at_x(10.0));
+        players.insert(3, make_player_at_distance(2));
 
         let factors = compute_rubber_band(&players);
 
@@ -210,8 +211,8 @@ mod tests {
     #[test]
     fn leader_density_is_1_5() {
         let mut players = HashMap::new();
-        players.insert(1, make_player_at_x(50.0));
-        players.insert(2, make_player_at_x(10.0));
+        players.insert(1, make_player_at_distance(8));
+        players.insert(2, make_player_at_distance(2));
 
         let factors = compute_rubber_band(&players);
         assert!(
@@ -224,8 +225,8 @@ mod tests {
     #[test]
     fn last_density_is_0_7() {
         let mut players = HashMap::new();
-        players.insert(1, make_player_at_x(50.0));
-        players.insert(2, make_player_at_x(10.0));
+        players.insert(1, make_player_at_distance(8));
+        players.insert(2, make_player_at_distance(2));
 
         let factors = compute_rubber_band(&players);
         assert!(

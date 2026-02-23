@@ -1183,6 +1183,7 @@ impl App {
                     &self.theme,
                     dt,
                     self.camera.position.x,
+                    self.camera.position.y,
                     self.renderer.time(),
                 );
             },

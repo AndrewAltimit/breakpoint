@@ -233,16 +233,16 @@ fn build_platformer_hud(app: &App) -> serde_json::Value {
     let local_checkpoint = local_ps.map(|s| s.last_checkpoint_id).unwrap_or(0);
     let total_checkpoints = state.course.checkpoint_positions.len();
 
-    // Race position: rank by furthest X progress among non-eliminated players
-    let mut positions: Vec<(u64, f32)> = state
+    // Race position: rank by room distance (then checkpoint_id as tiebreaker)
+    let mut positions: Vec<(u64, u16, u16)> = state
         .players
         .iter()
         .filter(|(_, p)| !p.eliminated)
-        .map(|(id, p)| (*id, p.x))
+        .map(|(id, p)| (*id, p.current_room_distance, p.last_checkpoint_id))
         .collect();
-    positions.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    positions.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| b.2.cmp(&a.2)));
     let race_pos = local_id
-        .and_then(|id| positions.iter().position(|(pid, _)| *pid == id))
+        .and_then(|id| positions.iter().position(|(pid, _, _)| *pid == id))
         .map(|i| i + 1)
         .unwrap_or(0);
     let total_racers = positions.len();
@@ -270,33 +270,93 @@ fn build_platformer_hud(app: &App) -> serde_json::Value {
     })
 }
 
-/// Build compact minimap data for the platformer course.
-/// Returns course dimensions, solid-tile bitmap, and player positions.
+/// Build compact minimap data for the 2D labyrinth.
+/// Sends room grid positions, connections, themes, and player locations.
 #[cfg(target_family = "wasm")]
 fn build_platformer_minimap(
     state: &breakpoint_platformer::PlatformerState,
     lobby_players: &[breakpoint_core::player::Player],
 ) -> serde_json::Value {
-    use breakpoint_platformer::course_gen::Tile;
+    use breakpoint_platformer::course_gen::{GRID_COLS, GRID_ROWS, ROOM_H, ROOM_W, Tile};
 
     let course = &state.course;
 
-    // Encode tiles as a compact string: 1 char per tile
-    // '.' = empty, '#' = solid, '~' = water, '^' = spikes, 'F' = finish, 'C' = checkpoint
-    let mut tile_str = String::with_capacity((course.width * course.height) as usize);
-    for &t in &course.tiles {
-        tile_str.push(match t {
-            Tile::StoneBrick | Tile::BreakableWall => '#',
-            Tile::Platform => '-',
-            Tile::Spikes => '^',
-            Tile::Water => '~',
-            Tile::Checkpoint => 'C',
-            Tile::Finish => 'F',
-            _ => '.',
-        });
+    // Build room list: [col, row, has_finish, has_checkpoint, theme_color_index]
+    let mut rooms = Vec::new();
+    let mut connections = Vec::new();
+    for col in 0..GRID_COLS {
+        for row in 0..GRID_ROWS {
+            let bx = col * ROOM_W + ROOM_W / 2;
+            let by = row * ROOM_H + ROOM_H / 2;
+            if course.get_tile(bx as i32, by as i32) != Tile::Empty {
+                continue;
+            }
+            let idx = col as usize * GRID_ROWS as usize + row as usize;
+            let dist = if idx < course.room_distances.len() {
+                course.room_distances[idx]
+            } else {
+                0
+            };
+            // Check for finish tile in room
+            let mut has_finish = false;
+            let mut has_checkpoint = false;
+            for ty in (row * ROOM_H)..((row + 1) * ROOM_H) {
+                for tx in (col * ROOM_W)..((col + 1) * ROOM_W) {
+                    match course.get_tile(tx as i32, ty as i32) {
+                        Tile::Finish => has_finish = true,
+                        Tile::Checkpoint => has_checkpoint = true,
+                        _ => {},
+                    }
+                }
+            }
+            rooms.push(serde_json::json!([
+                col,
+                row,
+                dist,
+                has_finish,
+                has_checkpoint
+            ]));
+
+            // Check connections to right and up neighbors
+            if col + 1 < GRID_COLS {
+                let nbx = (col + 1) * ROOM_W + ROOM_W / 2;
+                if course.get_tile(nbx as i32, by as i32) == Tile::Empty {
+                    // Check if there's a doorway between them
+                    let wall_x = (col + 1) * ROOM_W;
+                    let mid_y = row * ROOM_H + ROOM_H / 2;
+                    let mut has_door = false;
+                    for dy in 0..4 {
+                        if course.get_tile(wall_x as i32, (mid_y + dy) as i32) != Tile::StoneBrick {
+                            has_door = true;
+                            break;
+                        }
+                    }
+                    if has_door {
+                        connections.push(serde_json::json!([col, row, col + 1, row]));
+                    }
+                }
+            }
+            if row + 1 < GRID_ROWS {
+                let nby = (row + 1) * ROOM_H + ROOM_H / 2;
+                if course.get_tile(bx as i32, nby as i32) == Tile::Empty {
+                    let wall_y = (row + 1) * ROOM_H;
+                    let mid_x = col * ROOM_W + ROOM_W / 2;
+                    let mut has_door = false;
+                    for dx in 0..4 {
+                        if course.get_tile((mid_x + dx) as i32, wall_y as i32) != Tile::StoneBrick {
+                            has_door = true;
+                            break;
+                        }
+                    }
+                    if has_door {
+                        connections.push(serde_json::json!([col, row, col, row + 1]));
+                    }
+                }
+            }
+        }
     }
 
-    // Player positions on minimap: [x, y, color_index, is_local_unused]
+    // Player dots: [x, y, color_index, is_active]
     let player_dots: Vec<serde_json::Value> = lobby_players
         .iter()
         .enumerate()
@@ -309,9 +369,12 @@ fn build_platformer_minimap(
         .collect();
 
     serde_json::json!({
-        "w": course.width,
-        "h": course.height,
-        "tiles": tile_str,
+        "gridCols": GRID_COLS,
+        "gridRows": GRID_ROWS,
+        "roomW": ROOM_W,
+        "roomH": ROOM_H,
+        "rooms": rooms,
+        "connections": connections,
         "dots": player_dots,
     })
 }

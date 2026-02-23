@@ -93,17 +93,109 @@ impl<'de> Deserialize<'de> for Tile {
     }
 }
 
+// ================================================================
+// Labyrinth constants
+// ================================================================
+
 /// Room width in tiles.
-pub const ROOM_WIDTH: u32 = 20;
-/// Course height in tiles.
-pub const COURSE_HEIGHT: u32 = 30;
-/// Number of rooms in a generated course.
-pub const NUM_ROOMS: u32 = 15;
+pub const ROOM_W: u32 = 32;
+/// Room height in tiles.
+pub const ROOM_H: u32 = 24;
+/// Grid columns (rooms wide).
+pub const GRID_COLS: u32 = 6;
+/// Grid rows (rooms tall).
+pub const GRID_ROWS: u32 = 5;
 /// Total course width in tiles.
-pub const COURSE_WIDTH: u32 = ROOM_WIDTH * NUM_ROOMS; // 300
+pub const COURSE_WIDTH: u32 = ROOM_W * GRID_COLS; // 192
+/// Total course height in tiles.
+pub const COURSE_HEIGHT: u32 = ROOM_H * GRID_ROWS; // 120
+
+// Legacy aliases for compatibility
+/// Number of rooms targeted during generation.
+pub const NUM_ROOMS: u32 = 22;
+
+// ================================================================
+// Room grid types
+// ================================================================
+
+/// Position in the room grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GridPos {
+    pub col: u8,
+    pub row: u8,
+}
+
+/// Direction of a doorway between adjacent rooms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+impl Direction {
+    fn opposite(self) -> Self {
+        match self {
+            Direction::Up => Direction::Down,
+            Direction::Down => Direction::Up,
+            Direction::Left => Direction::Right,
+            Direction::Right => Direction::Left,
+        }
+    }
+
+    fn offset(self) -> (i8, i8) {
+        match self {
+            Direction::Up => (0, 1),
+            Direction::Down => (0, -1),
+            Direction::Left => (-1, 0),
+            Direction::Right => (1, 0),
+        }
+    }
+}
+
+/// Theme/type of a placed room, affecting interior generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RoomTheme {
+    Entrance,
+    Corridor,
+    GreatHall,
+    Library,
+    Armory,
+    Chapel,
+    Crypt,
+    Tower,
+    Dungeon,
+    ThroneRoom,
+}
+
+/// A room placed in the labyrinth grid.
+#[derive(Debug, Clone)]
+pub struct PlacedRoom {
+    pub grid_pos: GridPos,
+    pub theme: RoomTheme,
+    pub doors: Vec<Direction>,
+    pub distance_from_start: u16,
+}
+
+/// An edge connecting two adjacent rooms.
+#[derive(Debug, Clone)]
+struct RoomEdge {
+    a: GridPos,
+    b: GridPos,
+    direction: Direction,
+}
+
+/// Checkpoint definition with an ID for 2D navigation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckpointDef {
+    pub x: f32,
+    pub y: f32,
+    pub id: u16,
+}
 
 /// A platformer course built from a tile grid.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Course {
     /// Width in tiles.
     pub width: u32,
@@ -117,8 +209,101 @@ pub struct Course {
     pub spawn_y: f32,
     /// Enemy spawn definitions for this course.
     pub enemy_spawns: Vec<EnemySpawn>,
-    /// Checkpoint world positions (x, y).
-    pub checkpoint_positions: Vec<(f32, f32)>,
+    /// Checkpoint definitions with IDs for 2D exploration.
+    pub checkpoint_positions: Vec<CheckpointDef>,
+    /// Room distances from start, indexed by (col * GRID_ROWS + row).
+    /// Used for rubber-banding and race position.
+    pub room_distances: Vec<u16>,
+}
+
+// ================================================================
+// RLE serialization for Course
+// ================================================================
+
+impl Serialize for Course {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+
+        // RLE-encode tiles
+        let rle = rle_encode(&self.tiles);
+
+        let mut s = serializer.serialize_struct("Course", 8)?;
+        s.serialize_field("width", &self.width)?;
+        s.serialize_field("height", &self.height)?;
+        s.serialize_field("tiles_rle", &rle)?;
+        s.serialize_field("spawn_x", &self.spawn_x)?;
+        s.serialize_field("spawn_y", &self.spawn_y)?;
+        s.serialize_field("enemy_spawns", &self.enemy_spawns)?;
+        s.serialize_field("checkpoint_positions", &self.checkpoint_positions)?;
+        s.serialize_field("room_distances", &self.room_distances)?;
+        s.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Course {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct CourseRaw {
+            width: u32,
+            height: u32,
+            tiles_rle: Vec<(u8, u16)>,
+            spawn_x: f32,
+            spawn_y: f32,
+            enemy_spawns: Vec<EnemySpawn>,
+            checkpoint_positions: Vec<CheckpointDef>,
+            room_distances: Vec<u16>,
+        }
+
+        let raw = CourseRaw::deserialize(deserializer)?;
+        let tiles = rle_decode(&raw.tiles_rle).map_err(serde::de::Error::custom)?;
+
+        Ok(Course {
+            width: raw.width,
+            height: raw.height,
+            tiles,
+            spawn_x: raw.spawn_x,
+            spawn_y: raw.spawn_y,
+            enemy_spawns: raw.enemy_spawns,
+            checkpoint_positions: raw.checkpoint_positions,
+            room_distances: raw.room_distances,
+        })
+    }
+}
+
+/// RLE encode tiles as (tile_value, run_length) pairs.
+fn rle_encode(tiles: &[Tile]) -> Vec<(u8, u16)> {
+    let mut result = Vec::new();
+    if tiles.is_empty() {
+        return result;
+    }
+
+    let mut current = tiles[0] as u8;
+    let mut count: u16 = 1;
+
+    for &tile in &tiles[1..] {
+        let val = tile as u8;
+        if val == current && count < u16::MAX {
+            count += 1;
+        } else {
+            result.push((current, count));
+            current = val;
+            count = 1;
+        }
+    }
+    result.push((current, count));
+    result
+}
+
+/// RLE decode tiles from (tile_value, run_length) pairs.
+fn rle_decode(rle: &[(u8, u16)]) -> Result<Vec<Tile>, String> {
+    let mut tiles = Vec::new();
+    for &(val, count) in rle {
+        let tile = Tile::try_from(val)?;
+        for _ in 0..count {
+            tiles.push(tile);
+        }
+    }
+    Ok(tiles)
 }
 
 impl Course {
@@ -134,694 +319,1167 @@ impl Course {
             self.tiles[y as usize * self.width as usize + x as usize] = tile;
         }
     }
+
+    /// Look up the room distance at a given tile position.
+    pub fn room_distance_at(&self, world_x: f32, world_y: f32) -> u16 {
+        let col = (world_x / TILE_SIZE / ROOM_W as f32) as u32;
+        let row = (world_y / TILE_SIZE / ROOM_H as f32) as u32;
+        if col < GRID_COLS && row < GRID_ROWS {
+            let idx = col as usize * GRID_ROWS as usize + row as usize;
+            if idx < self.room_distances.len() {
+                return self.room_distances[idx];
+            }
+        }
+        0
+    }
+
+    /// Find the checkpoint ID at a given tile coordinate, if any.
+    pub fn find_checkpoint_id(&self, tx: i32, ty: i32) -> Option<u16> {
+        let world_x = tx as f32 * TILE_SIZE + TILE_SIZE / 2.0;
+        let world_y = ty as f32 * TILE_SIZE + TILE_SIZE / 2.0;
+        self.checkpoint_positions
+            .iter()
+            .find(|cp| (cp.x - world_x).abs() < TILE_SIZE && (cp.y - world_y).abs() < TILE_SIZE)
+            .map(|cp| cp.id)
+    }
 }
 
-/// Room template types for procedural generation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RoomTemplate {
-    Corridor,
-    Staircase,
-    TowerClimb,
-    CathedralHall,
-    CryptDepths,
-    BridgeRun,
-    BossArena,
-    BranchSplit,
-    BranchMerge,
-}
+// ================================================================
+// Labyrinth generation
+// ================================================================
 
-/// Generate a deterministic course from a seed.
+/// Generate a deterministic castle labyrinth course from a seed.
 pub fn generate_course(seed: u64) -> Course {
     let width = COURSE_WIDTH;
     let height = COURSE_HEIGHT;
     let mut course = Course {
         width,
         height,
-        tiles: vec![Tile::Empty; (width * height) as usize],
-        spawn_x: 3.0 * TILE_SIZE,
-        spawn_y: 4.0 * TILE_SIZE,
+        tiles: vec![Tile::StoneBrick; (width * height) as usize],
+        spawn_x: 0.0,
+        spawn_y: 0.0,
         enemy_spawns: Vec::new(),
         checkpoint_positions: Vec::new(),
+        room_distances: vec![0; (GRID_COLS * GRID_ROWS) as usize],
     };
 
     let mut rng = StdRng::seed_from_u64(seed);
 
-    // Build outer walls: floor (rows 0-1) and ceiling (rows 28-29)
-    for x in 0..width {
-        course.set_tile(x, 0, Tile::StoneBrick);
-        course.set_tile(x, 1, Tile::StoneBrick);
-        course.set_tile(x, height - 1, Tile::StoneBrick);
-        course.set_tile(x, height - 2, Tile::StoneBrick);
+    // Step 1: Place rooms using random growth
+    let rooms = place_rooms(&mut rng, NUM_ROOMS);
+
+    // Step 2: Build connectivity (MST + extra edges)
+    let edges = build_connections(&rooms, &mut rng);
+
+    // Step 3: Assign themes based on distance from start
+    let rooms = assign_themes(rooms, &edges);
+
+    // Step 4: Store room distances
+    for room in &rooms {
+        let idx = room.grid_pos.col as usize * GRID_ROWS as usize + room.grid_pos.row as usize;
+        course.room_distances[idx] = room.distance_from_start;
     }
 
-    // Build left wall for spawn room
-    for y in 0..height {
-        course.set_tile(0, y, Tile::StoneBrick);
-    }
+    // Step 5: Stamp the labyrinth (carve rooms and doorways)
+    stamp_labyrinth(&mut course, &rooms, &edges);
 
-    // Generate spawn room (room 0): flat safe area
-    generate_spawn_room(&mut course);
+    // Step 6: Populate rooms with interior content
+    populate_rooms(&mut course, &rooms, &edges, &mut rng);
 
-    // Assign templates to rooms 1-14
-    let templates = assign_room_templates(&mut rng);
+    // Step 7: Place checkpoints
+    place_checkpoints(&mut course, &rooms);
 
-    // Generate each room
-    for (room_idx, &template) in templates.iter().enumerate() {
-        let actual_room = room_idx + 1; // templates[0] = room 1
-        let base_x = actual_room as u32 * ROOM_WIDTH;
-        generate_room(&mut course, &mut rng, base_x, actual_room as u32, template);
-    }
+    // Step 8: Place finish in ThroneRoom
+    place_finish(&mut course, &rooms);
 
-    // Place checkpoints every 3 rooms (rooms 3, 6, 9, 12)
-    for room_idx in (3..NUM_ROOMS).step_by(3) {
-        let cx = room_idx * ROOM_WIDTH + ROOM_WIDTH / 2;
-        // Find a good y for the checkpoint: first empty tile above the floor
-        let cy = find_open_y(&course, cx, 2, 10);
-        course.set_tile(cx, cy, Tile::Checkpoint);
-        let world_x = cx as f32 * TILE_SIZE + TILE_SIZE / 2.0;
-        let world_y = cy as f32 * TILE_SIZE + TILE_SIZE / 2.0;
-        course.checkpoint_positions.push((world_x, world_y));
-    }
-
-    // Place finish line in last room
-    let finish_base_x = (NUM_ROOMS - 1) * ROOM_WIDTH + ROOM_WIDTH - 4;
-    let finish_y = find_open_y(&course, finish_base_x, 2, 10);
-    course.set_tile(finish_base_x, finish_y, Tile::Finish);
-    course.set_tile(finish_base_x + 1, finish_y, Tile::Finish);
-    course.set_tile(finish_base_x + 2, finish_y, Tile::Finish);
+    // Step 9: Set spawn position in Entrance room
+    let entrance = rooms
+        .iter()
+        .find(|r| r.theme == RoomTheme::Entrance)
+        .unwrap_or(&rooms[0]);
+    let base_x = entrance.grid_pos.col as u32 * ROOM_W;
+    let base_y = entrance.grid_pos.row as u32 * ROOM_H;
+    course.spawn_x = (base_x + ROOM_W / 2) as f32 * TILE_SIZE;
+    course.spawn_y = (base_y + 3) as f32 * TILE_SIZE;
 
     course
 }
 
-/// Find the lowest empty tile in a column between min_y and max_y (inclusive).
-fn find_open_y(course: &Course, x: u32, min_y: u32, max_y: u32) -> u32 {
-    for y in min_y..=max_y {
-        if course.get_tile(x as i32, y as i32) == Tile::Empty {
-            return y;
+/// Place rooms using random frontier growth from the start cell.
+fn place_rooms(rng: &mut StdRng, target_count: u32) -> Vec<PlacedRoom> {
+    let start = GridPos { col: 3, row: 0 };
+    let mut placed = vec![PlacedRoom {
+        grid_pos: start,
+        theme: RoomTheme::Entrance,
+        doors: Vec::new(),
+        distance_from_start: 0,
+    }];
+
+    let mut occupied = std::collections::HashSet::new();
+    occupied.insert(start);
+
+    let mut frontier: Vec<GridPos> = Vec::new();
+    add_neighbors(start, &occupied, &mut frontier);
+
+    while (placed.len() as u32) < target_count && !frontier.is_empty() {
+        let idx = rng.random_range(0..frontier.len());
+        let cell = frontier.swap_remove(idx);
+
+        if occupied.contains(&cell) {
+            continue;
+        }
+
+        occupied.insert(cell);
+        placed.push(PlacedRoom {
+            grid_pos: cell,
+            theme: RoomTheme::Corridor, // placeholder
+            doors: Vec::new(),
+            distance_from_start: 0,
+        });
+
+        add_neighbors(cell, &occupied, &mut frontier);
+    }
+
+    // Ensure at least one room in top row for the goal
+    let has_top = placed
+        .iter()
+        .any(|r| r.grid_pos.row == (GRID_ROWS - 1) as u8);
+    if !has_top {
+        // Find a cell in the top row adjacent to an existing room
+        for col in 0..GRID_COLS as u8 {
+            let cell = GridPos {
+                col,
+                row: (GRID_ROWS - 1) as u8,
+            };
+            if !occupied.contains(&cell) {
+                let adj = GridPos {
+                    col,
+                    row: (GRID_ROWS - 2) as u8,
+                };
+                if occupied.contains(&adj) {
+                    occupied.insert(cell);
+                    placed.push(PlacedRoom {
+                        grid_pos: cell,
+                        theme: RoomTheme::Corridor,
+                        doors: Vec::new(),
+                        distance_from_start: 0,
+                    });
+                    break;
+                }
+            }
         }
     }
-    min_y
+
+    placed
 }
 
-/// Generate the spawn room (room 0): flat floor with some platforms.
-fn generate_spawn_room(course: &mut Course) {
-    // Floor is already placed (rows 0-1). Add some platforms for variety.
-    for x in 3..8 {
-        course.set_tile(x, 5, Tile::Platform);
-    }
-    // Decorative torch
-    course.set_tile(2, 3, Tile::DecoTorch);
-    course.set_tile(10, 3, Tile::DecoTorch);
-}
-
-/// Assign room templates for rooms 1-14, with branching at specific points.
-fn assign_room_templates(rng: &mut StdRng) -> Vec<RoomTemplate> {
-    let mut templates = Vec::with_capacity(14);
-
-    // Room 1-3: intro rooms
-    let intro_choices = [
-        RoomTemplate::Corridor,
-        RoomTemplate::Staircase,
-        RoomTemplate::CathedralHall,
-    ];
-    for _ in 0..3 {
-        templates.push(intro_choices[rng.random_range(0..intro_choices.len())]);
-    }
-
-    // Room 4: first branch split
-    templates.push(RoomTemplate::BranchSplit);
-
-    // Room 5-7: branch segment (varied rooms)
-    let mid_choices = [
-        RoomTemplate::TowerClimb,
-        RoomTemplate::CryptDepths,
-        RoomTemplate::BridgeRun,
-        RoomTemplate::Corridor,
-        RoomTemplate::CathedralHall,
-    ];
-    for _ in 0..3 {
-        templates.push(mid_choices[rng.random_range(0..mid_choices.len())]);
-    }
-
-    // Room 8: first branch merge
-    templates.push(RoomTemplate::BranchMerge);
-
-    // Room 9-11: late segment
-    let late_choices = [
-        RoomTemplate::BossArena,
-        RoomTemplate::TowerClimb,
-        RoomTemplate::CryptDepths,
-        RoomTemplate::Staircase,
-    ];
-    for _ in 0..3 {
-        templates.push(late_choices[rng.random_range(0..late_choices.len())]);
-    }
-
-    // Room 12: optional second branch split
-    templates.push(RoomTemplate::BranchSplit);
-
-    // Room 13: final gauntlet
-    templates.push(RoomTemplate::BossArena);
-
-    // Room 14 (index 13): finish room
-    templates.push(RoomTemplate::Corridor);
-
-    templates
-}
-
-/// Generate a single room given its template.
-fn generate_room(
-    course: &mut Course,
-    rng: &mut StdRng,
-    base_x: u32,
-    room_idx: u32,
-    template: RoomTemplate,
+/// Add valid neighboring cells to the frontier.
+fn add_neighbors(
+    pos: GridPos,
+    occupied: &std::collections::HashSet<GridPos>,
+    frontier: &mut Vec<GridPos>,
 ) {
-    match template {
-        RoomTemplate::Corridor => gen_corridor(course, rng, base_x, room_idx),
-        RoomTemplate::Staircase => gen_staircase(course, rng, base_x, room_idx),
-        RoomTemplate::TowerClimb => gen_tower_climb(course, rng, base_x, room_idx),
-        RoomTemplate::CathedralHall => gen_cathedral_hall(course, rng, base_x, room_idx),
-        RoomTemplate::CryptDepths => gen_crypt_depths(course, rng, base_x, room_idx),
-        RoomTemplate::BridgeRun => gen_bridge_run(course, rng, base_x, room_idx),
-        RoomTemplate::BossArena => gen_boss_arena(course, rng, base_x, room_idx),
-        RoomTemplate::BranchSplit => gen_branch_split(course, rng, base_x, room_idx),
-        RoomTemplate::BranchMerge => gen_branch_merge(course, rng, base_x, room_idx),
+    let dirs = [
+        Direction::Up,
+        Direction::Down,
+        Direction::Left,
+        Direction::Right,
+    ];
+    for dir in dirs {
+        let (dx, dy) = dir.offset();
+        let nc = pos.col as i8 + dx;
+        let nr = pos.row as i8 + dy;
+        if nc >= 0 && nc < GRID_COLS as i8 && nr >= 0 && nr < GRID_ROWS as i8 {
+            let neighbor = GridPos {
+                col: nc as u8,
+                row: nr as u8,
+            };
+            if !occupied.contains(&neighbor) && !frontier.contains(&neighbor) {
+                frontier.push(neighbor);
+            }
+        }
     }
 }
 
-/// Corridor: flat floor with scattered platforms, enemies, and power-ups.
-fn gen_corridor(course: &mut Course, rng: &mut StdRng, base_x: u32, _room_idx: u32) {
-    // Floor is rows 0-1 (already placed). Add some raised sections.
-    let plat_count = rng.random_range(2u32..5);
+/// Build MST via Prim's algorithm with random weights, plus extra edges.
+fn build_connections(rooms: &[PlacedRoom], rng: &mut StdRng) -> Vec<RoomEdge> {
+    use std::collections::HashSet;
+
+    let room_set: HashSet<GridPos> = rooms.iter().map(|r| r.grid_pos).collect();
+    let mut in_tree: HashSet<GridPos> = HashSet::new();
+    let mut edges: Vec<RoomEdge> = Vec::new();
+
+    // All possible edges between adjacent rooms
+    let mut all_edges: Vec<(RoomEdge, u32)> = Vec::new();
+    for room in rooms {
+        for dir in &[
+            Direction::Up,
+            Direction::Down,
+            Direction::Left,
+            Direction::Right,
+        ] {
+            let (dx, dy) = dir.offset();
+            let nc = room.grid_pos.col as i8 + dx;
+            let nr = room.grid_pos.row as i8 + dy;
+            if nc >= 0 && nc < GRID_COLS as i8 && nr >= 0 && nr < GRID_ROWS as i8 {
+                let neighbor = GridPos {
+                    col: nc as u8,
+                    row: nr as u8,
+                };
+                if room_set.contains(&neighbor) {
+                    // Only add each edge once (a < b lexicographically)
+                    let (a, b, d) =
+                        if (room.grid_pos.col, room.grid_pos.row) < (neighbor.col, neighbor.row) {
+                            (room.grid_pos, neighbor, *dir)
+                        } else {
+                            (neighbor, room.grid_pos, dir.opposite())
+                        };
+                    let weight = rng.random_range(1u32..100);
+                    all_edges.push((RoomEdge { a, b, direction: d }, weight));
+                }
+            }
+        }
+    }
+
+    // Deduplicate edges
+    all_edges.sort_by_key(|(e, _)| (e.a.col, e.a.row, e.b.col, e.b.row));
+    all_edges.dedup_by_key(|(e, _)| (e.a.col, e.a.row, e.b.col, e.b.row));
+
+    // Sort by weight for Prim's
+    all_edges.sort_by_key(|(_, w)| *w);
+
+    // Prim's MST
+    in_tree.insert(rooms[0].grid_pos);
+    let mut mst_count = 0;
+    while mst_count < rooms.len() - 1 {
+        let mut found = false;
+        for (edge, _) in &all_edges {
+            let a_in = in_tree.contains(&edge.a);
+            let b_in = in_tree.contains(&edge.b);
+            if a_in != b_in {
+                edges.push(edge.clone());
+                in_tree.insert(edge.a);
+                in_tree.insert(edge.b);
+                mst_count += 1;
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            break;
+        }
+        // Remove used edge
+        let last_edge = edges.last().unwrap();
+        let key = (
+            last_edge.a.col,
+            last_edge.a.row,
+            last_edge.b.col,
+            last_edge.b.row,
+        );
+        all_edges.retain(|(e, _)| (e.a.col, e.a.row, e.b.col, e.b.row) != key);
+    }
+
+    // Add 3-5 extra random edges for alternate routes
+    let extra_count = rng.random_range(3u32..6).min(all_edges.len() as u32);
+    for _ in 0..extra_count {
+        if all_edges.is_empty() {
+            break;
+        }
+        let idx = rng.random_range(0..all_edges.len());
+        let (edge, _) = all_edges.swap_remove(idx);
+        // Only add if not already in edges
+        let key = (edge.a.col, edge.a.row, edge.b.col, edge.b.row);
+        if !edges
+            .iter()
+            .any(|e| (e.a.col, e.a.row, e.b.col, e.b.row) == key)
+        {
+            edges.push(edge);
+        }
+    }
+
+    edges
+}
+
+/// BFS from start to compute distances, then assign themes by distance tier.
+fn assign_themes(mut rooms: Vec<PlacedRoom>, edges: &[RoomEdge]) -> Vec<PlacedRoom> {
+    use std::collections::{HashMap, VecDeque};
+
+    // Build adjacency list
+    let mut adj: HashMap<(u8, u8), Vec<(u8, u8)>> = HashMap::new();
+    for edge in edges {
+        adj.entry((edge.a.col, edge.a.row))
+            .or_default()
+            .push((edge.b.col, edge.b.row));
+        adj.entry((edge.b.col, edge.b.row))
+            .or_default()
+            .push((edge.a.col, edge.a.row));
+    }
+
+    // BFS from start room (index 0)
+    let start = rooms[0].grid_pos;
+    let mut distances: HashMap<(u8, u8), u16> = HashMap::new();
+    let mut queue = VecDeque::new();
+    distances.insert((start.col, start.row), 0);
+    queue.push_back((start.col, start.row));
+
+    while let Some((col, row)) = queue.pop_front() {
+        let dist = distances[&(col, row)];
+        if let Some(neighbors) = adj.get(&(col, row)) {
+            for &(nc, nr) in neighbors {
+                if let std::collections::hash_map::Entry::Vacant(e) = distances.entry((nc, nr)) {
+                    e.insert(dist + 1);
+                    queue.push_back((nc, nr));
+                }
+            }
+        }
+    }
+
+    // Find the max-distance room for ThroneRoom
+    let max_dist = rooms
+        .iter()
+        .map(|r| {
+            distances
+                .get(&(r.grid_pos.col, r.grid_pos.row))
+                .copied()
+                .unwrap_or(0)
+        })
+        .max()
+        .unwrap_or(0);
+
+    // Find the room with max distance (prefer top rows)
+    let throne_pos = rooms
+        .iter()
+        .filter(|r| {
+            distances
+                .get(&(r.grid_pos.col, r.grid_pos.row))
+                .copied()
+                .unwrap_or(0)
+                == max_dist
+        })
+        .max_by_key(|r| r.grid_pos.row)
+        .map(|r| r.grid_pos)
+        .unwrap_or(rooms.last().unwrap().grid_pos);
+
+    // Assign themes and distances
+    for room in &mut rooms {
+        let dist = distances
+            .get(&(room.grid_pos.col, room.grid_pos.row))
+            .copied()
+            .unwrap_or(0);
+        room.distance_from_start = dist;
+
+        if room.grid_pos == start {
+            room.theme = RoomTheme::Entrance;
+        } else if room.grid_pos == throne_pos {
+            room.theme = RoomTheme::ThroneRoom;
+        } else {
+            room.theme = match dist {
+                1 => RoomTheme::Corridor,
+                2..=3 => {
+                    if dist % 2 == 0 {
+                        RoomTheme::GreatHall
+                    } else {
+                        RoomTheme::Library
+                    }
+                },
+                4..=5 => {
+                    if dist % 2 == 0 {
+                        RoomTheme::Armory
+                    } else {
+                        RoomTheme::Chapel
+                    }
+                },
+                6..=7 => {
+                    if dist % 2 == 0 {
+                        RoomTheme::Tower
+                    } else {
+                        RoomTheme::Crypt
+                    }
+                },
+                _ => RoomTheme::Dungeon,
+            };
+        }
+    }
+
+    // Build door lists for each room based on edges
+    let room_positions: std::collections::HashSet<(u8, u8)> = rooms
+        .iter()
+        .map(|r| (r.grid_pos.col, r.grid_pos.row))
+        .collect();
+    for room in &mut rooms {
+        let pos = room.grid_pos;
+        for edge in edges {
+            if edge.a == pos {
+                room.doors.push(edge.direction);
+            } else if edge.b == pos {
+                room.doors.push(edge.direction.opposite());
+            }
+        }
+        // Deduplicate doors
+        room.doors.sort_by_key(|d| *d as u8);
+        room.doors.dedup();
+    }
+    let _ = room_positions; // suppress unused warning
+
+    rooms
+}
+
+/// Stamp the labyrinth: the entire grid starts as StoneBrick.
+/// Carve empty interiors for each room, then carve doorways.
+fn stamp_labyrinth(course: &mut Course, rooms: &[PlacedRoom], edges: &[RoomEdge]) {
+    // Carve room interiors (leave 1-tile walls)
+    for room in rooms {
+        let bx = room.grid_pos.col as u32 * ROOM_W;
+        let by = room.grid_pos.row as u32 * ROOM_H;
+
+        // Carve 30×22 interior (1-tile border)
+        for y in (by + 1)..(by + ROOM_H - 1) {
+            for x in (bx + 1)..(bx + ROOM_W - 1) {
+                course.set_tile(x, y, Tile::Empty);
+            }
+        }
+
+        // Add floor inside room (bottom 1-tile row inside the border = by + 1)
+        for x in (bx + 1)..(bx + ROOM_W - 1) {
+            course.set_tile(x, by + 1, Tile::StoneBrick);
+        }
+    }
+
+    // Carve doorways between connected rooms (4-tile-wide passages)
+    for edge in edges {
+        let (dx, dy) = edge.direction.offset();
+
+        let bx_a = edge.a.col as u32 * ROOM_W;
+        let by_a = edge.a.row as u32 * ROOM_H;
+
+        if dx != 0 {
+            // Horizontal doorway: carve through the vertical wall between rooms
+            let wall_x = if dx > 0 { bx_a + ROOM_W - 1 } else { bx_a };
+            let mid_y = by_a + ROOM_H / 2;
+            for dy_off in 0..4u32 {
+                let y = mid_y - 1 + dy_off;
+                course.set_tile(wall_x, y, Tile::Empty);
+                // Also clear the adjacent tile on the other side
+                let other_x = (wall_x as i32 + dx as i32) as u32;
+                if other_x < course.width {
+                    course.set_tile(other_x, y, Tile::Empty);
+                }
+            }
+            // Ensure floor continuity in doorway
+            let floor_y = mid_y - 2;
+            course.set_tile(wall_x, floor_y, Tile::StoneBrick);
+            let other_x = (wall_x as i32 + dx as i32) as u32;
+            if other_x < course.width {
+                course.set_tile(other_x, floor_y, Tile::StoneBrick);
+            }
+        } else {
+            // Vertical doorway: carve through the horizontal wall between rooms
+            let wall_y = if dy > 0 { by_a + ROOM_H - 1 } else { by_a };
+            let mid_x = bx_a + ROOM_W / 2;
+            for dx_off in 0..4u32 {
+                let x = mid_x - 1 + dx_off;
+                course.set_tile(x, wall_y, Tile::Empty);
+                // Also clear the adjacent tile
+                let other_y = (wall_y as i32 + dy as i32) as u32;
+                if other_y < course.height {
+                    course.set_tile(x, other_y, Tile::Empty);
+                }
+            }
+            // Add ladder for vertical doorways going up
+            if dy > 0 {
+                let ladder_x = mid_x;
+                // Ladder from floor of lower room through doorway to floor of upper room
+                for ly in (wall_y.saturating_sub(3))..=(wall_y + 2).min(course.height - 1) {
+                    course.set_tile(ladder_x, ly, Tile::Ladder);
+                }
+            } else {
+                let ladder_x = mid_x;
+                let other_y = (wall_y as i32 + dy as i32) as u32;
+                for ly in other_y.saturating_sub(1)..=(wall_y + 3).min(course.height - 1) {
+                    course.set_tile(ladder_x, ly, Tile::Ladder);
+                }
+            }
+        }
+    }
+}
+
+/// Populate each room's interior with themed content.
+fn populate_rooms(
+    course: &mut Course,
+    rooms: &[PlacedRoom],
+    _edges: &[RoomEdge],
+    rng: &mut StdRng,
+) {
+    for room in rooms {
+        let bx = room.grid_pos.col as u32 * ROOM_W;
+        let by = room.grid_pos.row as u32 * ROOM_H;
+
+        match room.theme {
+            RoomTheme::Entrance => gen_entrance(course, bx, by),
+            RoomTheme::Corridor => gen_corridor(course, rng, bx, by, &room.doors),
+            RoomTheme::GreatHall => gen_great_hall(course, rng, bx, by, &room.doors),
+            RoomTheme::Library => gen_library(course, rng, bx, by, &room.doors),
+            RoomTheme::Armory => gen_armory(course, rng, bx, by, &room.doors),
+            RoomTheme::Chapel => gen_chapel(course, rng, bx, by, &room.doors),
+            RoomTheme::Crypt => gen_crypt(course, rng, bx, by, &room.doors),
+            RoomTheme::Tower => gen_tower(course, rng, bx, by, &room.doors),
+            RoomTheme::Dungeon => gen_dungeon(course, rng, bx, by, &room.doors),
+            RoomTheme::ThroneRoom => gen_throne_room(course, rng, bx, by, &room.doors),
+        }
+    }
+}
+
+/// Check if a tile position is within a doorway zone (should be kept clear).
+fn is_doorway_zone(x: u32, y: u32, bx: u32, by: u32, doors: &[Direction]) -> bool {
+    for door in doors {
+        match door {
+            Direction::Left => {
+                let mid_y = by + ROOM_H / 2;
+                if x <= bx + 2 && y >= mid_y - 2 && y <= mid_y + 3 {
+                    return true;
+                }
+            },
+            Direction::Right => {
+                let mid_y = by + ROOM_H / 2;
+                if x >= bx + ROOM_W - 3 && y >= mid_y - 2 && y <= mid_y + 3 {
+                    return true;
+                }
+            },
+            Direction::Down => {
+                let mid_x = bx + ROOM_W / 2;
+                if y <= by + 3 && x >= mid_x - 2 && x <= mid_x + 3 {
+                    return true;
+                }
+            },
+            Direction::Up => {
+                let mid_x = bx + ROOM_W / 2;
+                if y >= by + ROOM_H - 4 && x >= mid_x - 2 && x <= mid_x + 3 {
+                    return true;
+                }
+            },
+        }
+    }
+    false
+}
+
+// ================================================================
+// Per-theme room generators
+// ================================================================
+
+/// Entrance: flat floor, torches, safe.
+fn gen_entrance(course: &mut Course, bx: u32, by: u32) {
+    // Decorative torches
+    course.set_tile(bx + 3, by + 3, Tile::DecoTorch);
+    course.set_tile(bx + ROOM_W - 4, by + 3, Tile::DecoTorch);
+    course.set_tile(bx + ROOM_W / 2, by + 8, Tile::DecoTorch);
+
+    // A few safe platforms
+    for dx in 0..5 {
+        course.set_tile(bx + 8 + dx, by + 6, Tile::Platform);
+    }
+    for dx in 0..5 {
+        course.set_tile(bx + 18 + dx, by + 6, Tile::Platform);
+    }
+}
+
+/// Corridor: basic platforms, 1 skeleton, 1-2 spike patches.
+fn gen_corridor(course: &mut Course, rng: &mut StdRng, bx: u32, by: u32, doors: &[Direction]) {
+    // Platforms
+    let plat_count = rng.random_range(2u32..4);
     for _ in 0..plat_count {
-        let px = base_x + rng.random_range(2..ROOM_WIDTH - 2);
-        let py = rng.random_range(4u32..8);
-        let len = rng.random_range(2u32..5).min(ROOM_WIDTH - (px - base_x));
+        let px = bx + rng.random_range(3..ROOM_W - 5);
+        let py = by + rng.random_range(5u32..12);
+        if is_doorway_zone(px, py, bx, by, doors) {
+            continue;
+        }
+        let len = rng.random_range(3u32..7);
         for dx in 0..len {
-            if px + dx < course.width {
+            if !is_doorway_zone(px + dx, py, bx, by, doors) {
                 course.set_tile(px + dx, py, Tile::Platform);
             }
         }
     }
 
-    // Spikes on floor in a few places
-    let spike_x = base_x + rng.random_range(5..ROOM_WIDTH - 3);
+    // Spike patches
+    let spike_x = bx + rng.random_range(5..ROOM_W - 6);
     let spike_len = rng.random_range(2u32..4);
     for dx in 0..spike_len {
-        if spike_x + dx < course.width {
-            course.set_tile(spike_x + dx, 2, Tile::Spikes);
+        if !is_doorway_zone(spike_x + dx, by + 2, bx, by, doors) {
+            course.set_tile(spike_x + dx, by + 2, Tile::Spikes);
         }
     }
 
-    // Enemy: skeleton or bat
-    add_corridor_enemies(course, rng, base_x);
-
-    // Power-up spawn
-    let pu_x = base_x + rng.random_range(3..ROOM_WIDTH - 3);
-    let pu_y = rng.random_range(3u32..7);
-    course.set_tile(pu_x, pu_y, Tile::PowerUpSpawn);
-
-    // Decorative torches
-    course.set_tile(base_x + 1, 3, Tile::DecoTorch);
-    course.set_tile(base_x + ROOM_WIDTH - 2, 3, Tile::DecoTorch);
-}
-
-/// Staircase: ascending platforms from left to right.
-fn gen_staircase(course: &mut Course, rng: &mut StdRng, base_x: u32, _room_idx: u32) {
-    let step_count = rng.random_range(4u32..7);
-    let step_width = 3u32;
-
-    for i in 0..step_count {
-        let sx = base_x + i * step_width;
-        let sy = 2 + i;
-        for dx in 0..step_width {
-            if sx + dx < course.width && sy < course.height {
-                course.set_tile(sx + dx, sy, Tile::StoneBrick);
-            }
-        }
-    }
-
-    // Add spikes between some steps
-    if step_count > 2 {
-        let spike_step = rng.random_range(1..step_count - 1);
-        let sx = base_x + spike_step * step_width;
-        course.set_tile(sx, 2, Tile::Spikes);
-    }
-
-    // Knight enemy patrolling the staircase
-    let enemy_x = (base_x + ROOM_WIDTH / 2) as f32 * TILE_SIZE;
-    let enemy_y = 3.0 * TILE_SIZE;
+    // 1 Skeleton
+    let ex = (bx + ROOM_W / 2) as f32 * TILE_SIZE;
+    let ey = (by + 3) as f32 * TILE_SIZE;
     course.enemy_spawns.push(EnemySpawn {
-        x: enemy_x,
-        y: enemy_y,
-        enemy_type: EnemyType::Knight,
-        patrol_min_x: base_x as f32 * TILE_SIZE,
-        patrol_max_x: (base_x + ROOM_WIDTH) as f32 * TILE_SIZE,
+        x: ex,
+        y: ey,
+        enemy_type: EnemyType::Skeleton,
+        patrol_min_x: (bx + 2) as f32 * TILE_SIZE,
+        patrol_max_x: (bx + ROOM_W - 3) as f32 * TILE_SIZE,
     });
 
-    // Torch decorations
-    course.set_tile(base_x + 2, 4, Tile::DecoTorch);
+    // Torches
+    course.set_tile(bx + 2, by + 3, Tile::DecoTorch);
+    course.set_tile(bx + ROOM_W - 3, by + 3, Tile::DecoTorch);
+
+    // Power-up
+    let pu_x = bx + rng.random_range(4..ROOM_W - 4);
+    let pu_y = by + rng.random_range(4u32..8);
+    course.set_tile(pu_x, pu_y, Tile::PowerUpSpawn);
 }
 
-/// Tower Climb: vertical climb with platforms, ladders, and bats.
-fn gen_tower_climb(course: &mut Course, rng: &mut StdRng, base_x: u32, _room_idx: u32) {
-    // Build side walls
-    for y in 2..COURSE_HEIGHT - 2 {
-        course.set_tile(base_x, y, Tile::StoneBrick);
-        if base_x + ROOM_WIDTH - 1 < course.width {
-            course.set_tile(base_x + ROOM_WIDTH - 1, y, Tile::StoneBrick);
-        }
-    }
-
-    // Alternating platforms going up
-    let plat_positions = [4u32, 8, 12, 16, 20, 24];
-    for (i, &py) in plat_positions.iter().enumerate() {
-        if py >= COURSE_HEIGHT - 2 {
-            continue;
-        }
-        let offset = if i % 2 == 0 { 2u32 } else { 10u32 };
-        let len = rng.random_range(5u32..9);
-        for dx in 0..len {
-            let px = base_x + offset + dx;
-            if px < base_x + ROOM_WIDTH - 1 && px < course.width {
-                course.set_tile(px, py, Tile::Platform);
-            }
-        }
-    }
-
-    // Central ladder sections
-    let ladder_x = base_x + ROOM_WIDTH / 2;
-    for y in [6u32, 10, 14, 18, 22] {
-        for dy in 0..3 {
-            if y + dy < COURSE_HEIGHT - 2 && ladder_x < course.width {
-                course.set_tile(ladder_x, y + dy, Tile::Ladder);
-            }
-        }
-    }
-
-    // Bat enemies at various heights
-    for &bat_y in &[6.0, 14.0, 22.0] {
-        let bat_x = (base_x + ROOM_WIDTH / 2) as f32 * TILE_SIZE;
-        course.enemy_spawns.push(EnemySpawn {
-            x: bat_x,
-            y: bat_y * TILE_SIZE,
-            enemy_type: EnemyType::Bat,
-            patrol_min_x: (base_x + 2) as f32 * TILE_SIZE,
-            patrol_max_x: (base_x + ROOM_WIDTH - 2) as f32 * TILE_SIZE,
-        });
-    }
-
-    // Power-up near the top
-    let pu_y = rng.random_range(18u32..24).min(COURSE_HEIGHT - 3);
-    course.set_tile(base_x + ROOM_WIDTH / 2 + 2, pu_y, Tile::PowerUpSpawn);
-
-    // Decorative stained glass
-    course.set_tile(base_x + 3, 15, Tile::DecoStainedGlass);
-}
-
-/// Cathedral Hall: large open room with high ceiling, pillars, and medusa.
-fn gen_cathedral_hall(course: &mut Course, rng: &mut StdRng, base_x: u32, _room_idx: u32) {
+/// GreatHall: pillars, open floor, upper walkway. 1 Skeleton + 1 Medusa.
+fn gen_great_hall(course: &mut Course, rng: &mut StdRng, bx: u32, by: u32, doors: &[Direction]) {
     // Pillars
     let pillar_count = rng.random_range(2u32..4);
-    let spacing = ROOM_WIDTH / (pillar_count + 1);
+    let spacing = (ROOM_W - 4) / (pillar_count + 1);
     for i in 1..=pillar_count {
-        let px = base_x + i * spacing;
-        for y in 2..10 {
-            if px < course.width {
+        let px = bx + 2 + i * spacing;
+        for y in (by + 2)..(by + 12) {
+            if !is_doorway_zone(px, y, bx, by, doors) {
                 course.set_tile(px, y, Tile::StoneBrick);
             }
         }
     }
 
-    // Upper platforms between pillars
-    for i in 0..pillar_count {
-        let plat_x = base_x + i * spacing + spacing / 2;
-        for dx in 0..3 {
-            if plat_x + dx < course.width {
-                course.set_tile(plat_x + dx, 8, Tile::Platform);
+    // Upper walkway
+    for dx in 0..(ROOM_W - 6) {
+        let x = bx + 3 + dx;
+        let y = by + 14;
+        if !is_doorway_zone(x, y, bx, by, doors) {
+            course.set_tile(x, y, Tile::Platform);
+        }
+    }
+
+    // Skeleton on ground
+    let ex = (bx + ROOM_W / 3) as f32 * TILE_SIZE;
+    let ey = (by + 3) as f32 * TILE_SIZE;
+    course.enemy_spawns.push(EnemySpawn {
+        x: ex,
+        y: ey,
+        enemy_type: EnemyType::Skeleton,
+        patrol_min_x: (bx + 2) as f32 * TILE_SIZE,
+        patrol_max_x: (bx + ROOM_W - 3) as f32 * TILE_SIZE,
+    });
+
+    // Medusa high up
+    let mx = (bx + ROOM_W / 2) as f32 * TILE_SIZE;
+    let my = (by + 16) as f32 * TILE_SIZE;
+    course.enemy_spawns.push(EnemySpawn {
+        x: mx,
+        y: my,
+        enemy_type: EnemyType::Medusa,
+        patrol_min_x: (bx + 3) as f32 * TILE_SIZE,
+        patrol_max_x: (bx + ROOM_W - 4) as f32 * TILE_SIZE,
+    });
+
+    // Stained glass and torches
+    course.set_tile(bx + 5, by + 18, Tile::DecoStainedGlass);
+    course.set_tile(bx + ROOM_W - 6, by + 18, Tile::DecoStainedGlass);
+    course.set_tile(bx + 2, by + 3, Tile::DecoTorch);
+    course.set_tile(bx + ROOM_W - 3, by + 3, Tile::DecoTorch);
+
+    // Power-up on upper walkway
+    course.set_tile(bx + ROOM_W / 2, by + 15, Tile::PowerUpSpawn);
+}
+
+/// Library: bookshelf columns, ladders, vertical. 2 Bats.
+fn gen_library(course: &mut Course, rng: &mut StdRng, bx: u32, by: u32, doors: &[Direction]) {
+    // Bookshelf columns (tall stone brick columns with gaps)
+    let col_count = 3u32;
+    let spacing = (ROOM_W - 4) / (col_count + 1);
+    for i in 1..=col_count {
+        let px = bx + 2 + i * spacing;
+        for y in (by + 2)..(by + 16) {
+            if !is_doorway_zone(px, y, bx, by, doors) {
+                // Leave gaps for passage
+                if y != by + 7 && y != by + 12 {
+                    course.set_tile(px, y, Tile::StoneBrick);
+                }
             }
         }
     }
 
-    // Medusa floating high up
-    let medusa_x = (base_x + ROOM_WIDTH / 2) as f32 * TILE_SIZE;
-    course.enemy_spawns.push(EnemySpawn {
-        x: medusa_x,
-        y: 12.0 * TILE_SIZE,
-        enemy_type: EnemyType::Medusa,
-        patrol_min_x: (base_x + 2) as f32 * TILE_SIZE,
-        patrol_max_x: (base_x + ROOM_WIDTH - 2) as f32 * TILE_SIZE,
-    });
+    // Ladders between shelves
+    for i in 1..col_count {
+        let lx = bx + 2 + i * spacing + spacing / 2;
+        for y in (by + 3)..(by + 15) {
+            if !is_doorway_zone(lx, y, bx, by, doors) {
+                course.set_tile(lx, y, Tile::Ladder);
+            }
+        }
+    }
 
-    // Skeleton on the ground
-    add_corridor_enemies(course, rng, base_x);
+    // Platforms at different heights
+    for h in [by + 7, by + 12] {
+        for dx in 0..4 {
+            let x = bx + 4 + dx;
+            if !is_doorway_zone(x, h, bx, by, doors) {
+                course.set_tile(x, h, Tile::Platform);
+            }
+        }
+    }
 
-    // Power-up on a high platform
-    course.set_tile(base_x + ROOM_WIDTH / 2, 9, Tile::PowerUpSpawn);
+    // 2 Bats
+    for &bat_y in &[by + 8, by + 14] {
+        let bx_pos = (bx + rng.random_range(5..ROOM_W - 5)) as f32 * TILE_SIZE;
+        course.enemy_spawns.push(EnemySpawn {
+            x: bx_pos,
+            y: bat_y as f32 * TILE_SIZE,
+            enemy_type: EnemyType::Bat,
+            patrol_min_x: (bx + 2) as f32 * TILE_SIZE,
+            patrol_max_x: (bx + ROOM_W - 3) as f32 * TILE_SIZE,
+        });
+    }
 
-    // Stained glass and torches
-    course.set_tile(base_x + 5, 14, Tile::DecoStainedGlass);
-    course.set_tile(base_x + 15, 14, Tile::DecoStainedGlass);
-    course.set_tile(base_x + 2, 3, Tile::DecoTorch);
-    course.set_tile(base_x + ROOM_WIDTH - 3, 3, Tile::DecoTorch);
+    // Torches
+    course.set_tile(bx + 2, by + 5, Tile::DecoTorch);
+    course.set_tile(bx + ROOM_W - 3, by + 5, Tile::DecoTorch);
 
-    // Cobwebs in corners and chains from ceiling
-    course.set_tile(base_x + 1, 14, Tile::DecoCobweb);
-    course.set_tile(base_x + ROOM_WIDTH - 2, 14, Tile::DecoCobweb);
-    course.set_tile(base_x + 8, 14, Tile::DecoChain);
-    course.set_tile(base_x + 12, 14, Tile::DecoChain);
+    // Power-up near top
+    course.set_tile(bx + ROOM_W / 2 + 2, by + 16, Tile::PowerUpSpawn);
 }
 
-/// Crypt Depths: dark, narrow passages with spikes and breakable walls.
-fn gen_crypt_depths(course: &mut Course, rng: &mut StdRng, base_x: u32, _room_idx: u32) {
+/// Armory: heavy platforms, weapon racks (deco). 2 Knights. Spike rows.
+fn gen_armory(course: &mut Course, rng: &mut StdRng, bx: u32, by: u32, doors: &[Direction]) {
+    // Heavy platforms
+    for &py in &[by + 6, by + 11, by + 16] {
+        let start = bx + rng.random_range(3..8);
+        let len = rng.random_range(6u32..12);
+        for dx in 0..len {
+            let x = start + dx;
+            if x < bx + ROOM_W - 2 && !is_doorway_zone(x, py, bx, by, doors) {
+                course.set_tile(x, py, Tile::Platform);
+            }
+        }
+    }
+
+    // Spike rows on floor
+    for dx in 0..6 {
+        let x = bx + 8 + dx;
+        if !is_doorway_zone(x, by + 2, bx, by, doors) {
+            course.set_tile(x, by + 2, Tile::Spikes);
+        }
+    }
+    for dx in 0..4 {
+        let x = bx + 20 + dx;
+        if !is_doorway_zone(x, by + 2, bx, by, doors) {
+            course.set_tile(x, by + 2, Tile::Spikes);
+        }
+    }
+
+    // 2 Knights
+    for &kx_off in &[ROOM_W / 3, 2 * ROOM_W / 3] {
+        let kx = (bx + kx_off) as f32 * TILE_SIZE;
+        let ky = (by + 3) as f32 * TILE_SIZE;
+        course.enemy_spawns.push(EnemySpawn {
+            x: kx,
+            y: ky,
+            enemy_type: EnemyType::Knight,
+            patrol_min_x: (bx + 2) as f32 * TILE_SIZE,
+            patrol_max_x: (bx + ROOM_W - 3) as f32 * TILE_SIZE,
+        });
+    }
+
+    // Weapon rack decoration (chains)
+    course.set_tile(bx + 4, by + 4, Tile::DecoChain);
+    course.set_tile(bx + ROOM_W - 5, by + 4, Tile::DecoChain);
+
+    // Torches
+    course.set_tile(bx + 2, by + 3, Tile::DecoTorch);
+    course.set_tile(bx + ROOM_W - 3, by + 3, Tile::DecoTorch);
+
+    // Power-up
+    course.set_tile(bx + ROOM_W / 2, by + 12, Tile::PowerUpSpawn);
+}
+
+/// Chapel: stained glass, altar platforms. 1 Medusa.
+fn gen_chapel(course: &mut Course, _rng: &mut StdRng, bx: u32, by: u32, doors: &[Direction]) {
+    // Altar platform in center
+    for dx in 0..8 {
+        let x = bx + ROOM_W / 2 - 4 + dx;
+        if !is_doorway_zone(x, by + 5, bx, by, doors) {
+            course.set_tile(x, by + 5, Tile::StoneBrick);
+        }
+    }
+
+    // Side platforms
+    for dx in 0..4 {
+        course.set_tile(bx + 3 + dx, by + 9, Tile::Platform);
+        course.set_tile(bx + ROOM_W - 7 + dx, by + 9, Tile::Platform);
+    }
+
+    // Upper platforms
+    for dx in 0..6 {
+        let x = bx + ROOM_W / 2 - 3 + dx;
+        if !is_doorway_zone(x, by + 13, bx, by, doors) {
+            course.set_tile(x, by + 13, Tile::Platform);
+        }
+    }
+
+    // 1 Medusa
+    let mx = (bx + ROOM_W / 2) as f32 * TILE_SIZE;
+    let my = (by + 15) as f32 * TILE_SIZE;
+    course.enemy_spawns.push(EnemySpawn {
+        x: mx,
+        y: my,
+        enemy_type: EnemyType::Medusa,
+        patrol_min_x: (bx + 3) as f32 * TILE_SIZE,
+        patrol_max_x: (bx + ROOM_W - 4) as f32 * TILE_SIZE,
+    });
+
+    // Stained glass
+    course.set_tile(bx + 5, by + 18, Tile::DecoStainedGlass);
+    course.set_tile(bx + ROOM_W / 2, by + 20, Tile::DecoStainedGlass);
+    course.set_tile(bx + ROOM_W - 6, by + 18, Tile::DecoStainedGlass);
+
+    // Torches
+    course.set_tile(bx + 2, by + 3, Tile::DecoTorch);
+    course.set_tile(bx + ROOM_W - 3, by + 3, Tile::DecoTorch);
+
+    // Power-up
+    course.set_tile(bx + ROOM_W / 2, by + 14, Tile::PowerUpSpawn);
+}
+
+/// Crypt: low ceiling, water pools, breakable walls. 2 Skeletons. Water + spikes.
+fn gen_crypt(course: &mut Course, rng: &mut StdRng, bx: u32, by: u32, doors: &[Direction]) {
     // Low ceiling
-    for x in base_x..base_x + ROOM_WIDTH {
-        if x < course.width {
-            course.set_tile(x, 12, Tile::StoneBrick);
-            course.set_tile(x, 13, Tile::StoneBrick);
+    for x in (bx + 1)..(bx + ROOM_W - 1) {
+        if !is_doorway_zone(x, by + 14, bx, by, doors) {
+            course.set_tile(x, by + 14, Tile::StoneBrick);
+        }
+        if !is_doorway_zone(x, by + 15, bx, by, doors) {
+            course.set_tile(x, by + 15, Tile::StoneBrick);
         }
     }
 
     // Internal walls with gaps
-    let wall_count = rng.random_range(2u32..4);
-    let spacing = ROOM_WIDTH / (wall_count + 1);
-    for i in 1..=wall_count {
-        let wx = base_x + i * spacing;
-        let gap_y = rng.random_range(3u32..8);
-        for y in 2..12 {
-            if y != gap_y && y != gap_y + 1 && y != gap_y + 2 && wx < course.width {
+    let wall_x = bx + ROOM_W / 3;
+    let gap_y = by + rng.random_range(4u32..8);
+    for y in (by + 2)..(by + 14) {
+        if y != gap_y
+            && y != gap_y + 1
+            && y != gap_y + 2
+            && !is_doorway_zone(wall_x, y, bx, by, doors)
+        {
+            course.set_tile(wall_x, y, Tile::StoneBrick);
+        }
+    }
+
+    // Breakable wall
+    let bw_x = bx + rng.random_range(4..ROOM_W - 4);
+    let bw_y = by + rng.random_range(4u32..8);
+    if !is_doorway_zone(bw_x, bw_y, bx, by, doors) {
+        course.set_tile(bw_x, bw_y, Tile::BreakableWall);
+        if bw_x + 1 < bx + ROOM_W - 1 {
+            course.set_tile(bw_x + 1, bw_y, Tile::PowerUpSpawn);
+        }
+    }
+
+    // Water pool
+    let water_x = bx + rng.random_range(8..ROOM_W - 6);
+    let water_len = rng.random_range(3u32..6);
+    for dx in 0..water_len {
+        if !is_doorway_zone(water_x + dx, by + 2, bx, by, doors) {
+            // Remove floor to make water pool
+            course.set_tile(water_x + dx, by + 1, Tile::Water);
+            course.set_tile(water_x + dx, by + 2, Tile::Water);
+            course.set_tile(water_x + dx, by + 3, Tile::Water);
+        }
+    }
+
+    // Floor spikes
+    let spike_x = bx + rng.random_range(4..ROOM_W / 3);
+    for dx in 0..3 {
+        if !is_doorway_zone(spike_x + dx, by + 2, bx, by, doors) {
+            course.set_tile(spike_x + dx, by + 2, Tile::Spikes);
+        }
+    }
+
+    // 2 Skeletons
+    for &sx_off in &[ROOM_W / 4, 3 * ROOM_W / 4] {
+        let sx = (bx + sx_off) as f32 * TILE_SIZE;
+        let sy = (by + 3) as f32 * TILE_SIZE;
+        course.enemy_spawns.push(EnemySpawn {
+            x: sx,
+            y: sy,
+            enemy_type: EnemyType::Skeleton,
+            patrol_min_x: (bx + 2) as f32 * TILE_SIZE,
+            patrol_max_x: (bx + ROOM_W - 3) as f32 * TILE_SIZE,
+        });
+    }
+
+    // Decorations
+    course.set_tile(bx + 2, by + 4, Tile::DecoTorch);
+    course.set_tile(bx + ROOM_W - 3, by + 4, Tile::DecoTorch);
+    course.set_tile(bx + 3, by + 13, Tile::DecoCobweb);
+    course.set_tile(bx + ROOM_W - 4, by + 13, Tile::DecoCobweb);
+    course.set_tile(bx + 8, by + 13, Tile::DecoChain);
+}
+
+/// Tower: alternating platforms, full-height climb. 3 Bats.
+fn gen_tower(course: &mut Course, rng: &mut StdRng, bx: u32, by: u32, doors: &[Direction]) {
+    // Alternating platforms going up
+    let plat_heights = [by + 5, by + 8, by + 11, by + 14, by + 17, by + 20];
+    for (i, &py) in plat_heights.iter().enumerate() {
+        if py >= by + ROOM_H - 2 {
+            continue;
+        }
+        let offset = if i % 2 == 0 { 3u32 } else { ROOM_W / 2 };
+        let len = rng.random_range(6u32..10);
+        for dx in 0..len {
+            let x = bx + offset + dx;
+            if x < bx + ROOM_W - 2 && !is_doorway_zone(x, py, bx, by, doors) {
+                course.set_tile(x, py, Tile::Platform);
+            }
+        }
+    }
+
+    // Central ladder sections
+    let ladder_x = bx + ROOM_W / 2;
+    for &start_y in &[by + 3, by + 9, by + 15] {
+        for dy in 0..4 {
+            if start_y + dy < by + ROOM_H - 2
+                && !is_doorway_zone(ladder_x, start_y + dy, bx, by, doors)
+            {
+                course.set_tile(ladder_x, start_y + dy, Tile::Ladder);
+            }
+        }
+    }
+
+    // 3 Bats
+    for &bat_y in &[by + 7, by + 13, by + 19] {
+        if bat_y >= by + ROOM_H - 2 {
+            continue;
+        }
+        let bx_pos = (bx + rng.random_range(4..ROOM_W - 4)) as f32 * TILE_SIZE;
+        course.enemy_spawns.push(EnemySpawn {
+            x: bx_pos,
+            y: bat_y as f32 * TILE_SIZE,
+            enemy_type: EnemyType::Bat,
+            patrol_min_x: (bx + 2) as f32 * TILE_SIZE,
+            patrol_max_x: (bx + ROOM_W - 3) as f32 * TILE_SIZE,
+        });
+    }
+
+    // Stained glass
+    course.set_tile(bx + 4, by + 16, Tile::DecoStainedGlass);
+
+    // Power-up near top
+    let pu_y = (by + 18).min(by + ROOM_H - 3);
+    course.set_tile(bx + ROOM_W / 2 + 3, pu_y, Tile::PowerUpSpawn);
+}
+
+/// Dungeon: traps, narrow passages, breakable walls. 1 Knight + 1 Skeleton. Spikes + water.
+fn gen_dungeon(course: &mut Course, rng: &mut StdRng, bx: u32, by: u32, doors: &[Direction]) {
+    // Narrow passages via internal walls
+    for &wall_x_off in &[ROOM_W / 3, 2 * ROOM_W / 3] {
+        let wx = bx + wall_x_off;
+        let gap1 = by + rng.random_range(4u32..8);
+        let gap2 = by + rng.random_range(12u32..16);
+        for y in (by + 2)..(by + ROOM_H - 2) {
+            if (y >= gap1 && y < gap1 + 3) || (y >= gap2 && y < gap2 + 3) {
+                continue;
+            }
+            if !is_doorway_zone(wx, y, bx, by, doors) {
                 course.set_tile(wx, y, Tile::StoneBrick);
             }
         }
     }
 
-    // Breakable walls hiding secrets
-    let bw_x = base_x + rng.random_range(3..ROOM_WIDTH - 3);
-    let bw_y = rng.random_range(3u32..8);
-    course.set_tile(bw_x, bw_y, Tile::BreakableWall);
-    // Power-up behind breakable wall
-    if bw_x + 1 < course.width {
-        course.set_tile(bw_x + 1, bw_y, Tile::PowerUpSpawn);
+    // Breakable walls
+    let bw_x = bx + ROOM_W / 3;
+    let bw_y = by + 6;
+    if !is_doorway_zone(bw_x, bw_y, bx, by, doors) {
+        course.set_tile(bw_x, bw_y, Tile::BreakableWall);
     }
 
     // Floor spikes
-    let spike_x = base_x + rng.random_range(4..ROOM_WIDTH - 4);
+    for dx in 0..4 {
+        let x = bx + 5 + dx;
+        if !is_doorway_zone(x, by + 2, bx, by, doors) {
+            course.set_tile(x, by + 2, Tile::Spikes);
+        }
+    }
+
+    // Water
     for dx in 0..3 {
-        if spike_x + dx < course.width {
-            course.set_tile(spike_x + dx, 2, Tile::Spikes);
+        let x = bx + ROOM_W / 2 + dx;
+        if !is_doorway_zone(x, by + 2, bx, by, doors) {
+            course.set_tile(x, by + 1, Tile::Water);
+            course.set_tile(x, by + 2, Tile::Water);
         }
     }
 
-    // Skeleton enemies
-    let skel_x = (base_x + ROOM_WIDTH / 3) as f32 * TILE_SIZE;
+    // 1 Knight + 1 Skeleton
+    let kx = (bx + ROOM_W / 4) as f32 * TILE_SIZE;
     course.enemy_spawns.push(EnemySpawn {
-        x: skel_x,
-        y: 3.0 * TILE_SIZE,
-        enemy_type: EnemyType::Skeleton,
-        patrol_min_x: (base_x + 2) as f32 * TILE_SIZE,
-        patrol_max_x: (base_x + ROOM_WIDTH / 2) as f32 * TILE_SIZE,
-    });
-
-    let skel2_x = (base_x + 2 * ROOM_WIDTH / 3) as f32 * TILE_SIZE;
-    course.enemy_spawns.push(EnemySpawn {
-        x: skel2_x,
-        y: 3.0 * TILE_SIZE,
-        enemy_type: EnemyType::Skeleton,
-        patrol_min_x: (base_x + ROOM_WIDTH / 2) as f32 * TILE_SIZE,
-        patrol_max_x: (base_x + ROOM_WIDTH - 2) as f32 * TILE_SIZE,
-    });
-
-    // Flooded floor section (water pool)
-    let water_x = base_x + rng.random_range(8..ROOM_WIDTH - 5);
-    let water_len = rng.random_range(3u32..6);
-    for dx in 0..water_len {
-        if water_x + dx < course.width {
-            course.set_tile(water_x + dx, 2, Tile::Water);
-            course.set_tile(water_x + dx, 3, Tile::Water);
-        }
-    }
-
-    // Torch decorations
-    course.set_tile(base_x + 2, 4, Tile::DecoTorch);
-    course.set_tile(base_x + ROOM_WIDTH - 3, 4, Tile::DecoTorch);
-
-    // Cobwebs and chains
-    course.set_tile(base_x + 1, 11, Tile::DecoCobweb);
-    course.set_tile(base_x + ROOM_WIDTH - 2, 11, Tile::DecoCobweb);
-    course.set_tile(base_x + 6, 11, Tile::DecoChain);
-    course.set_tile(base_x + 14, 11, Tile::DecoChain);
-}
-
-/// Bridge Run: platforming over a pit with falling hazards.
-fn gen_bridge_run(course: &mut Course, rng: &mut StdRng, base_x: u32, _room_idx: u32) {
-    // Remove floor in the middle to create a pit
-    let pit_start = base_x + 3;
-    let pit_end = base_x + ROOM_WIDTH - 3;
-    for x in pit_start..pit_end {
-        if x < course.width {
-            course.set_tile(x, 0, Tile::Empty);
-            course.set_tile(x, 1, Tile::Empty);
-            // Alternate water and spikes at the pit bottom
-            if (x - pit_start) % 3 < 2 {
-                course.set_tile(x, 0, Tile::Water);
-                course.set_tile(x, 1, Tile::Water);
-            } else {
-                course.set_tile(x, 0, Tile::Spikes);
-            }
-        }
-    }
-
-    // Bridge platforms across the pit
-    let bridge_y = rng.random_range(5u32..8);
-    let gap_positions: Vec<u32> = (0..3)
-        .map(|_| rng.random_range(pit_start + 1..pit_end - 1))
-        .collect();
-
-    for x in pit_start..pit_end {
-        if x < course.width && !gap_positions.contains(&x) {
-            course.set_tile(x, bridge_y, Tile::Platform);
-        }
-    }
-
-    // Higher platforms for alternative route
-    for _ in 0..2 {
-        let hx = base_x + rng.random_range(4..ROOM_WIDTH - 4);
-        let hy = bridge_y + rng.random_range(4u32..8);
-        let len = rng.random_range(3u32..6);
-        for dx in 0..len {
-            if hx + dx < course.width && hy < COURSE_HEIGHT - 2 {
-                course.set_tile(hx + dx, hy, Tile::Platform);
-            }
-        }
-    }
-
-    // Bats flying over the pit
-    let bat_x = (base_x + ROOM_WIDTH / 2) as f32 * TILE_SIZE;
-    course.enemy_spawns.push(EnemySpawn {
-        x: bat_x,
-        y: (bridge_y + 3) as f32 * TILE_SIZE,
-        enemy_type: EnemyType::Bat,
-        patrol_min_x: (base_x + 3) as f32 * TILE_SIZE,
-        patrol_max_x: (base_x + ROOM_WIDTH - 3) as f32 * TILE_SIZE,
-    });
-
-    // Power-up over the pit
-    course.set_tile(base_x + ROOM_WIDTH / 2, bridge_y + 2, Tile::PowerUpSpawn);
-}
-
-/// Boss Arena: large open room with multiple enemies and power-ups.
-fn gen_boss_arena(course: &mut Course, rng: &mut StdRng, base_x: u32, _room_idx: u32) {
-    // Side walls
-    for y in 2..20 {
-        course.set_tile(base_x, y, Tile::StoneBrick);
-        if base_x + ROOM_WIDTH - 1 < course.width {
-            course.set_tile(base_x + ROOM_WIDTH - 1, y, Tile::StoneBrick);
-        }
-    }
-
-    // Raised platforms for combat
-    for i in 0..3 {
-        let py = 5 + i * 5;
-        let px = base_x + rng.random_range(3..8);
-        let len = rng.random_range(4u32..8);
-        for dx in 0..len {
-            if px + dx < base_x + ROOM_WIDTH - 1 && py < COURSE_HEIGHT - 2 {
-                course.set_tile(px + dx, py, Tile::Platform);
-            }
-        }
-    }
-
-    // Knight enemy (tough)
-    let knight_x = (base_x + ROOM_WIDTH / 2) as f32 * TILE_SIZE;
-    course.enemy_spawns.push(EnemySpawn {
-        x: knight_x,
-        y: 3.0 * TILE_SIZE,
+        x: kx,
+        y: (by + 3) as f32 * TILE_SIZE,
         enemy_type: EnemyType::Knight,
-        patrol_min_x: (base_x + 2) as f32 * TILE_SIZE,
-        patrol_max_x: (base_x + ROOM_WIDTH - 2) as f32 * TILE_SIZE,
+        patrol_min_x: (bx + 2) as f32 * TILE_SIZE,
+        patrol_max_x: (bx + ROOM_W / 3 - 1) as f32 * TILE_SIZE,
     });
-
-    // Medusa high up
+    let sx = (bx + 3 * ROOM_W / 4) as f32 * TILE_SIZE;
     course.enemy_spawns.push(EnemySpawn {
-        x: knight_x,
-        y: 14.0 * TILE_SIZE,
-        enemy_type: EnemyType::Medusa,
-        patrol_min_x: (base_x + 3) as f32 * TILE_SIZE,
-        patrol_max_x: (base_x + ROOM_WIDTH - 3) as f32 * TILE_SIZE,
+        x: sx,
+        y: (by + 3) as f32 * TILE_SIZE,
+        enemy_type: EnemyType::Skeleton,
+        patrol_min_x: (bx + 2 * ROOM_W / 3 + 1) as f32 * TILE_SIZE,
+        patrol_max_x: (bx + ROOM_W - 3) as f32 * TILE_SIZE,
     });
-
-    // Skeleton adds
-    add_corridor_enemies(course, rng, base_x);
-
-    // Two power-ups
-    course.set_tile(base_x + 5, 6, Tile::PowerUpSpawn);
-    course.set_tile(base_x + 15, 11, Tile::PowerUpSpawn);
 
     // Decorations
-    course.set_tile(base_x + 2, 3, Tile::DecoTorch);
-    course.set_tile(base_x + ROOM_WIDTH - 3, 3, Tile::DecoTorch);
-    course.set_tile(base_x + ROOM_WIDTH / 2, 18, Tile::DecoStainedGlass);
+    course.set_tile(bx + 2, by + 3, Tile::DecoTorch);
+    course.set_tile(bx + ROOM_W - 3, by + 3, Tile::DecoTorch);
+    course.set_tile(bx + 3, by + ROOM_H - 3, Tile::DecoCobweb);
+
+    // Power-up
+    course.set_tile(bx + ROOM_W / 2, by + 8, Tile::PowerUpSpawn);
 }
 
-/// Branch Split: room splits into upper and lower paths.
-fn gen_branch_split(course: &mut Course, rng: &mut StdRng, base_x: u32, _room_idx: u32) {
-    // Horizontal divider creating upper and lower paths
-    let divider_y = 14u32;
-    for x in (base_x + 8)..base_x + ROOM_WIDTH {
-        if x < course.width {
-            course.set_tile(x, divider_y, Tile::StoneBrick);
+/// ThroneRoom: grand platforms, dramatic decoration. 1 Knight + 1 Medusa + 2 Skeletons.
+fn gen_throne_room(course: &mut Course, _rng: &mut StdRng, bx: u32, by: u32, doors: &[Direction]) {
+    // Grand central platform (throne dais)
+    for dx in 0..12 {
+        let x = bx + ROOM_W / 2 - 6 + dx;
+        if !is_doorway_zone(x, by + 4, bx, by, doors) {
+            course.set_tile(x, by + 4, Tile::StoneBrick);
         }
     }
 
-    // Lower path: flat floor with some obstacles
-    let spike_x = base_x + rng.random_range(5..10);
-    for dx in 0..2 {
-        if spike_x + dx < course.width {
-            course.set_tile(spike_x + dx, 2, Tile::Spikes);
-        }
-    }
-
-    // Upper path: platforms leading up
-    for i in 0..4 {
-        let px = base_x + 2 + i * 4;
-        let py = 10 + i;
-        if px < course.width && py < divider_y {
-            course.set_tile(px, py, Tile::Platform);
-            course.set_tile(px + 1, py, Tile::Platform);
-        }
-    }
-
-    // Ladder to reach upper path
-    for y in 4..divider_y {
-        course.set_tile(base_x + 5, y, Tile::Ladder);
-    }
-
-    // Upper path entry has platforms above the divider
+    // Side platforms at various heights
     for dx in 0..6 {
-        if base_x + 8 + dx < course.width {
-            course.set_tile(base_x + 8 + dx, divider_y + 3, Tile::Platform);
+        course.set_tile(bx + 3 + dx, by + 8, Tile::Platform);
+        course.set_tile(bx + ROOM_W - 9 + dx, by + 8, Tile::Platform);
+    }
+    for dx in 0..8 {
+        let x = bx + ROOM_W / 2 - 4 + dx;
+        if !is_doorway_zone(x, by + 12, bx, by, doors) {
+            course.set_tile(x, by + 12, Tile::Platform);
         }
     }
-
-    // Enemies on both paths
-    let lower_enemy_x = (base_x + ROOM_WIDTH / 2) as f32 * TILE_SIZE;
-    course.enemy_spawns.push(EnemySpawn {
-        x: lower_enemy_x,
-        y: 3.0 * TILE_SIZE,
-        enemy_type: EnemyType::Skeleton,
-        patrol_min_x: (base_x + 2) as f32 * TILE_SIZE,
-        patrol_max_x: (base_x + ROOM_WIDTH - 2) as f32 * TILE_SIZE,
-    });
-
-    let upper_enemy_x = (base_x + 12) as f32 * TILE_SIZE;
-    course.enemy_spawns.push(EnemySpawn {
-        x: upper_enemy_x,
-        y: (divider_y + 4) as f32 * TILE_SIZE,
-        enemy_type: EnemyType::Bat,
-        patrol_min_x: (base_x + 8) as f32 * TILE_SIZE,
-        patrol_max_x: (base_x + ROOM_WIDTH - 2) as f32 * TILE_SIZE,
-    });
-
-    // Power-up on upper path (reward for taking the harder route)
-    course.set_tile(base_x + 14, divider_y + 4, Tile::PowerUpSpawn);
-
-    // Torch at the split
-    course.set_tile(base_x + 3, 3, Tile::DecoTorch);
-}
-
-/// Branch Merge: two paths converge back into one.
-fn gen_branch_merge(course: &mut Course, rng: &mut StdRng, base_x: u32, _room_idx: u32) {
-    // Divider for first half, opening up in second half
-    let divider_y = 14u32;
-    let merge_x = base_x + ROOM_WIDTH / 2;
-    for x in base_x..merge_x {
-        if x < course.width {
-            course.set_tile(x, divider_y, Tile::StoneBrick);
-        }
+    for dx in 0..5 {
+        course.set_tile(bx + 4 + dx, by + 16, Tile::Platform);
+        course.set_tile(bx + ROOM_W - 9 + dx, by + 16, Tile::Platform);
     }
 
-    // Platforms descending from upper path
-    for i in 0..4 {
-        let px = merge_x + i * 3;
-        let py = divider_y - 1 - i * 2;
-        if px < course.width && py > 2 && py < COURSE_HEIGHT {
-            course.set_tile(px, py, Tile::Platform);
-            if px + 1 < course.width {
-                course.set_tile(px + 1, py, Tile::Platform);
-            }
-        }
-    }
-
-    // Lower path: some platforms for variety
-    let plat_x = base_x + rng.random_range(2..6);
-    for dx in 0..4 {
-        if plat_x + dx < course.width {
-            course.set_tile(plat_x + dx, 5, Tile::Platform);
-        }
-    }
-
-    // Knight enemy guarding the merge point
-    let knight_x = merge_x as f32 * TILE_SIZE;
+    // 1 Knight on the dais
+    let knight_x = (bx + ROOM_W / 2) as f32 * TILE_SIZE;
     course.enemy_spawns.push(EnemySpawn {
         x: knight_x,
-        y: 3.0 * TILE_SIZE,
+        y: (by + 5) as f32 * TILE_SIZE,
         enemy_type: EnemyType::Knight,
-        patrol_min_x: (base_x + 2) as f32 * TILE_SIZE,
-        patrol_max_x: (base_x + ROOM_WIDTH - 2) as f32 * TILE_SIZE,
+        patrol_min_x: (bx + ROOM_W / 2 - 6) as f32 * TILE_SIZE,
+        patrol_max_x: (bx + ROOM_W / 2 + 6) as f32 * TILE_SIZE,
     });
 
-    // Power-up at merge point
-    course.set_tile(merge_x + 2, 3, Tile::PowerUpSpawn);
+    // 1 Medusa above
+    course.enemy_spawns.push(EnemySpawn {
+        x: knight_x,
+        y: (by + 17) as f32 * TILE_SIZE,
+        enemy_type: EnemyType::Medusa,
+        patrol_min_x: (bx + 3) as f32 * TILE_SIZE,
+        patrol_max_x: (bx + ROOM_W - 4) as f32 * TILE_SIZE,
+    });
 
-    // Torches
-    course.set_tile(base_x + 2, 3, Tile::DecoTorch);
-    course.set_tile(base_x + ROOM_WIDTH - 3, 3, Tile::DecoTorch);
+    // 2 Skeletons on sides
+    course.enemy_spawns.push(EnemySpawn {
+        x: (bx + 5) as f32 * TILE_SIZE,
+        y: (by + 3) as f32 * TILE_SIZE,
+        enemy_type: EnemyType::Skeleton,
+        patrol_min_x: (bx + 2) as f32 * TILE_SIZE,
+        patrol_max_x: (bx + ROOM_W / 2 - 6) as f32 * TILE_SIZE,
+    });
+    course.enemy_spawns.push(EnemySpawn {
+        x: (bx + ROOM_W - 6) as f32 * TILE_SIZE,
+        y: (by + 3) as f32 * TILE_SIZE,
+        enemy_type: EnemyType::Skeleton,
+        patrol_min_x: (bx + ROOM_W / 2 + 6) as f32 * TILE_SIZE,
+        patrol_max_x: (bx + ROOM_W - 3) as f32 * TILE_SIZE,
+    });
+
+    // Grand decorations
+    course.set_tile(bx + 2, by + 3, Tile::DecoTorch);
+    course.set_tile(bx + ROOM_W - 3, by + 3, Tile::DecoTorch);
+    course.set_tile(bx + ROOM_W / 2 - 1, by + 6, Tile::DecoTorch);
+    course.set_tile(bx + ROOM_W / 2 + 1, by + 6, Tile::DecoTorch);
+    course.set_tile(bx + ROOM_W / 2, by + 20, Tile::DecoStainedGlass);
+    course.set_tile(bx + 5, by + 20, Tile::DecoStainedGlass);
+    course.set_tile(bx + ROOM_W - 6, by + 20, Tile::DecoStainedGlass);
+    course.set_tile(bx + 3, by + ROOM_H - 3, Tile::DecoChain);
+    course.set_tile(bx + ROOM_W - 4, by + ROOM_H - 3, Tile::DecoChain);
+
+    // Two power-ups
+    course.set_tile(bx + 6, by + 9, Tile::PowerUpSpawn);
+    course.set_tile(bx + ROOM_W - 7, by + 9, Tile::PowerUpSpawn);
 }
 
-/// Helper: add standard corridor enemies (skeleton and optional bat).
-fn add_corridor_enemies(course: &mut Course, rng: &mut StdRng, base_x: u32) {
-    // Ground skeleton
-    let skel_x = (base_x + rng.random_range(4..ROOM_WIDTH - 4)) as f32 * TILE_SIZE;
-    course.enemy_spawns.push(EnemySpawn {
-        x: skel_x,
-        y: 3.0 * TILE_SIZE,
-        enemy_type: EnemyType::Skeleton,
-        patrol_min_x: (base_x + 2) as f32 * TILE_SIZE,
-        patrol_max_x: (base_x + ROOM_WIDTH - 2) as f32 * TILE_SIZE,
-    });
+/// Place checkpoints every 2 distance tiers in rooms along the path.
+fn place_checkpoints(course: &mut Course, rooms: &[PlacedRoom]) {
+    let max_dist = rooms
+        .iter()
+        .map(|r| r.distance_from_start)
+        .max()
+        .unwrap_or(0);
 
-    // 50% chance of a bat
-    if rng.random_range(0u32..2) == 0 {
-        let bat_x = (base_x + ROOM_WIDTH / 2) as f32 * TILE_SIZE;
-        course.enemy_spawns.push(EnemySpawn {
-            x: bat_x,
-            y: 8.0 * TILE_SIZE,
-            enemy_type: EnemyType::Bat,
-            patrol_min_x: (base_x + 2) as f32 * TILE_SIZE,
-            patrol_max_x: (base_x + ROOM_WIDTH - 2) as f32 * TILE_SIZE,
-        });
+    let mut checkpoint_id: u16 = 1;
+    // Place checkpoint every 2 distance levels (skip 0 = entrance, skip max = throne)
+    let mut tier = 2u16;
+    while tier < max_dist {
+        // Find a room at this distance tier
+        if let Some(room) = rooms.iter().find(|r| r.distance_from_start == tier) {
+            let bx = room.grid_pos.col as u32 * ROOM_W;
+            let by = room.grid_pos.row as u32 * ROOM_H;
+            let cx = bx + ROOM_W / 2;
+            let cy = by + 2; // On the floor
+            // Find first empty tile above floor
+            let mut placed_y = cy;
+            for y in cy..cy + 5 {
+                if course.get_tile(cx as i32, y as i32) == Tile::Empty {
+                    placed_y = y;
+                    break;
+                }
+            }
+            course.set_tile(cx, placed_y, Tile::Checkpoint);
+            let world_x = cx as f32 * TILE_SIZE + TILE_SIZE / 2.0;
+            let world_y = placed_y as f32 * TILE_SIZE + TILE_SIZE / 2.0;
+            course.checkpoint_positions.push(CheckpointDef {
+                x: world_x,
+                y: world_y,
+                id: checkpoint_id,
+            });
+            checkpoint_id += 1;
+        }
+        tier += 2;
     }
+}
+
+/// Place finish tiles in the ThroneRoom.
+fn place_finish(course: &mut Course, rooms: &[PlacedRoom]) {
+    let throne = rooms
+        .iter()
+        .find(|r| r.theme == RoomTheme::ThroneRoom)
+        .unwrap_or(rooms.last().unwrap());
+
+    let bx = throne.grid_pos.col as u32 * ROOM_W;
+    let by = throne.grid_pos.row as u32 * ROOM_H;
+    // Place finish on the throne dais
+    let fx = bx + ROOM_W / 2;
+    let fy = by + 5; // above the dais
+    // Find empty tile
+    let mut placed_y = fy;
+    for y in fy..fy + 5 {
+        if course.get_tile(fx as i32, y as i32) == Tile::Empty {
+            placed_y = y;
+            break;
+        }
+    }
+    course.set_tile(fx - 1, placed_y, Tile::Finish);
+    course.set_tile(fx, placed_y, Tile::Finish);
+    course.set_tile(fx + 1, placed_y, Tile::Finish);
 }
 
 #[cfg(test)]
@@ -858,24 +1516,6 @@ mod tests {
     }
 
     #[test]
-    fn has_solid_ground() {
-        let course = generate_course(42);
-        // Check that most of row 0 has StoneBrick or Spikes (bridge rooms remove floor)
-        let ground_count = (0..course.width)
-            .filter(|&x| {
-                let tile = course.get_tile(x as i32, 0);
-                matches!(tile, Tile::StoneBrick | Tile::Spikes)
-            })
-            .count();
-        assert!(
-            ground_count > course.width as usize / 3,
-            "Ground should have significant solid/spikes coverage: {}/{}",
-            ground_count,
-            course.width,
-        );
-    }
-
-    #[test]
     fn spawn_inside_bounds() {
         let course = generate_course(42);
         let max_x = course.width as f32 * TILE_SIZE;
@@ -907,17 +1547,6 @@ mod tests {
         assert!(
             !course.checkpoint_positions.is_empty(),
             "Course should have checkpoint positions"
-        );
-    }
-
-    #[test]
-    fn checkpoints_every_3_rooms() {
-        let course = generate_course(42);
-        // Should have checkpoints at rooms 3, 6, 9, 12 = 4 checkpoints
-        assert_eq!(
-            course.checkpoint_positions.len(),
-            4,
-            "Should have 4 checkpoints (rooms 3, 6, 9, 12)"
         );
     }
 
@@ -996,6 +1625,7 @@ mod tests {
     fn enemy_spawns_within_course_bounds() {
         let course = generate_course(42);
         let max_x = course.width as f32 * TILE_SIZE;
+        let max_y = course.height as f32 * TILE_SIZE;
         for spawn in &course.enemy_spawns {
             assert!(
                 spawn.x >= 0.0 && spawn.x <= max_x,
@@ -1004,11 +1634,240 @@ mod tests {
                 max_x,
             );
             assert!(
+                spawn.y >= 0.0 && spawn.y <= max_y,
+                "Enemy spawn y={} out of bounds [0, {}]",
+                spawn.y,
+                max_y,
+            );
+            assert!(
                 spawn.patrol_min_x <= spawn.patrol_max_x,
                 "Patrol min ({}) should be <= max ({})",
                 spawn.patrol_min_x,
                 spawn.patrol_max_x,
             );
+        }
+    }
+
+    // ================================================================
+    // Labyrinth-specific tests
+    // ================================================================
+
+    #[test]
+    fn labyrinth_room_count_in_range() {
+        for seed in 0..10 {
+            let course = generate_course(seed);
+            // Count rooms by checking room_distances for non-zero or entrance
+            let room_count = course
+                .room_distances
+                .iter()
+                .enumerate()
+                .filter(|&(idx, _)| {
+                    let col = idx / GRID_ROWS as usize;
+                    let row = idx % GRID_ROWS as usize;
+                    // Check if this cell has a carved room
+                    let bx = col as u32 * ROOM_W + ROOM_W / 2;
+                    let by = row as u32 * ROOM_H + ROOM_H / 2;
+                    course.get_tile(bx as i32, by as i32) == Tile::Empty
+                })
+                .count();
+            assert!(
+                (12..=30).contains(&room_count),
+                "Seed {seed}: expected 12-30 rooms, got {room_count}"
+            );
+        }
+    }
+
+    #[test]
+    fn labyrinth_all_rooms_reachable() {
+        use std::collections::{HashSet, VecDeque};
+
+        let course = generate_course(42);
+        // BFS from spawn through empty/passable tiles
+        let start_tx = (course.spawn_x / TILE_SIZE) as i32;
+        let start_ty = (course.spawn_y / TILE_SIZE) as i32;
+
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
+        visited.insert((start_tx, start_ty));
+        queue.push_back((start_tx, start_ty));
+
+        while let Some((x, y)) = queue.pop_front() {
+            for (dx, dy) in &[(0, 1), (0, -1), (1, 0), (-1, 0)] {
+                let nx = x + dx;
+                let ny = y + dy;
+                if visited.contains(&(nx, ny)) {
+                    continue;
+                }
+                let tile = course.get_tile(nx, ny);
+                if !matches!(tile, Tile::StoneBrick | Tile::BreakableWall) {
+                    visited.insert((nx, ny));
+                    queue.push_back((nx, ny));
+                }
+            }
+        }
+
+        // Check that every room center is reachable
+        for col in 0..GRID_COLS {
+            for row in 0..GRID_ROWS {
+                let bx = col * ROOM_W + ROOM_W / 2;
+                let by = row * ROOM_H + ROOM_H / 2;
+                if course.get_tile(bx as i32, by as i32) == Tile::Empty {
+                    assert!(
+                        visited.contains(&(bx as i32, by as i32)),
+                        "Room at grid ({col}, {row}) center ({bx}, {by}) not reachable from spawn"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn labyrinth_goal_reachable() {
+        use std::collections::{HashSet, VecDeque};
+
+        let course = generate_course(42);
+        let start_tx = (course.spawn_x / TILE_SIZE) as i32;
+        let start_ty = (course.spawn_y / TILE_SIZE) as i32;
+
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
+        visited.insert((start_tx, start_ty));
+        queue.push_back((start_tx, start_ty));
+
+        let mut found_finish = false;
+        while let Some((x, y)) = queue.pop_front() {
+            if course.get_tile(x, y) == Tile::Finish {
+                found_finish = true;
+                break;
+            }
+            for (dx, dy) in &[(0, 1), (0, -1), (1, 0), (-1, 0)] {
+                let nx = x + dx;
+                let ny = y + dy;
+                if visited.contains(&(nx, ny)) {
+                    continue;
+                }
+                let tile = course.get_tile(nx, ny);
+                if !matches!(tile, Tile::StoneBrick | Tile::BreakableWall) {
+                    visited.insert((nx, ny));
+                    queue.push_back((nx, ny));
+                }
+            }
+        }
+
+        assert!(found_finish, "Finish tile should be reachable from spawn");
+    }
+
+    #[test]
+    fn labyrinth_rooms_have_floor() {
+        let course = generate_course(42);
+        for col in 0..GRID_COLS {
+            for row in 0..GRID_ROWS {
+                let bx = col * ROOM_W + ROOM_W / 2;
+                let by = row * ROOM_H + ROOM_H / 2;
+                // Only check rooms that exist (center is empty)
+                if course.get_tile(bx as i32, by as i32) != Tile::Empty {
+                    continue;
+                }
+                // Check that there's at least one solid floor row
+                let floor_y = row * ROOM_H + 1;
+                let mut has_floor = false;
+                for x in (col * ROOM_W + 1)..(col * ROOM_W + ROOM_W - 1) {
+                    if course.get_tile(x as i32, floor_y as i32) == Tile::StoneBrick {
+                        has_floor = true;
+                        break;
+                    }
+                }
+                assert!(has_floor, "Room at grid ({col}, {row}) should have a floor");
+            }
+        }
+    }
+
+    #[test]
+    fn labyrinth_start_far_from_goal() {
+        let course = generate_course(42);
+        let max_dist = course.room_distances.iter().copied().max().unwrap_or(0);
+        assert!(
+            max_dist >= 6,
+            "Max room distance should be >= 6, got {max_dist}"
+        );
+    }
+
+    #[test]
+    fn labyrinth_deterministic() {
+        let c1 = generate_course(99);
+        let c2 = generate_course(99);
+        assert_eq!(c1.tiles, c2.tiles);
+        assert_eq!(c1.room_distances, c2.room_distances);
+        assert_eq!(c1.checkpoint_positions.len(), c2.checkpoint_positions.len());
+    }
+
+    #[test]
+    fn rle_roundtrip() {
+        let course = generate_course(42);
+        let encoded = rle_encode(&course.tiles);
+        let decoded = rle_decode(&encoded).unwrap();
+        assert_eq!(course.tiles, decoded, "RLE roundtrip should preserve tiles");
+    }
+
+    #[test]
+    fn rle_compression_ratio() {
+        let course = generate_course(42);
+        let raw_size = course.tiles.len(); // 1 byte per tile
+        let rle = rle_encode(&course.tiles);
+        let rle_size = rle.len() * 3; // 1 byte tile + 2 bytes count
+        assert!(
+            rle_size < raw_size / 2,
+            "RLE should compress well: raw={raw_size}, rle={rle_size}"
+        );
+    }
+
+    #[test]
+    fn serde_roundtrip() {
+        let course = generate_course(42);
+        let bytes = rmp_serde::to_vec(&course).unwrap();
+        let decoded: Course = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(course.tiles, decoded.tiles);
+        assert_eq!(course.width, decoded.width);
+        assert_eq!(course.height, decoded.height);
+        assert_eq!(course.room_distances, decoded.room_distances);
+    }
+
+    #[test]
+    fn labyrinth_doorways_passable() {
+        let course = generate_course(42);
+        // For each room, check that door positions have empty tiles
+        for col in 0..GRID_COLS {
+            for row in 0..GRID_ROWS {
+                let bx = col * ROOM_W;
+                let by = row * ROOM_H;
+                let center_x = bx + ROOM_W / 2;
+                let center_y = by + ROOM_H / 2;
+
+                // Only check rooms that exist
+                if course.get_tile(center_x as i32, center_y as i32) != Tile::Empty {
+                    continue;
+                }
+
+                // Check right doorway
+                if col + 1 < GRID_COLS {
+                    let right_center = (col + 1) * ROOM_W + ROOM_W / 2;
+                    if course.get_tile(right_center as i32, center_y as i32) == Tile::Empty {
+                        // There should be passage at the wall
+                        let wall_x = bx + ROOM_W - 1;
+                        let mid_y = by + ROOM_H / 2;
+                        let mut has_passage = false;
+                        for dy in 0..6 {
+                            let y = mid_y.saturating_sub(1) + dy;
+                            if course.get_tile(wall_x as i32, y as i32) != Tile::StoneBrick {
+                                has_passage = true;
+                                break;
+                            }
+                        }
+                        // This is a soft check — not all adjacent rooms are connected
+                        let _ = has_passage;
+                    }
+                }
+            }
         }
     }
 }

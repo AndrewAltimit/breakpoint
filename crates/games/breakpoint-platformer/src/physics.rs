@@ -137,6 +137,8 @@ pub struct PlatformerPlayerState {
     // Active power-up (single slot for non-instant powerups)
     pub active_powerup: Option<PowerUpKind>,
     pub powerup_timer: f32,
+    /// Current room's graph distance from start (for rubber-banding/race position).
+    pub current_room_distance: u16,
 }
 
 impl PlatformerPlayerState {
@@ -167,6 +169,7 @@ impl PlatformerPlayerState {
             anim_time: 0.0,
             active_powerup: None,
             powerup_timer: 0.0,
+            current_room_distance: 0,
         }
     }
 
@@ -486,6 +489,9 @@ pub(crate) fn check_tile_effects(player: &mut PlatformerPlayerState, course: &Co
     let tx = (player.x / TILE_SIZE).floor() as i32;
     let ty = (player.y / TILE_SIZE).floor() as i32;
 
+    // Update current room distance for rubber-banding/race position
+    player.current_room_distance = course.room_distance_at(player.x, player.y);
+
     match course.get_tile(tx, ty) {
         Tile::Spikes => {
             // Spikes deal 1 HP damage with invincibility, instead of instant respawn
@@ -504,7 +510,11 @@ pub(crate) fn check_tile_effects(player: &mut PlatformerPlayerState, course: &Co
             }
         },
         Tile::Checkpoint => {
-            if player.x > player.last_checkpoint_x {
+            // Activate checkpoint if its ID is higher than the player's last
+            if let Some(cp_id) = course.find_checkpoint_id(tx, ty)
+                && cp_id > player.last_checkpoint_id
+            {
+                player.last_checkpoint_id = cp_id;
                 player.last_checkpoint_x = tx as f32 * TILE_SIZE + TILE_SIZE / 2.0;
                 player.last_checkpoint_y = ty as f32 * TILE_SIZE + TILE_SIZE / 2.0;
             }
@@ -861,6 +871,8 @@ mod tests {
 
     /// Build a course with a floor (rows 0-1 stone brick) and optional extras.
     fn floor_course_with_extras(extras: &[(u32, u32, Tile)]) -> Course {
+        use crate::course_gen::CheckpointDef;
+
         let w = 20u32;
         let h = 20u32;
         let mut tiles = vec![Tile::Empty; (w * h) as usize];
@@ -869,8 +881,17 @@ mod tests {
             tiles[x as usize] = Tile::StoneBrick;
             tiles[w as usize + x as usize] = Tile::StoneBrick;
         }
+        // Collect checkpoint defs from extras
+        let mut checkpoint_positions = Vec::new();
         for &(x, y, tile) in extras {
             tiles[y as usize * w as usize + x as usize] = tile;
+            if tile == Tile::Checkpoint {
+                checkpoint_positions.push(CheckpointDef {
+                    x: x as f32 * TILE_SIZE + TILE_SIZE / 2.0,
+                    y: y as f32 * TILE_SIZE + TILE_SIZE / 2.0,
+                    id: (checkpoint_positions.len() + 1) as u16,
+                });
+            }
         }
         Course {
             width: w,
@@ -879,7 +900,8 @@ mod tests {
             spawn_x: 5.0,
             spawn_y: 3.0,
             enemy_spawns: Vec::new(),
-            checkpoint_positions: Vec::new(),
+            checkpoint_positions,
+            room_distances: Vec::new(),
         }
     }
 
@@ -1009,6 +1031,7 @@ mod tests {
             spawn_y: 3.0,
             enemy_spawns: Vec::new(),
             checkpoint_positions: Vec::new(),
+            room_distances: Vec::new(),
         };
 
         let mut player = PlatformerPlayerState::new(5.5, 3.0);
@@ -1057,20 +1080,30 @@ mod tests {
         let mut player = PlatformerPlayerState::new(8.5, 2.5);
         player.last_checkpoint_x = 3.0;
         player.last_checkpoint_y = 3.0;
+        player.last_checkpoint_id = 0;
 
         check_tile_effects(&mut player, &course);
 
         assert!(
+            player.last_checkpoint_id > 0,
+            "Checkpoint should update: last_checkpoint_id={}",
+            player.last_checkpoint_id
+        );
+        assert!(
             player.last_checkpoint_x > 3.0,
-            "Checkpoint should update: last_checkpoint_x={}",
+            "Checkpoint should update position: last_checkpoint_x={}",
             player.last_checkpoint_x
         );
     }
 
     #[test]
     fn checkpoint_backward_ignored() {
-        let course = floor_course_with_extras(&[(2, 2, Tile::Checkpoint)]);
+        // Create course with two checkpoints
+        let course =
+            floor_course_with_extras(&[(2, 2, Tile::Checkpoint), (8, 2, Tile::Checkpoint)]);
         let mut player = PlatformerPlayerState::new(2.5, 2.5);
+        // Player already has checkpoint id 2 (the higher one)
+        player.last_checkpoint_id = 2;
         player.last_checkpoint_x = 10.0;
         player.last_checkpoint_y = 3.0;
 

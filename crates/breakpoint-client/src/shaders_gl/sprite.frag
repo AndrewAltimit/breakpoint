@@ -24,7 +24,7 @@ void main() {
     if (u_flip_x > 0.5) {
         u = u_sprite_rect.x + u_sprite_rect.z - u;
     }
-    float v = mix(u_sprite_rect.y, u_sprite_rect.w, v_uv.y);
+    float v = mix(u_sprite_rect.w, u_sprite_rect.y, v_uv.y);
     vec4 texel = texture(u_texture, vec2(u, v));
     vec4 color = texel * u_tint;
     if (color.a < 0.01) {

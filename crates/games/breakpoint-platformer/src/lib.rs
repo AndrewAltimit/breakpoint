@@ -1184,9 +1184,10 @@ mod tests {
         let players = make_players(1);
         game.init(&players, &default_config(180));
 
+        game.state.players.get_mut(&1).unwrap().last_checkpoint_id = 3;
         game.state.players.get_mut(&1).unwrap().last_checkpoint_x = 50.0;
         game.state.players.get_mut(&1).unwrap().last_checkpoint_y = 2.0;
-        let checkpoint_x = 50.0;
+        let checkpoint_id = 3u16;
 
         game.state.players.get_mut(&1).unwrap().x = 30.0;
         game.state.players.get_mut(&1).unwrap().y = 2.0;
@@ -1204,9 +1205,9 @@ mod tests {
         }
 
         assert!(
-            game.state.players[&1].last_checkpoint_x >= checkpoint_x,
-            "Checkpoint should not regress: expected >= {checkpoint_x}, got {}",
-            game.state.players[&1].last_checkpoint_x
+            game.state.players[&1].last_checkpoint_id >= checkpoint_id,
+            "Checkpoint ID should not regress: expected >= {checkpoint_id}, got {}",
+            game.state.players[&1].last_checkpoint_id
         );
     }
 
@@ -1261,14 +1262,9 @@ mod tests {
         }
         let (cx, cy) = checkpoint_tile.expect("Course should have at least one Checkpoint tile");
 
-        let initial_cp_x = game.state.players[&pid].last_checkpoint_x;
+        let initial_cp_id = game.state.players[&pid].last_checkpoint_id;
         let world_x = cx as f32 * physics::TILE_SIZE + physics::TILE_SIZE / 2.0;
         let world_y = cy as f32 * physics::TILE_SIZE + physics::TILE_SIZE / 2.0;
-
-        assert!(
-            world_x > initial_cp_x,
-            "Checkpoint tile x ({world_x}) should be ahead of initial ({initial_cp_x})"
-        );
 
         let player = game.state.players.get_mut(&pid).unwrap();
         player.x = world_x;
@@ -1278,9 +1274,9 @@ mod tests {
 
         let player = &game.state.players[&pid];
         assert!(
-            player.last_checkpoint_x > initial_cp_x,
-            "Checkpoint should have advanced: initial={initial_cp_x}, current={}",
-            player.last_checkpoint_x
+            player.last_checkpoint_id > initial_cp_id,
+            "Checkpoint ID should have advanced: initial={initial_cp_id}, current={}",
+            player.last_checkpoint_id
         );
     }
 
