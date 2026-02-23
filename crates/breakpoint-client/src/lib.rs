@@ -14,6 +14,7 @@ mod scene;
 pub mod sprite_atlas;
 mod storage;
 pub mod theme;
+pub mod weather;
 
 use wasm_bindgen::prelude::*;
 

@@ -7,6 +7,13 @@ use crate::enemies::EnemySpawn;
 use crate::enemies::EnemyType;
 use crate::physics::TILE_SIZE;
 
+/// Water movement multiplier (0.5x speed in water).
+pub const WATER_SPEED_FACTOR: f32 = 0.5;
+/// Water jump velocity multiplier (0.7x jump in water).
+pub const WATER_JUMP_FACTOR: f32 = 0.7;
+/// Water buoyancy force (counters ~30% of gravity).
+pub const WATER_BUOYANCY: f32 = 9.0;
+
 /// Tile types for the Castlevania-style platformer course grid.
 ///
 /// Serialized as a `u8` integer for compact wire representation
@@ -35,6 +42,12 @@ pub enum Tile {
     DecoTorch = 9,
     /// Decorative stained glass (no gameplay effect).
     DecoStainedGlass = 10,
+    /// Water tile (slows movement, adds buoyancy).
+    Water = 11,
+    /// Decorative cobweb (no gameplay effect).
+    DecoCobweb = 12,
+    /// Decorative hanging chain (no gameplay effect).
+    DecoChain = 13,
 }
 
 impl From<Tile> for u8 {
@@ -59,6 +72,9 @@ impl TryFrom<u8> for Tile {
             8 => Ok(Tile::BreakableWall),
             9 => Ok(Tile::DecoTorch),
             10 => Ok(Tile::DecoStainedGlass),
+            11 => Ok(Tile::Water),
+            12 => Ok(Tile::DecoCobweb),
+            13 => Ok(Tile::DecoChain),
             _ => Err(format!("invalid tile value: {v}")),
         }
     }
@@ -469,6 +485,12 @@ fn gen_cathedral_hall(course: &mut Course, rng: &mut StdRng, base_x: u32, _room_
     course.set_tile(base_x + 15, 14, Tile::DecoStainedGlass);
     course.set_tile(base_x + 2, 3, Tile::DecoTorch);
     course.set_tile(base_x + ROOM_WIDTH - 3, 3, Tile::DecoTorch);
+
+    // Cobwebs in corners and chains from ceiling
+    course.set_tile(base_x + 1, 14, Tile::DecoCobweb);
+    course.set_tile(base_x + ROOM_WIDTH - 2, 14, Tile::DecoCobweb);
+    course.set_tile(base_x + 8, 14, Tile::DecoChain);
+    course.set_tile(base_x + 12, 14, Tile::DecoChain);
 }
 
 /// Crypt Depths: dark, narrow passages with spikes and breakable walls.
@@ -530,9 +552,25 @@ fn gen_crypt_depths(course: &mut Course, rng: &mut StdRng, base_x: u32, _room_id
         patrol_max_x: (base_x + ROOM_WIDTH - 2) as f32 * TILE_SIZE,
     });
 
+    // Flooded floor section (water pool)
+    let water_x = base_x + rng.random_range(8..ROOM_WIDTH - 5);
+    let water_len = rng.random_range(3u32..6);
+    for dx in 0..water_len {
+        if water_x + dx < course.width {
+            course.set_tile(water_x + dx, 2, Tile::Water);
+            course.set_tile(water_x + dx, 3, Tile::Water);
+        }
+    }
+
     // Torch decorations
     course.set_tile(base_x + 2, 4, Tile::DecoTorch);
     course.set_tile(base_x + ROOM_WIDTH - 3, 4, Tile::DecoTorch);
+
+    // Cobwebs and chains
+    course.set_tile(base_x + 1, 11, Tile::DecoCobweb);
+    course.set_tile(base_x + ROOM_WIDTH - 2, 11, Tile::DecoCobweb);
+    course.set_tile(base_x + 6, 11, Tile::DecoChain);
+    course.set_tile(base_x + 14, 11, Tile::DecoChain);
 }
 
 /// Bridge Run: platforming over a pit with falling hazards.
@@ -544,8 +582,13 @@ fn gen_bridge_run(course: &mut Course, rng: &mut StdRng, base_x: u32, _room_idx:
         if x < course.width {
             course.set_tile(x, 0, Tile::Empty);
             course.set_tile(x, 1, Tile::Empty);
-            // Spikes at the bottom edge for visual danger
-            course.set_tile(x, 0, Tile::Spikes);
+            // Alternate water and spikes at the pit bottom
+            if (x - pit_start) % 3 < 2 {
+                course.set_tile(x, 0, Tile::Water);
+                course.set_tile(x, 1, Tile::Water);
+            } else {
+                course.set_tile(x, 0, Tile::Spikes);
+            }
         }
     }
 

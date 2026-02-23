@@ -514,11 +514,26 @@
     const platformerHp       = $("platformer-hp");
     const platformerStatus   = $("platformer-status");
     const platformerRankings = $("platformer-rankings");
+    const platformerPowerupBar  = $("platformer-powerup-bar");
+    const platformerPowerupName = $("platformer-powerup-name");
+    const platformerPowerupFill = $("platformer-powerup-fill");
+    const platformerMinimap     = $("platformer-minimap");
+    const platformerMinimapCtx  = platformerMinimap ? platformerMinimap.getContext("2d") : null;
+    const platformerCheckpointToast = $("platformer-checkpoint-toast");
+    let prevPlatformerCheckpoint = 0;
+    let platformerMinimapFrame  = 0;
+    let checkpointToastTimer    = null;
+
+    const PLATFORMER_PLAYER_COLORS = [
+        "#7cf", "#f93", "#7f7", "#f7f", "#97f", "#f90", "#0fb", "#f44",
+    ];
 
     function updatePlatformerHud(state) {
         const hud = state.platformerHud;
         if (!hud || !hud.players) {
             if (platformerHudEl) platformerHudEl.classList.add("hidden");
+            if (platformerMinimap) platformerMinimap.classList.remove("visible");
+            prevPlatformerCheckpoint = 0;
             return;
         }
         platformerHudEl.classList.remove("hidden");
@@ -542,13 +557,20 @@
         }
         platformerHp.innerHTML = heartsHtml;
 
-        // Status line: deaths + active powerup
+        // Powerup timer bar
+        updatePlatformerPowerupBar(hud);
+
+        // Status line: deaths + checkpoint
         let statusParts = [];
         const deaths = hud.localPlayerDeaths || 0;
         if (deaths > 0) statusParts.push(`Deaths: ${deaths}`);
-        const powerup = hud.localPlayerPowerup;
-        if (powerup) statusParts.push(powerup);
+        if (hud.totalCheckpoints > 0) {
+            statusParts.push(`CP: ${hud.localCheckpoint}/${hud.totalCheckpoints}`);
+        }
         platformerStatus.textContent = statusParts.join(" | ");
+
+        // Checkpoint toast
+        updateCheckpointToast(hud);
 
         // Checkpoint progress
         const finished = hud.finishCount || 0;
@@ -574,6 +596,102 @@
             html += `<div style="font-size:0.65rem;color:#667;margin-top:4px;">${checkpointText}</div>`;
         }
         platformerRankings.innerHTML = html;
+
+        // Minimap — update every 3rd frame for performance
+        platformerMinimapFrame++;
+        if (platformerMinimapFrame % 3 === 0) {
+            updatePlatformerMinimap(hud);
+        }
+    }
+
+    function updatePlatformerPowerupBar(hud) {
+        const timer = hud.powerupTimer || 0;
+        const maxTimer = hud.powerupMaxTimer || 0;
+        const powerup = hud.localPlayerPowerup;
+
+        if (timer > 0 && maxTimer > 0 && powerup) {
+            platformerPowerupBar.classList.remove("hidden");
+            platformerPowerupName.textContent = powerup;
+            const pct = Math.min(100, (timer / maxTimer) * 100);
+            platformerPowerupFill.style.width = pct + "%";
+        } else {
+            platformerPowerupBar.classList.add("hidden");
+        }
+    }
+
+    function updateCheckpointToast(hud) {
+        const cp = hud.localCheckpoint || 0;
+        if (cp > prevPlatformerCheckpoint && prevPlatformerCheckpoint > 0) {
+            // Show checkpoint toast
+            if (platformerCheckpointToast) {
+                platformerCheckpointToast.classList.remove("hidden", "show");
+                // Force reflow to restart animation
+                void platformerCheckpointToast.offsetWidth;
+                platformerCheckpointToast.classList.add("show");
+                if (checkpointToastTimer) clearTimeout(checkpointToastTimer);
+                checkpointToastTimer = setTimeout(() => {
+                    platformerCheckpointToast.classList.add("hidden");
+                    platformerCheckpointToast.classList.remove("show");
+                }, 1300);
+            }
+        }
+        prevPlatformerCheckpoint = cp;
+    }
+
+    function updatePlatformerMinimap(hud) {
+        if (!platformerMinimapCtx || !hud.minimap) return;
+
+        const mm = hud.minimap;
+        if (!mm.w || !mm.h || !mm.tiles) return;
+
+        platformerMinimap.classList.add("visible");
+        const ctx = platformerMinimapCtx;
+        const cw = platformerMinimap.width;
+        const ch = platformerMinimap.height;
+
+        ctx.clearRect(0, 0, cw, ch);
+
+        // Scale: map course tiles to canvas pixels
+        const scaleX = cw / mm.w;
+        const scaleY = ch / mm.h;
+
+        // Draw tiles (batch by color for performance)
+        const TILE_COLORS = {
+            "#": "rgba(100, 90, 110, 0.8)",   // solid
+            "-": "rgba(80, 70, 60, 0.6)",      // platform
+            "^": "rgba(200, 40, 40, 0.8)",     // spikes
+            "~": "rgba(40, 80, 160, 0.6)",     // water
+            "C": "rgba(255, 221, 102, 0.8)",   // checkpoint
+            "F": "rgba(100, 255, 100, 0.9)",   // finish
+        };
+
+        for (let i = 0; i < mm.tiles.length; i++) {
+            const ch2 = mm.tiles[i];
+            const color = TILE_COLORS[ch2];
+            if (!color) continue;
+
+            const tx = i % mm.w;
+            const ty = Math.floor(i / mm.w);
+            ctx.fillStyle = color;
+            ctx.fillRect(tx * scaleX, ty * scaleY, Math.max(scaleX, 1), Math.max(scaleY, 1));
+        }
+
+        // Draw player dots
+        if (mm.dots) {
+            for (const dot of mm.dots) {
+                if (!dot[3]) continue; // skip eliminated
+                const px = (dot[0] / 1.0) * scaleX; // x is in world units = tile units
+                const py = (dot[1] / 1.0) * scaleY;
+                const color = PLATFORMER_PLAYER_COLORS[dot[2] % 8];
+                ctx.fillStyle = color;
+                ctx.shadowColor = color;
+                ctx.shadowBlur = 3;
+                ctx.beginPath();
+                ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.shadowBlur = 0;
+        }
     }
 
     // ── LaserTag HUD ───────────────────────────────────

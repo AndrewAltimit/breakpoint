@@ -84,6 +84,18 @@ pub struct PlatformerTheme {
     pub hp_empty: [f32; 3],
     pub enemy_tint: [f32; 3],
     pub invincibility_flash: [f32; 3],
+    /// CRT scanline intensity (0.0-1.0).
+    pub scanline_intensity: f32,
+    /// Bloom intensity (0.0-1.0).
+    pub bloom_intensity: f32,
+    /// Vignette intensity (0.0-1.0).
+    pub vignette_intensity: f32,
+    /// CRT barrel distortion curvature (0.0-1.0).
+    pub crt_curvature: f32,
+    /// Ambient light level when torches are present (0.0-1.0).
+    pub torch_ambient: f32,
+    /// Water tile tint color (RGBA).
+    pub water_color: [f32; 4],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -198,6 +210,12 @@ impl Default for PlatformerTheme {
             hp_empty: [0.25, 0.2, 0.2],
             enemy_tint: [0.9, 0.9, 0.85],
             invincibility_flash: [1.0, 1.0, 0.8],
+            scanline_intensity: 0.3,
+            bloom_intensity: 0.4,
+            vignette_intensity: 0.5,
+            crt_curvature: 0.15,
+            torch_ambient: 0.15,
+            water_color: [0.1, 0.3, 0.6, 0.55],
         }
     }
 }

@@ -1,11 +1,11 @@
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use glam::{Vec3, Vec4};
 
 use crate::app::ActiveGame;
 use crate::game::read_game_state;
-use crate::scene::{MaterialType, MeshType, Scene, Transform};
+use crate::scene::{MaterialType, MeshType, Scene, SceneLighting, Transform};
 use crate::sprite_atlas::{
     SpriteAnimation, SpriteRegion, SpriteSheet, build_platformer_animations, build_platformer_atlas,
 };
@@ -15,6 +15,62 @@ use crate::theme::Theme;
 const BG_ATLAS_ID: u8 = 1;
 /// Sprite atlas ID.
 const ATLAS_ID: u8 = 0;
+
+/// Per-player visual state for squash/stretch animation.
+struct PlayerVisualState {
+    prev_anim: breakpoint_platformer::physics::AnimState,
+    time_since_transition: f32,
+    was_falling: bool,
+}
+
+/// Global visual state tracker per player ID.
+fn visual_states() -> &'static Mutex<HashMap<u64, PlayerVisualState>> {
+    static STATES: OnceLock<Mutex<HashMap<u64, PlayerVisualState>>> = OnceLock::new();
+    STATES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Compute squash/stretch scale for a player based on their movement state.
+fn squash_stretch_scale(
+    player: &breakpoint_platformer::physics::PlatformerPlayerState,
+    pid: u64,
+    dt: f32,
+) -> (f32, f32) {
+    use breakpoint_platformer::physics::AnimState;
+
+    let mut states = visual_states().lock().unwrap_or_else(|e| e.into_inner());
+    let vs = states.entry(pid).or_insert_with(|| PlayerVisualState {
+        prev_anim: player.anim_state,
+        time_since_transition: 0.0,
+        was_falling: false,
+    });
+
+    // Detect state transitions
+    if vs.prev_anim != player.anim_state {
+        vs.was_falling = vs.prev_anim == AnimState::Fall;
+        vs.prev_anim = player.anim_state;
+        vs.time_since_transition = 0.0;
+    } else {
+        vs.time_since_transition += dt;
+    }
+
+    match player.anim_state {
+        AnimState::Jump => (0.85, 1.2), // Stretch upward
+        AnimState::Fall => (0.9, 1.15), // Slight stretch
+        AnimState::Idle if vs.was_falling && vs.time_since_transition < 0.15 => {
+            // Landing squash with spring-back
+            let t = vs.time_since_transition / 0.15;
+            let squash = 1.0 + (1.0 - t) * 0.12;
+            let stretch = 1.0 - (1.0 - t) * 0.15;
+            (squash, stretch)
+        },
+        AnimState::Walk => {
+            // Subtle sine bob
+            let bob = (player.anim_time * 12.0).sin() * 0.03;
+            (1.0 + bob, 1.0 - bob)
+        },
+        _ => (1.0, 1.0),
+    }
+}
 
 /// Cached sprite sheet — built once on first call.
 fn atlas() -> &'static SpriteSheet {
@@ -126,6 +182,11 @@ fn enemy_sprite_region(
 }
 
 /// Map tile type to sprite name, with auto-tiling for stone bricks.
+/// Returns true if this tile should be rendered as a water material (not sprite).
+fn is_water_tile(tile: &breakpoint_platformer::course_gen::Tile) -> bool {
+    matches!(tile, breakpoint_platformer::course_gen::Tile::Water)
+}
+
 fn tile_sprite_region(
     tile: &breakpoint_platformer::course_gen::Tile,
     course: &breakpoint_platformer::course_gen::Course,
@@ -137,7 +198,7 @@ fn tile_sprite_region(
     let sheet = atlas();
 
     match tile {
-        Tile::Empty | Tile::PowerUpSpawn => None,
+        Tile::Empty | Tile::PowerUpSpawn | Tile::Water => None,
         Tile::StoneBrick => Some(stone_brick_region(sheet, course, tx, ty)),
         Tile::Platform => Some(sheet.get_or_default("platform_0")),
         Tile::Spikes => Some(sheet.get_or_default("spikes_0")),
@@ -161,6 +222,15 @@ fn tile_sprite_region(
                 .or_else(|| Some(sheet.get_or_default("torch_0")))
         },
         Tile::DecoStainedGlass => Some(sheet.get_or_default("stained_glass")),
+        Tile::DecoCobweb => Some(sheet.get_or_default("cobweb")),
+        Tile::DecoChain => {
+            let phase = tx as f32 * 0.5 + ty as f32 * 1.1;
+            let anims = animations();
+            anims
+                .get("chain")
+                .map(|a| *a.frame_at(time + phase))
+                .or_else(|| Some(sheet.get_or_default("chain_0")))
+        },
     }
 }
 
@@ -217,7 +287,7 @@ pub fn sync_platformer_scene(
     scene: &mut Scene,
     active: &ActiveGame,
     theme: &Theme,
-    _dt: f32,
+    dt: f32,
     camera_x: f32,
     time: f32,
 ) {
@@ -241,8 +311,28 @@ pub fn sync_platformer_scene(
         .ceil()
         .min(state.course.width as f32) as u32;
 
+    // Collect torch lights for dynamic lighting
+    scene.lighting = collect_torch_lights(
+        &state,
+        tile_size,
+        min_col,
+        max_col,
+        time,
+        theme.platformer.torch_ambient,
+    );
+
     // Render course tiles
-    render_tiles(scene, &state, tile_size, white, min_col, max_col, time);
+    let wc = &theme.platformer.water_color;
+    let water_color = Vec4::new(wc[0], wc[1], wc[2], wc[3]);
+    render_tiles(
+        scene,
+        &state,
+        tile_size,
+        min_col,
+        max_col,
+        time,
+        water_color,
+    );
 
     // Render enemies
     render_enemies(scene, &state, tile_size, theme, time);
@@ -251,7 +341,7 @@ pub fn sync_platformer_scene(
     render_projectiles(scene, &state, tile_size, time);
 
     // Render players
-    render_players(scene, &state, tile_size, white, time);
+    render_players(scene, &state, tile_size, white, time, dt);
 
     // Render uncollected powerups
     render_powerups(scene, &state, tile_size, white);
@@ -262,14 +352,36 @@ fn render_tiles(
     scene: &mut Scene,
     state: &breakpoint_platformer::PlatformerState,
     tile_size: f32,
-    white: Vec4,
     min_col: u32,
     max_col: u32,
     time: f32,
+    water_color: Vec4,
 ) {
+    let white = Vec4::ONE;
     for y in 0..state.course.height {
         for x in min_col..max_col {
             let tile = state.course.get_tile(x as i32, y as i32);
+
+            // Water tiles use a special material
+            if is_water_tile(&tile) {
+                let wx = x as f32 * tile_size + tile_size / 2.0;
+                let wy = y as f32 * tile_size + tile_size / 2.0;
+                // Check if this is a surface tile (empty or non-water above)
+                let above = state.course.get_tile(x as i32, y as i32 + 1);
+                let depth = if is_water_tile(&above) { 0.8 } else { 0.4 };
+                scene.add(
+                    MeshType::Quad,
+                    MaterialType::Water {
+                        color: water_color,
+                        depth,
+                        wave_speed: 3.0,
+                    },
+                    Transform::from_xyz(wx, wy, 0.05)
+                        .with_scale(Vec3::new(tile_size, tile_size, 1.0)),
+                );
+                continue;
+            }
+
             let Some(region) = tile_sprite_region(&tile, &state.course, x as i32, y as i32, time)
             else {
                 continue;
@@ -338,7 +450,7 @@ fn render_enemies(
     }
 }
 
-/// Render enemy projectiles with animation.
+/// Render enemy projectiles with trailing afterimages and glow.
 fn render_projectiles(
     scene: &mut Scene,
     state: &breakpoint_platformer::PlatformerState,
@@ -351,6 +463,41 @@ fn render_projectiles(
             .get("projectile")
             .map(|a| *a.frame_at(time))
             .unwrap_or_else(|| atlas().get_or_default("projectile_0"));
+
+        // Trailing afterimages (3 behind projectile direction)
+        let dx = proj.vx.signum();
+        for i in 1..=3u8 {
+            let offset = f32::from(i) * tile_size * 0.15 * -dx;
+            let alpha = 0.25 - f32::from(i) * 0.07;
+            add_sprite_region(
+                scene,
+                &region,
+                &SpriteParams {
+                    x: proj.x + offset,
+                    y: proj.y,
+                    w: tile_size * 0.5,
+                    h: tile_size * 0.5,
+                    tint: Vec4::new(1.0, 0.3, 0.9, alpha),
+                    flip_x: false,
+                },
+            );
+        }
+
+        // Glow aura behind projectile
+        scene.add(
+            MeshType::Quad,
+            MaterialType::Glow {
+                color: Vec4::new(0.8, 0.2, 0.9, 0.4),
+                intensity: 1.2,
+            },
+            Transform::from_xyz(proj.x, proj.y, -0.05).with_scale(Vec3::new(
+                tile_size * 0.8,
+                tile_size * 0.8,
+                1.0,
+            )),
+        );
+
+        // Main projectile sprite
         add_sprite_region(
             scene,
             &region,
@@ -373,6 +520,7 @@ fn render_players(
     tile_size: f32,
     white: Vec4,
     time: f32,
+    dt: f32,
 ) {
     for (pid, player) in &state.players {
         if player.eliminated {
@@ -402,14 +550,17 @@ fn render_players(
         );
         let tint = inv_tint.unwrap_or(base_tint);
 
+        // Squash/stretch scaling based on movement state
+        let (sx, sy) = squash_stretch_scale(player, *pid, dt);
+
         add_sprite_region(
             scene,
             &region,
             &SpriteParams {
                 x: player.x,
                 y: player.y,
-                w: tile_size,
-                h: tile_size * 2.0,
+                w: tile_size * sx,
+                h: tile_size * 2.0 * sy,
                 tint,
                 flip_x: !player.facing_right,
             },
@@ -455,26 +606,24 @@ fn render_player_effects(
     use breakpoint_platformer::physics::AnimState;
     use breakpoint_platformer::powerups::PowerUpKind;
 
-    // Attack trail: 3 semi-transparent afterimage quads trailing behind
+    // Whip trail arc during attack
     if player.anim_state == AnimState::Attack {
-        let region = player_sprite_region(&player.anim_state, player.anim_time);
-        let dir = if player.facing_right { -1.0 } else { 1.0 };
-        for i in 1..=3u8 {
-            let offset = f32::from(i) * tile_size * 0.15 * dir;
-            let alpha = 0.3 - f32::from(i) * 0.08;
-            add_sprite_region(
-                scene,
-                &region,
-                &SpriteParams {
-                    x: player.x + offset,
-                    y: player.y,
-                    w: tile_size,
-                    h: tile_size * 2.0,
-                    tint: Vec4::new(1.0, 0.8, 0.4, alpha),
-                    flip_x: !player.facing_right,
-                },
-            );
-        }
+        let attack_duration = 0.35; // matches game ATTACK_DURATION
+        let progress = (player.anim_time / attack_duration).clamp(0.0, 1.0);
+        let dir = if player.facing_right { 1.0 } else { -1.0 };
+        scene.add(
+            MeshType::Quad,
+            MaterialType::WhipTrail {
+                progress,
+                color: Vec4::new(1.0, 0.9, 0.5, 0.9),
+            },
+            Transform::from_xyz(
+                player.x + dir * tile_size * 0.6,
+                player.y + tile_size * 0.3,
+                0.15,
+            )
+            .with_scale(Vec3::new(tile_size * 1.8, tile_size * 1.2, 1.0)),
+        );
     }
 
     // Speed boots trail: 4 trailing afterimages with green tint
@@ -566,17 +715,58 @@ fn render_powerups(
     }
 }
 
-/// Add 3 parallax background layers to the scene.
+/// Collect torch light sources from visible DecoTorch tiles.
+fn collect_torch_lights(
+    state: &breakpoint_platformer::PlatformerState,
+    tile_size: f32,
+    min_col: u32,
+    max_col: u32,
+    time: f32,
+    torch_ambient: f32,
+) -> SceneLighting {
+    use breakpoint_platformer::course_gen::Tile;
+
+    let mut lights: Vec<[f32; 4]> = Vec::with_capacity(16);
+
+    for y in 0..state.course.height {
+        for x in min_col..max_col {
+            if lights.len() >= 16 {
+                break;
+            }
+            if state.course.get_tile(x as i32, y as i32) == Tile::DecoTorch {
+                let wx = x as f32 * tile_size + tile_size / 2.0;
+                let wy = y as f32 * tile_size + tile_size / 2.0;
+                // Per-torch flicker using position hash
+                let hash = (x as f32) * 7.3 + (y as f32) * 13.1;
+                let intensity = 1.0 + 0.15 * (time * 8.0 + hash).sin();
+                let radius = 5.0;
+                lights.push([wx, wy, intensity, radius]);
+            }
+        }
+    }
+
+    // Dark atmosphere when torches are present, fully lit otherwise
+    let ambient = if lights.is_empty() {
+        1.0
+    } else {
+        torch_ambient
+    };
+
+    SceneLighting { lights, ambient }
+}
+
+/// Add parallax background layers (3 behind, 1 foreground) to the scene.
 fn add_parallax_layers(scene: &mut Scene, camera_x: f32) {
     let layer_v = 1.0 / 3.0;
 
-    let layers: [(f32, f32, f32); 3] = [
+    // Background layers (behind gameplay)
+    let bg_layers: [(f32, f32, f32); 3] = [
         (0.1, -5.0, 0.0),
         (0.3, -3.0, layer_v),
         (0.6, -1.0, layer_v * 2.0),
     ];
 
-    for (scroll_factor, z, v_start) in layers {
+    for (scroll_factor, z, v_start) in bg_layers {
         scene.add(
             MeshType::Quad,
             MaterialType::Parallax {
@@ -588,4 +778,17 @@ fn add_parallax_layers(scene: &mut Scene, camera_x: f32) {
             Transform::from_xyz(camera_x, 5.0, z).with_scale(Vec3::new(50.0, 30.0, 1.0)),
         );
     }
+
+    // Foreground layer (in front of gameplay, low alpha for depth)
+    // Reuses bottom layer texture with faster scroll
+    scene.add(
+        MeshType::Quad,
+        MaterialType::Parallax {
+            atlas_id: BG_ATLAS_ID,
+            layer_rect: Vec4::new(0.0, layer_v * 2.0, 1.0, 1.0),
+            scroll_factor: 1.5,
+            tint: Vec4::new(1.0, 1.0, 1.0, 0.15),
+        },
+        Transform::from_xyz(camera_x, 5.0, 0.5).with_scale(Vec3::new(50.0, 30.0, 1.0)),
+    );
 }

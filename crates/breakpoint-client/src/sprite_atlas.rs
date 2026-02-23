@@ -94,9 +94,9 @@ impl SpriteAnimation {
 }
 
 /// Build the platformer sprite sheet with all named regions.
-/// Atlas is 512x512, sprites are 16x16 (tiles/items), 16x32 (characters), or 8x8 (particles).
+/// Atlas is 1024x512, sprites are 16x16 (tiles/items), 16x32 (characters), or 8x8 (particles).
 pub fn build_platformer_atlas() -> SpriteSheet {
-    let mut sheet = SpriteSheet::new(512, 512);
+    let mut sheet = SpriteSheet::new(1024, 512);
 
     // ── Player sprites (16x32) — Y 0-63 ───────────────────
     add_player_sprites(&mut sheet);
@@ -325,6 +325,15 @@ fn add_tile_sprites(sheet: &mut SpriteSheet) {
 
     // Stained glass
     sheet.add("stained_glass", 208, 144, 16, 16);
+
+    // Water tiles
+    sheet.add("water_surface", 224, 144, 16, 16);
+    sheet.add("water_body", 240, 144, 16, 16);
+
+    // Decorative tiles
+    sheet.add("cobweb", 256, 144, 16, 16);
+    sheet.add("chain_0", 272, 144, 16, 16);
+    sheet.add("chain_1", 288, 144, 16, 16);
 }
 
 /// Add power-up, HUD, and prop sprites to the sprite sheet.
@@ -411,6 +420,24 @@ fn add_particle_sprites(sheet: &mut SpriteSheet) {
             0 => "particle_debris_0",
             1 => "particle_debris_1",
             _ => "particle_debris_2",
+        };
+        sheet.add(name, x + i * 8, y, 8, 8);
+    }
+    x += 24;
+    for i in 0..3u32 {
+        let name = match i {
+            0 => "particle_water_0",
+            1 => "particle_water_1",
+            _ => "particle_water_2",
+        };
+        sheet.add(name, x + i * 8, y, 8, 8);
+    }
+    x += 24;
+    for i in 0..3u32 {
+        let name = match i {
+            0 => "particle_ember_0",
+            1 => "particle_ember_1",
+            _ => "particle_ember_2",
         };
         sheet.add(name, x + i * 8, y, 8, 8);
     }
@@ -553,6 +580,14 @@ pub fn build_platformer_animations(sheet: &SpriteSheet) -> HashMap<&'static str,
             looping: true,
         },
     );
+    anims.insert(
+        "chain",
+        SpriteAnimation {
+            frames: frames(&["chain_0", "chain_1"]),
+            frame_duration: 0.5,
+            looping: true,
+        },
+    );
 
     anims
 }
@@ -685,10 +720,10 @@ mod tests {
     fn sprite_sheet_uv_coords() {
         let sheet = build_platformer_atlas();
         let r = sheet.get("player_idle_0").unwrap();
-        // 0,0 -> 16,32 on 512x512 atlas
+        // 0,0 -> 16,32 on 1024x512 atlas
         assert!((r.u0 - 0.0).abs() < 1e-6);
         assert!((r.v0 - 0.0).abs() < 1e-6);
-        assert!((r.u1 - 16.0 / 512.0).abs() < 1e-6);
+        assert!((r.u1 - 16.0 / 1024.0).abs() < 1e-6);
         assert!((r.v1 - 32.0 / 512.0).abs() < 1e-6);
     }
 

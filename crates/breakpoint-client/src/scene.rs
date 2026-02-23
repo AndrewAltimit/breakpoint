@@ -106,6 +106,25 @@ pub enum MaterialType {
         scroll_factor: f32,
         tint: Vec4,
     },
+    /// Animated water with waves, caustics, and transparency.
+    Water {
+        color: Vec4,
+        depth: f32,
+        wave_speed: f32,
+    },
+    /// Whip attack trail arc effect.
+    WhipTrail {
+        progress: f32,
+        color: Vec4,
+    },
+}
+
+/// Lighting information for the scene (torch lights, ambient).
+pub struct SceneLighting {
+    /// Up to 16 lights: (x, y, intensity, radius).
+    pub lights: Vec<[f32; 4]>,
+    /// Ambient light level (0.0 = pitch black, 1.0 = fully lit).
+    pub ambient: f32,
 }
 
 /// A renderable object in the scene.
@@ -121,6 +140,8 @@ pub struct RenderObject {
 pub struct Scene {
     objects: Vec<RenderObject>,
     next_id: ObjectId,
+    /// Scene lighting (set by game-specific render code, read by renderer).
+    pub lighting: SceneLighting,
 }
 
 impl Scene {
@@ -128,6 +149,10 @@ impl Scene {
         Self {
             objects: Vec::with_capacity(512),
             next_id: 1,
+            lighting: SceneLighting {
+                lights: Vec::new(),
+                ambient: 1.0,
+            },
         }
     }
 

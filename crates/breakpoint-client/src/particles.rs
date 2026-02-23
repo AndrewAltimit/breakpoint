@@ -4,7 +4,7 @@ use crate::scene::{MaterialType, MeshType, Scene, Transform};
 use crate::sprite_atlas::{SpriteRegion, SpriteSheet};
 
 /// Maximum number of active particles (oldest recycled when full).
-const MAX_PARTICLES: usize = 256;
+const MAX_PARTICLES: usize = 512;
 
 /// A single visual particle.
 struct Particle {
@@ -53,7 +53,24 @@ pub enum ParticleEffect {
     EnemyDeath,
     PowerUpCollect,
     CheckpointActivate,
-    GenericBurst { color: Vec4, count: u8 },
+    GenericBurst {
+        color: Vec4,
+        count: u8,
+    },
+    /// Directional sparks from whip hitting an enemy.
+    WhipImpact {
+        facing_right: bool,
+    },
+    /// Blue droplets on water entry/exit.
+    WaterSplash,
+    /// Stone debris from broken walls.
+    WallBreak,
+    /// Tiny white pops where rain hits ground.
+    RainSplash,
+    /// Wider cloud on hard landings.
+    LandingDust,
+    /// Single orange ember from a torch (continuous emission).
+    TorchEmber,
 }
 
 /// Lightweight particle system for visual effects.
@@ -94,6 +111,14 @@ impl ParticleSystem {
             ParticleEffect::GenericBurst { color, count } => {
                 self.emit_burst(x, y, color, count, sheet);
             },
+            ParticleEffect::WhipImpact { facing_right } => {
+                self.emit_whip_impact(x, y, facing_right, sheet);
+            },
+            ParticleEffect::WaterSplash => self.emit_water_splash(x, y, sheet),
+            ParticleEffect::WallBreak => self.emit_wall_break(x, y, sheet),
+            ParticleEffect::RainSplash => self.emit_rain_splash(x, y, sheet),
+            ParticleEffect::LandingDust => self.emit_landing_dust(x, y, sheet),
+            ParticleEffect::TorchEmber => self.emit_torch_ember(x, y, sheet),
         }
     }
 
@@ -266,6 +291,26 @@ impl ParticleSystem {
         }
     }
 
+    fn emit_whip_impact(&mut self, x: f32, y: f32, facing_right: bool, sheet: &SpriteSheet) {
+        let dir = if facing_right { 1.0 } else { -1.0 };
+        for i in 0..8 {
+            let p = self.alloc();
+            p.x = x;
+            p.y = y;
+            // Directional cone toward the hit direction
+            let spread = (i as f32 / 8.0 - 0.5) * 1.2;
+            let speed = 3.0 + fastrand::f32() * 2.0;
+            p.vx = dir * speed * (1.0 - spread.abs() * 0.5);
+            p.vy = spread * speed * 0.5 + fastrand::f32() * 0.5;
+            p.lifetime = 0.15 + fastrand::f32() * 0.15;
+            p.max_lifetime = p.lifetime;
+            p.sprite = sheet.get_or_default(spark_frame(i));
+            p.tint = Vec4::new(1.0, 0.95, 0.7, 1.0);
+            p.size = 0.08 + fastrand::f32() * 0.06;
+            p.gravity = -4.0;
+        }
+    }
+
     fn emit_burst(&mut self, x: f32, y: f32, color: Vec4, count: u8, sheet: &SpriteSheet) {
         for i in 0..count {
             let p = self.alloc();
@@ -281,6 +326,102 @@ impl ParticleSystem {
             p.tint = color;
             p.size = 0.12 + fastrand::f32() * 0.08;
             p.gravity = -1.0;
+        }
+    }
+
+    fn emit_water_splash(&mut self, x: f32, y: f32, sheet: &SpriteSheet) {
+        for i in 0..6 {
+            let p = self.alloc();
+            p.x = x + rand_spread(0.3);
+            p.y = y;
+            let angle = std::f32::consts::FRAC_PI_4 + fastrand::f32() * std::f32::consts::FRAC_PI_2;
+            let speed = 2.0 + fastrand::f32() * 1.5;
+            p.vx = (i as f32 / 3.0 - 1.0) * speed * 0.5;
+            p.vy = angle.sin() * speed;
+            p.lifetime = 0.3 + fastrand::f32() * 0.2;
+            p.max_lifetime = p.lifetime;
+            p.sprite = sheet.get_or_default(water_frame(i));
+            p.tint = Vec4::new(0.4, 0.7, 1.0, 0.8);
+            p.size = 0.1 + fastrand::f32() * 0.08;
+            p.gravity = -6.0;
+        }
+    }
+
+    fn emit_wall_break(&mut self, x: f32, y: f32, sheet: &SpriteSheet) {
+        for i in 0..8 {
+            let p = self.alloc();
+            p.x = x + rand_spread(0.3);
+            p.y = y + rand_spread(0.3);
+            let angle = fastrand::f32() * std::f32::consts::TAU;
+            let speed = 1.5 + fastrand::f32() * 2.0;
+            p.vx = angle.cos() * speed;
+            p.vy = angle.sin() * speed;
+            p.lifetime = 0.5 + fastrand::f32() * 0.3;
+            p.max_lifetime = p.lifetime;
+            p.sprite = sheet.get_or_default(dust_frame(i));
+            p.tint = Vec4::new(0.5, 0.45, 0.4, 0.9);
+            p.size = 0.1 + fastrand::f32() * 0.12;
+            p.gravity = -8.0; // Heavy debris
+        }
+    }
+
+    fn emit_rain_splash(&mut self, x: f32, y: f32, sheet: &SpriteSheet) {
+        for i in 0..2 {
+            let p = self.alloc();
+            p.x = x + rand_spread(0.1);
+            p.y = y;
+            p.vx = rand_spread(0.5);
+            p.vy = 0.5 + fastrand::f32() * 0.3;
+            p.lifetime = 0.1 + fastrand::f32() * 0.1;
+            p.max_lifetime = p.lifetime;
+            p.sprite = sheet.get_or_default(spark_frame(i));
+            p.tint = Vec4::new(0.7, 0.75, 0.9, 0.5);
+            p.size = 0.05;
+            p.gravity = -2.0;
+        }
+    }
+
+    fn emit_landing_dust(&mut self, x: f32, y: f32, sheet: &SpriteSheet) {
+        for i in 0..6 {
+            let p = self.alloc();
+            p.x = x + rand_spread(0.4);
+            p.y = y;
+            p.vx = rand_spread(1.5);
+            p.vy = 0.3 + fastrand::f32() * 0.5;
+            p.lifetime = 0.4 + fastrand::f32() * 0.2;
+            p.max_lifetime = p.lifetime;
+            p.sprite = sheet.get_or_default(dust_frame(i));
+            p.tint = Vec4::new(0.7, 0.65, 0.55, 0.7);
+            p.size = 0.15 + fastrand::f32() * 0.15;
+            p.gravity = -1.0;
+        }
+    }
+
+    fn emit_torch_ember(&mut self, x: f32, y: f32, sheet: &SpriteSheet) {
+        let p = self.alloc();
+        p.x = x + rand_spread(0.15);
+        p.y = y + 0.4;
+        p.vx = rand_spread(0.3);
+        p.vy = 0.8 + fastrand::f32() * 0.5;
+        p.lifetime = 0.5 + fastrand::f32() * 0.3;
+        p.max_lifetime = p.lifetime;
+        p.sprite = sheet.get_or_default(ember_frame(0));
+        p.tint = Vec4::new(1.0, 0.7, 0.2, 0.8);
+        p.size = 0.06 + fastrand::f32() * 0.04;
+        p.gravity = 0.5;
+    }
+
+    /// Emit a particle with given probability (for continuous effects).
+    pub fn emit_continuous(
+        &mut self,
+        effect: ParticleEffect,
+        x: f32,
+        y: f32,
+        sheet: &SpriteSheet,
+        probability: f32,
+    ) {
+        if fastrand::f32() < probability {
+            self.emit(effect, x, y, sheet);
         }
     }
 }
@@ -338,6 +479,22 @@ fn magic_frame(i: usize) -> &'static str {
         0 => "particle_magic_0",
         1 => "particle_magic_1",
         _ => "particle_magic_2",
+    }
+}
+
+fn water_frame(i: usize) -> &'static str {
+    match i % 3 {
+        0 => "particle_water_0",
+        1 => "particle_water_1",
+        _ => "particle_water_2",
+    }
+}
+
+fn ember_frame(i: usize) -> &'static str {
+    match i % 3 {
+        0 => "particle_ember_0",
+        1 => "particle_ember_1",
+        _ => "particle_ember_2",
     }
 }
 

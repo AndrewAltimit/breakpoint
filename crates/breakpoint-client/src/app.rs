@@ -147,6 +147,7 @@ pub struct App {
     pub screen_shake: ScreenShake,
     pub screen_flash: ScreenFlash,
     pub particle_system: ParticleSystem,
+    pub weather: crate::weather::WeatherSystem,
     /// Previous frame HP per player (for detecting damage/heal events).
     prev_player_hp: HashMap<PlayerId, u8>,
     /// Previous frame enemy alive states (for detecting kills).
@@ -259,6 +260,7 @@ impl App {
             screen_shake: ScreenShake::default(),
             screen_flash: ScreenFlash::default(),
             particle_system: ParticleSystem::new(),
+            weather: crate::weather::WeatherSystem::new(),
             prev_player_hp: HashMap::new(),
             prev_enemy_alive: Vec::new(),
             prev_powerup_collected: Vec::new(),
@@ -338,6 +340,12 @@ impl App {
         self.particle_system.tick(dt);
         self.particle_system.render(&mut self.scene);
 
+        // Update and render weather
+        self.weather
+            .set_camera(self.camera.position.x, self.camera.position.y);
+        self.weather.tick(dt);
+        self.weather.render(&mut self.scene);
+
         // Render 3D scene — Tron uses pure black background + fog
         let is_tron = self
             .game
@@ -352,6 +360,21 @@ impl App {
         let fog_density = if is_tron { 1.0 } else { 0.0 };
         if is_tron {
             self.camera.fov = 70_f32.to_radians();
+        }
+        // Set post-processing from theme (platformer only)
+        let is_platformer = self
+            .game
+            .as_ref()
+            .is_some_and(|g| g.game_id == GameId::Platformer);
+        if is_platformer {
+            self.renderer.post_process.scanline_intensity =
+                self.theme.platformer.scanline_intensity;
+            self.renderer.post_process.bloom_intensity = self.theme.platformer.bloom_intensity;
+            self.renderer.post_process.vignette_intensity =
+                self.theme.platformer.vignette_intensity;
+            self.renderer.post_process.crt_curvature = self.theme.platformer.crt_curvature;
+        } else {
+            self.renderer.post_process = crate::renderer::PostProcessConfig::default();
         }
         self.renderer
             .draw(&self.scene, &self.camera, dt, clear_color, fog_density);
@@ -908,6 +931,42 @@ impl App {
         self.detect_player_hp_changes(&state, &sheet);
         self.detect_enemy_kills(&state, &sheet);
         self.detect_powerup_collections(&state, &sheet);
+        self.emit_torch_embers(&state, &sheet);
+    }
+
+    /// Emit continuous ember particles from visible torches.
+    #[cfg(feature = "platformer")]
+    fn emit_torch_embers(
+        &mut self,
+        state: &breakpoint_platformer::PlatformerState,
+        sheet: &crate::sprite_atlas::SpriteSheet,
+    ) {
+        use crate::particles::ParticleEffect;
+        use breakpoint_platformer::course_gen::Tile;
+        use breakpoint_platformer::physics::TILE_SIZE;
+
+        let cam_x = self.camera.position.x;
+        let visible_half = 15.0;
+        let min_col = ((cam_x - visible_half) / TILE_SIZE).floor().max(0.0) as u32;
+        let max_col = ((cam_x + visible_half) / TILE_SIZE)
+            .ceil()
+            .min(state.course.width as f32) as u32;
+
+        for y in 0..state.course.height {
+            for x in min_col..max_col {
+                if state.course.get_tile(x as i32, y as i32) == Tile::DecoTorch {
+                    let wx = x as f32 * TILE_SIZE + TILE_SIZE / 2.0;
+                    let wy = y as f32 * TILE_SIZE + TILE_SIZE / 2.0;
+                    self.particle_system.emit_continuous(
+                        ParticleEffect::TorchEmber,
+                        wx,
+                        wy,
+                        sheet,
+                        0.03, // ~1 ember per torch every ~33 frames
+                    );
+                }
+            }
+        }
     }
 
     /// Check for player HP decreases and trigger effects.
@@ -964,6 +1023,16 @@ impl App {
                 if let Some(e) = state.enemies.iter().find(|e| e.id == id) {
                     self.particle_system
                         .emit(ParticleEffect::EnemyDeath, e.x, e.y, sheet);
+                    // Directional whip impact sparks
+                    let facing_right = e.facing_right;
+                    self.particle_system.emit(
+                        ParticleEffect::WhipImpact {
+                            facing_right: !facing_right,
+                        },
+                        e.x,
+                        e.y,
+                        sheet,
+                    );
                     self.screen_flash
                         .trigger(Vec4::new(1.0, 1.0, 1.0, 0.2), 0.1);
                     self.audio_events.push(AudioEvent::PlatformerEnemyKill);

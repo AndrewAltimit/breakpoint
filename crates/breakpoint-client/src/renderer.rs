@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use glam::{Mat4, Vec3, Vec4};
 use wasm_bindgen::JsCast;
 use web_sys::{
-    WebGl2RenderingContext as GL, WebGlProgram, WebGlShader, WebGlTexture, WebGlUniformLocation,
-    WebGlVertexArrayObject,
+    WebGl2RenderingContext as GL, WebGlFramebuffer, WebGlProgram, WebGlRenderbuffer, WebGlShader,
+    WebGlTexture, WebGlUniformLocation, WebGlVertexArrayObject,
 };
 
 use crate::camera_gl::Camera;
@@ -33,12 +33,55 @@ struct ShaderProgram {
     // Parallax shader uniforms
     u_uv_offset: Option<WebGlUniformLocation>,
     u_uv_scale: Option<WebGlUniformLocation>,
+    // Water shader uniforms
+    u_depth: Option<WebGlUniformLocation>,
+    u_wave_speed: Option<WebGlUniformLocation>,
+    // Lighting uniforms (for lit sprite shader)
+    u_lights: Vec<Option<WebGlUniformLocation>>,
+    u_light_count: Option<WebGlUniformLocation>,
+    u_ambient: Option<WebGlUniformLocation>,
+    // Whip trail uniforms
+    u_arc_progress: Option<WebGlUniformLocation>,
+    // Post-process uniforms
+    u_scene_texture: Option<WebGlUniformLocation>,
+    u_scanline_intensity: Option<WebGlUniformLocation>,
+    u_bloom_intensity: Option<WebGlUniformLocation>,
+    u_vignette_intensity: Option<WebGlUniformLocation>,
+    u_crt_curvature: Option<WebGlUniformLocation>,
 }
 
 /// Cached mesh GPU buffers.
 struct MeshBuffers {
     vao: WebGlVertexArrayObject,
     vertex_count: i32,
+}
+
+/// Post-processing framebuffer resources.
+struct PostProcessFBO {
+    framebuffer: WebGlFramebuffer,
+    color_texture: WebGlTexture,
+    depth_renderbuffer: WebGlRenderbuffer,
+    width: u32,
+    height: u32,
+}
+
+/// Post-processing configuration.
+pub struct PostProcessConfig {
+    pub scanline_intensity: f32,
+    pub bloom_intensity: f32,
+    pub vignette_intensity: f32,
+    pub crt_curvature: f32,
+}
+
+impl Default for PostProcessConfig {
+    fn default() -> Self {
+        Self {
+            scanline_intensity: 0.0,
+            bloom_intensity: 0.0,
+            vignette_intensity: 0.0,
+            crt_curvature: 0.0,
+        }
+    }
 }
 
 /// WebGL2 renderer.
@@ -53,6 +96,10 @@ pub struct Renderer {
     context_lost: std::cell::Cell<bool>,
     /// Texture atlases keyed by ID.
     atlases: HashMap<u8, WebGlTexture>,
+    /// Post-processing FBO (created lazily on first draw with post-fx).
+    post_fbo: Option<PostProcessFBO>,
+    /// Post-processing settings.
+    pub post_process: PostProcessConfig,
 }
 
 /// Key for mesh cache — identifies unique mesh configurations.
@@ -162,6 +209,8 @@ impl Renderer {
             time: 0.0,
             context_lost,
             atlases: HashMap::new(),
+            post_fbo: None,
+            post_process: PostProcessConfig::default(),
         };
 
         renderer.compile_programs()?;
@@ -181,6 +230,8 @@ impl Renderer {
         self.programs.clear();
         self.meshes.clear();
         self.atlases.clear();
+        // Post-process FBO is GPU-side only; invalidated by context loss.
+        self.post_fbo = None;
         self.compile_programs()?;
         self.generate_meshes();
         Ok(())
@@ -274,7 +325,23 @@ impl Renderer {
 
         self.resize();
 
+        // If any post-processing effects are enabled, render to FBO
+        let use_postfx = self.post_process.scanline_intensity > 0.01
+            || self.post_process.bloom_intensity > 0.01
+            || self.post_process.vignette_intensity > 0.01
+            || self.post_process.crt_curvature > 0.01;
+
+        if use_postfx {
+            self.ensure_post_fbo();
+            if let Some(fbo) = &self.post_fbo {
+                self.gl
+                    .bind_framebuffer(GL::FRAMEBUFFER, Some(&fbo.framebuffer));
+                self.gl.viewport(0, 0, fbo.width as i32, fbo.height as i32);
+            }
+        }
+
         let gl = &self.gl;
+
         gl.clear_color(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
         gl.clear(GL::COLOR_BUFFER_BIT | GL::DEPTH_BUFFER_BIT);
 
@@ -313,6 +380,8 @@ impl Renderer {
                 MaterialType::TronWall { .. } => "tronwall",
                 MaterialType::Sprite { .. } => "sprite",
                 MaterialType::Parallax { .. } => "parallax",
+                MaterialType::Water { .. } => "water",
+                MaterialType::WhipTrail { .. } => "whip",
             };
 
             let Some(prog) = self.programs.get(program_name) else {
@@ -380,6 +449,17 @@ impl Renderer {
                     set_vec4(gl, &prog.u_sprite_rect, sprite_rect);
                     set_vec4(gl, &prog.u_tint, tint);
                     set_f32(gl, &prog.u_flip_x, if *flip_x { 1.0 } else { 0.0 });
+                    // Set lighting uniforms
+                    let light_count = scene.lighting.lights.len().min(16) as i32;
+                    if let Some(loc) = &prog.u_light_count {
+                        gl.uniform1i(Some(loc), light_count);
+                    }
+                    set_f32(gl, &prog.u_ambient, scene.lighting.ambient);
+                    for (i, light) in scene.lighting.lights.iter().take(16).enumerate() {
+                        if let Some(loc) = prog.u_lights.get(i).and_then(|l| l.as_ref()) {
+                            gl.uniform4f(Some(loc), light[0], light[1], light[2], light[3]);
+                        }
+                    }
                     // Disable backface culling for sprites
                     gl.disable(GL::CULL_FACE);
                 },
@@ -406,6 +486,27 @@ impl Renderer {
                     gl.disable(GL::CULL_FACE);
                     gl.depth_mask(false);
                 },
+                MaterialType::Water {
+                    color,
+                    depth,
+                    wave_speed,
+                } => {
+                    set_vec4(gl, &prog.u_color, color);
+                    set_f32(gl, &prog.u_depth, *depth);
+                    set_f32(gl, &prog.u_wave_speed, *wave_speed);
+                    set_f32(gl, &prog.u_time, self.time);
+                    // Transparent water: disable culling, keep depth writes
+                    gl.disable(GL::CULL_FACE);
+                },
+                MaterialType::WhipTrail { progress, color } => {
+                    set_vec4(gl, &prog.u_color, color);
+                    set_f32(gl, &prog.u_arc_progress, *progress);
+                    set_f32(gl, &prog.u_time, self.time);
+                    // Additive blending for bright whip effect
+                    gl.blend_func(GL::SRC_ALPHA, GL::ONE);
+                    gl.disable(GL::CULL_FACE);
+                    gl.disable(GL::DEPTH_TEST);
+                },
             }
 
             // Bind mesh and draw
@@ -416,11 +517,17 @@ impl Renderer {
             }
         }
 
-        // Re-enable CULL_FACE if disabled by sprite/parallax batch
+        // Re-enable state that may have been disabled by material batches
         gl.enable(GL::CULL_FACE);
-        // Re-enable depth writes if disabled by parallax layers
+        gl.enable(GL::DEPTH_TEST);
         gl.depth_mask(true);
+        gl.blend_func(GL::SRC_ALPHA, GL::ONE_MINUS_SRC_ALPHA);
         self.gl.bind_vertex_array(None);
+
+        // Post-processing pass: read FBO, draw fullscreen quad with effects
+        if use_postfx {
+            self.draw_postprocess_pass();
+        }
     }
 
     /// Compile all shader programs.
@@ -451,10 +558,33 @@ impl Renderer {
                 include_str!("shaders_gl/parallax.vert"),
                 include_str!("shaders_gl/parallax.frag"),
             ),
+            (
+                "water",
+                include_str!("shaders_gl/water.vert"),
+                include_str!("shaders_gl/water.frag"),
+            ),
+            (
+                "whip",
+                include_str!("shaders_gl/whip.vert"),
+                include_str!("shaders_gl/whip.frag"),
+            ),
+            (
+                "postprocess",
+                include_str!("shaders_gl/postprocess.vert"),
+                include_str!("shaders_gl/postprocess.frag"),
+            ),
         ];
 
         for (name, vs, frag_src) in configs {
             let program = link_program(&self.gl, vs, frag_src)?;
+
+            // Cache light uniform locations (u_lights[0] .. u_lights[15])
+            let u_lights: Vec<Option<WebGlUniformLocation>> = (0..16)
+                .map(|i| {
+                    self.gl
+                        .get_uniform_location(&program, &format!("u_lights[{i}]"))
+                })
+                .collect();
 
             let sp = ShaderProgram {
                 u_mvp: self.gl.get_uniform_location(&program, "u_mvp"),
@@ -475,6 +605,21 @@ impl Renderer {
                 u_texture: self.gl.get_uniform_location(&program, "u_texture"),
                 u_uv_offset: self.gl.get_uniform_location(&program, "u_uv_offset"),
                 u_uv_scale: self.gl.get_uniform_location(&program, "u_uv_scale"),
+                u_depth: self.gl.get_uniform_location(&program, "u_depth"),
+                u_wave_speed: self.gl.get_uniform_location(&program, "u_wave_speed"),
+                u_lights,
+                u_light_count: self.gl.get_uniform_location(&program, "u_light_count"),
+                u_ambient: self.gl.get_uniform_location(&program, "u_ambient"),
+                u_arc_progress: self.gl.get_uniform_location(&program, "u_arc_progress"),
+                u_scene_texture: self.gl.get_uniform_location(&program, "u_scene"),
+                u_scanline_intensity: self
+                    .gl
+                    .get_uniform_location(&program, "u_scanline_intensity"),
+                u_bloom_intensity: self.gl.get_uniform_location(&program, "u_bloom_intensity"),
+                u_vignette_intensity: self
+                    .gl
+                    .get_uniform_location(&program, "u_vignette_intensity"),
+                u_crt_curvature: self.gl.get_uniform_location(&program, "u_crt_curvature"),
                 program,
             };
             self.programs.insert(name, sp);
@@ -528,6 +673,152 @@ impl Renderer {
     /// Get the accumulated renderer time (for animations).
     pub fn time(&self) -> f32 {
         self.time
+    }
+
+    /// Ensure the post-processing FBO exists and matches the canvas size.
+    fn ensure_post_fbo(&mut self) {
+        let w = self.canvas_width;
+        let h = self.canvas_height;
+
+        // If FBO exists and matches size, nothing to do
+        if let Some(fbo) = &self.post_fbo {
+            if fbo.width == w && fbo.height == h {
+                return;
+            }
+            // Size changed — delete old resources
+            self.gl.delete_framebuffer(Some(&fbo.framebuffer));
+            self.gl.delete_texture(Some(&fbo.color_texture));
+            self.gl.delete_renderbuffer(Some(&fbo.depth_renderbuffer));
+            self.post_fbo = None;
+        }
+
+        let gl = &self.gl;
+        let Some(fb) = gl.create_framebuffer() else {
+            return;
+        };
+        let Some(tex) = gl.create_texture() else {
+            return;
+        };
+        let Some(rb) = gl.create_renderbuffer() else {
+            return;
+        };
+
+        // Color texture
+        gl.bind_texture(GL::TEXTURE_2D, Some(&tex));
+        gl.tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_u8_array(
+            GL::TEXTURE_2D,
+            0,
+            GL::RGBA as i32,
+            w as i32,
+            h as i32,
+            0,
+            GL::RGBA,
+            GL::UNSIGNED_BYTE,
+            None,
+        )
+        .ok();
+        gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_MIN_FILTER, GL::LINEAR as i32);
+        gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_MAG_FILTER, GL::LINEAR as i32);
+        gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_WRAP_S, GL::CLAMP_TO_EDGE as i32);
+        gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_WRAP_T, GL::CLAMP_TO_EDGE as i32);
+
+        // Depth renderbuffer
+        gl.bind_renderbuffer(GL::RENDERBUFFER, Some(&rb));
+        gl.renderbuffer_storage(GL::RENDERBUFFER, GL::DEPTH_COMPONENT16, w as i32, h as i32);
+
+        // Assemble FBO
+        gl.bind_framebuffer(GL::FRAMEBUFFER, Some(&fb));
+        gl.framebuffer_texture_2d(
+            GL::FRAMEBUFFER,
+            GL::COLOR_ATTACHMENT0,
+            GL::TEXTURE_2D,
+            Some(&tex),
+            0,
+        );
+        gl.framebuffer_renderbuffer(
+            GL::FRAMEBUFFER,
+            GL::DEPTH_ATTACHMENT,
+            GL::RENDERBUFFER,
+            Some(&rb),
+        );
+
+        // Unbind
+        gl.bind_framebuffer(GL::FRAMEBUFFER, None);
+        gl.bind_texture(GL::TEXTURE_2D, None);
+        gl.bind_renderbuffer(GL::RENDERBUFFER, None);
+
+        self.post_fbo = Some(PostProcessFBO {
+            framebuffer: fb,
+            color_texture: tex,
+            depth_renderbuffer: rb,
+            width: w,
+            height: h,
+        });
+    }
+
+    /// Draw the post-processing fullscreen pass.
+    fn draw_postprocess_pass(&self) {
+        let gl = &self.gl;
+        let Some(fbo) = &self.post_fbo else { return };
+        let Some(prog) = self.programs.get("postprocess") else {
+            return;
+        };
+        let Some(mesh) = self.meshes.get(&MeshKey::Quad) else {
+            return;
+        };
+
+        // Bind default framebuffer
+        gl.bind_framebuffer(GL::FRAMEBUFFER, None);
+        gl.viewport(0, 0, self.canvas_width as i32, self.canvas_height as i32);
+        gl.clear_color(0.0, 0.0, 0.0, 1.0);
+        gl.clear(GL::COLOR_BUFFER_BIT);
+
+        gl.use_program(Some(&prog.program));
+
+        // Bind FBO color texture as input
+        gl.active_texture(GL::TEXTURE0);
+        gl.bind_texture(GL::TEXTURE_2D, Some(&fbo.color_texture));
+        if let Some(loc) = &prog.u_scene_texture {
+            gl.uniform1i(Some(loc), 0);
+        }
+        // Also bind via u_texture if postprocess shader uses that name
+        if let Some(loc) = &prog.u_texture {
+            gl.uniform1i(Some(loc), 0);
+        }
+
+        // Set uniforms
+        set_vec2(
+            gl,
+            &prog.u_resolution,
+            self.canvas_width as f32,
+            self.canvas_height as f32,
+        );
+        set_f32(gl, &prog.u_time, self.time);
+        if let Some(loc) = &prog.u_scanline_intensity {
+            gl.uniform1f(Some(loc), self.post_process.scanline_intensity);
+        }
+        if let Some(loc) = &prog.u_bloom_intensity {
+            gl.uniform1f(Some(loc), self.post_process.bloom_intensity);
+        }
+        if let Some(loc) = &prog.u_vignette_intensity {
+            gl.uniform1f(Some(loc), self.post_process.vignette_intensity);
+        }
+        if let Some(loc) = &prog.u_crt_curvature {
+            gl.uniform1f(Some(loc), self.post_process.crt_curvature);
+        }
+
+        // Draw fullscreen quad
+        gl.disable(GL::DEPTH_TEST);
+        gl.disable(GL::CULL_FACE);
+
+        gl.bind_vertex_array(Some(&mesh.vao));
+        gl.draw_arrays(GL::TRIANGLES, 0, mesh.vertex_count);
+        gl.bind_vertex_array(None);
+
+        // Restore
+        gl.enable(GL::DEPTH_TEST);
+        gl.enable(GL::CULL_FACE);
+        gl.bind_texture(GL::TEXTURE_2D, None);
     }
 
     /// Draw a full-screen color overlay (for damage/pickup flashes).
@@ -638,10 +929,12 @@ fn material_sort_key(m: &MaterialType) -> u8 {
         MaterialType::Parallax { .. } => 0,
         MaterialType::Unlit { .. } => 1,
         MaterialType::Gradient { .. } => 2,
-        MaterialType::Glow { .. } => 3,
-        MaterialType::Ripple { .. } => 4,
-        MaterialType::TronWall { .. } => 5,
-        MaterialType::Sprite { .. } => 6,
+        MaterialType::Sprite { .. } => 3,
+        MaterialType::Water { .. } => 4,
+        MaterialType::Glow { .. } => 5,
+        MaterialType::Ripple { .. } => 6,
+        MaterialType::TronWall { .. } => 7,
+        MaterialType::WhipTrail { .. } => 8,
     }
 }
 

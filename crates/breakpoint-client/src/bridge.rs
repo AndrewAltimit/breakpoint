@@ -216,6 +216,23 @@ fn build_platformer_hud(app: &App) -> serde_json::Value {
         .map(|p| format!("{p:?}"))
         .unwrap_or_default();
 
+    // Powerup timer: find first finite-duration active powerup for local player
+    let (powerup_timer, powerup_max_timer) = local_id
+        .and_then(|id| state.active_powerups.get(&id))
+        .and_then(|pups| {
+            pups.iter()
+                .find(|p| p.remaining.is_finite() && p.remaining > 0.0)
+        })
+        .map(|p| {
+            use breakpoint_core::powerup::PowerUpKind as _;
+            (p.remaining, p.kind.duration())
+        })
+        .unwrap_or((0.0, 0.0));
+
+    // Checkpoint progress
+    let local_checkpoint = local_ps.map(|s| s.last_checkpoint_id).unwrap_or(0);
+    let total_checkpoints = state.course.checkpoint_positions.len();
+
     // Race position: rank by furthest X progress among non-eliminated players
     let mut positions: Vec<(u64, f32)> = state
         .players
@@ -230,6 +247,9 @@ fn build_platformer_hud(app: &App) -> serde_json::Value {
         .unwrap_or(0);
     let total_racers = positions.len();
 
+    // Minimap: compact course + player data (sent each frame but very small)
+    let minimap = build_platformer_minimap(&state, &app.lobby.players);
+
     serde_json::json!({
         "mode": "Race",
         "players": players_json,
@@ -240,8 +260,59 @@ fn build_platformer_hud(app: &App) -> serde_json::Value {
         "localPlayerMaxHp": local_max_hp,
         "localPlayerDeaths": local_deaths,
         "localPlayerPowerup": local_powerup,
+        "powerupTimer": powerup_timer,
+        "powerupMaxTimer": powerup_max_timer,
         "racePosition": race_pos,
         "totalRacers": total_racers,
+        "localCheckpoint": local_checkpoint,
+        "totalCheckpoints": total_checkpoints,
+        "minimap": minimap,
+    })
+}
+
+/// Build compact minimap data for the platformer course.
+/// Returns course dimensions, solid-tile bitmap, and player positions.
+#[cfg(target_family = "wasm")]
+fn build_platformer_minimap(
+    state: &breakpoint_platformer::PlatformerState,
+    lobby_players: &[breakpoint_core::player::Player],
+) -> serde_json::Value {
+    use breakpoint_platformer::course_gen::Tile;
+
+    let course = &state.course;
+
+    // Encode tiles as a compact string: 1 char per tile
+    // '.' = empty, '#' = solid, '~' = water, '^' = spikes, 'F' = finish, 'C' = checkpoint
+    let mut tile_str = String::with_capacity((course.width * course.height) as usize);
+    for &t in &course.tiles {
+        tile_str.push(match t {
+            Tile::StoneBrick | Tile::BreakableWall => '#',
+            Tile::Platform => '-',
+            Tile::Spikes => '^',
+            Tile::Water => '~',
+            Tile::Checkpoint => 'C',
+            Tile::Finish => 'F',
+            _ => '.',
+        });
+    }
+
+    // Player positions on minimap: [x, y, color_index, is_local_unused]
+    let player_dots: Vec<serde_json::Value> = lobby_players
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| {
+            state
+                .players
+                .get(&p.id)
+                .map(|ps| serde_json::json!([ps.x, ps.y, i % 8, !ps.eliminated]))
+        })
+        .collect();
+
+    serde_json::json!({
+        "w": course.width,
+        "h": course.height,
+        "tiles": tile_str,
+        "dots": player_dots,
     })
 }
 

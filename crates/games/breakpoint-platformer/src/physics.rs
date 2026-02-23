@@ -257,10 +257,11 @@ pub fn tick_player(
         player.attack_timer = ATTACK_DURATION;
     }
 
-    // Check if currently on a ladder
+    // Check if currently on a ladder or in water
     let tx = (player.x / TILE_SIZE).floor() as i32;
     let ty = (player.y / TILE_SIZE).floor() as i32;
     let on_ladder = course.get_tile(tx, ty) == Tile::Ladder;
+    let in_water = course.get_tile(tx, ty) == Tile::Water;
 
     // Horizontal movement (sanitize NaN/Inf)
     let move_dir = if input.move_dir.is_finite() {
@@ -296,6 +297,20 @@ pub fn tick_player(
             player.grounded = false;
             // Let normal physics take over below
         }
+    } else if in_water {
+        // Water movement: slower speed, reduced jump, buoyancy
+        use crate::course_gen::{WATER_BUOYANCY, WATER_JUMP_FACTOR, WATER_SPEED_FACTOR};
+        player.vx = move_dir * MOVE_SPEED * WATER_SPEED_FACTOR;
+
+        // Jump (reduced in water)
+        if input.jump && player.jumps_remaining > 0 {
+            player.vy = JUMP_VELOCITY * WATER_JUMP_FACTOR;
+            player.jumps_remaining -= 1;
+            player.grounded = false;
+        }
+
+        // Apply gravity with buoyancy (buoyancy counters ~30% of gravity)
+        player.vy += (GRAVITY + WATER_BUOYANCY) * dt;
     } else {
         // Normal movement
         player.vx = move_dir * MOVE_SPEED;
