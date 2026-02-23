@@ -1073,6 +1073,20 @@ pub fn run() {
 
     let app = Rc::new(RefCell::new(App::new(renderer)));
 
+    // Load platformer sprite atlas
+    {
+        let app_atlas = Rc::clone(&app);
+        let img = web_sys::HtmlImageElement::new().unwrap();
+        let img_clone = img.clone();
+        let onload = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || {
+            app_atlas.borrow_mut().renderer.load_texture(0, &img_clone);
+            web_sys::console::log_1(&"Platformer atlas loaded".into());
+        });
+        img.set_onload(Some(onload.as_ref().unchecked_ref()));
+        onload.forget();
+        img.set_src("assets/sprites/platformer_atlas.png");
+    }
+
     // Attach input listeners
     bridge::attach_input_listeners(&app);
     // Attach JS→Rust bridge callbacks
