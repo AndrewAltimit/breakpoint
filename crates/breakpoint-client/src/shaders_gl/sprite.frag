@@ -5,6 +5,8 @@ in vec2 v_uv;
 in vec3 v_world_pos;
 
 uniform sampler2D u_texture;
+uniform sampler2D u_palette;      // 256x1 palette texture (indexed mode)
+uniform float u_use_palette;      // >0.5 enables indexed palette lookup
 uniform vec4 u_sprite_rect; // atlas sub-region: (u0, v0, u1, v1)
 uniform vec4 u_tint;
 uniform float u_flip_x;
@@ -30,7 +32,17 @@ void main() {
     }
     float v = mix(u_sprite_rect.w, u_sprite_rect.y, v_uv.y);
     vec4 texel = texture(u_texture, vec2(u, v));
-    vec4 color = texel * u_tint;
+    vec4 color;
+    // Indexed palette mode (deferred activation: u_use_palette always 0.0 for now)
+    if (u_use_palette > 0.5) {
+        float index = texel.r;
+        color = texture(u_palette, vec2(index, 0.5));
+        color.a = texel.a;
+    } else {
+        color = texel * u_tint;
+    }
+    // MBAACC-style binary alpha: snap to 0 or 1 for crisp pixel edges
+    color.a = step(0.5, color.a) * u_tint.a;
 
     // Pixel outline: if this pixel is transparent but a neighbor has alpha, draw dark outline
     if (u_outline_width > 0.0 && color.a < 0.01) {

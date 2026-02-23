@@ -338,8 +338,12 @@ impl WeatherSystem {
                 density: self.fog_density,
                 color: Vec4::new(0.15, 0.12, 0.2, 0.5),
             },
-            Transform::from_xyz(self.camera_x, self.camera_y - 3.0, 0.3)
-                .with_scale(Vec3::new(40.0, 8.0, 1.0)),
+            Transform::from_xyz(
+                self.camera_x,
+                self.camera_y - 3.0,
+                crate::game::platformer_render::Z_FOG,
+            )
+            .with_scale(Vec3::new(40.0, 8.0, 1.0)),
         );
     }
 }

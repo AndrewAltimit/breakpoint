@@ -32,6 +32,10 @@ struct ShaderProgram {
     u_texture: Option<WebGlUniformLocation>,
     u_outline_width: Option<WebGlUniformLocation>,
     u_dissolve: Option<WebGlUniformLocation>,
+    /// Palette texture unit (deferred: indexed palette rendering not yet active).
+    #[allow(dead_code)]
+    u_palette: Option<WebGlUniformLocation>,
+    u_use_palette: Option<WebGlUniformLocation>,
     // Parallax shader uniforms
     u_uv_offset: Option<WebGlUniformLocation>,
     u_uv_scale: Option<WebGlUniformLocation>,
@@ -124,6 +128,10 @@ pub struct Renderer {
     context_lost: std::cell::Cell<bool>,
     /// Texture atlases keyed by ID.
     atlases: HashMap<u8, WebGlTexture>,
+    /// Palette textures keyed by ID (256x1 RGBA, for indexed color mode).
+    /// Deferred: not yet populated; infra for future indexed palette rendering.
+    #[allow(dead_code)]
+    palettes: HashMap<u8, WebGlTexture>,
     /// Post-processing FBO (created lazily on first draw with post-fx).
     post_fbo: Option<PostProcessFBO>,
     /// Post-processing settings.
@@ -237,6 +245,7 @@ impl Renderer {
             time: 0.0,
             context_lost,
             atlases: HashMap::new(),
+            palettes: HashMap::new(),
             post_fbo: None,
             post_process: PostProcessConfig::default(),
         };
@@ -258,6 +267,7 @@ impl Renderer {
         self.programs.clear();
         self.meshes.clear();
         self.atlases.clear();
+        self.palettes.clear();
         // Post-process FBO is GPU-side only; invalidated by context loss.
         self.post_fbo = None;
         self.compile_programs()?;
@@ -475,6 +485,8 @@ impl Renderer {
                     tint,
                     flip_x,
                     dissolve,
+                    outline,
+                    blend_mode,
                 } => {
                     // Bind atlas texture
                     gl.active_texture(GL::TEXTURE0);
@@ -487,8 +499,24 @@ impl Renderer {
                     set_vec4(gl, &prog.u_sprite_rect, sprite_rect);
                     set_vec4(gl, &prog.u_tint, tint);
                     set_f32(gl, &prog.u_flip_x, if *flip_x { 1.0 } else { 0.0 });
-                    set_f32(gl, &prog.u_outline_width, 0.0);
+                    set_f32(gl, &prog.u_outline_width, *outline);
                     set_f32(gl, &prog.u_dissolve, *dissolve);
+                    set_f32(gl, &prog.u_use_palette, 0.0);
+                    // Blend mode
+                    match blend_mode {
+                        crate::scene::BlendMode::Normal => {
+                            gl.blend_func(GL::SRC_ALPHA, GL::ONE_MINUS_SRC_ALPHA);
+                            gl.blend_equation(GL::FUNC_ADD);
+                        },
+                        crate::scene::BlendMode::Additive => {
+                            gl.blend_func(GL::SRC_ALPHA, GL::ONE);
+                            gl.blend_equation(GL::FUNC_ADD);
+                        },
+                        crate::scene::BlendMode::Subtractive => {
+                            gl.blend_func(GL::SRC_ALPHA, GL::ONE);
+                            gl.blend_equation(GL::FUNC_REVERSE_SUBTRACT);
+                        },
+                    }
                     // Set lighting uniforms (32 colored lights)
                     let light_count = scene.lighting.lights.len().min(32) as i32;
                     if let Some(loc) = &prog.u_light_count {
@@ -621,6 +649,37 @@ impl Renderer {
                 gl.bind_vertex_array(Some(&mesh.vao));
                 gl.draw_arrays(GL::TRIANGLES, 0, mesh.vertex_count);
             }
+
+            // Restore GL state modified by material-specific setup
+            match &obj.material {
+                MaterialType::Parallax { .. } | MaterialType::FogLayer { .. } => {
+                    gl.depth_mask(true);
+                    gl.enable(GL::CULL_FACE);
+                },
+                MaterialType::Sprite { blend_mode, .. } => {
+                    if !matches!(blend_mode, crate::scene::BlendMode::Normal) {
+                        gl.blend_func(GL::SRC_ALPHA, GL::ONE_MINUS_SRC_ALPHA);
+                        gl.blend_equation(GL::FUNC_ADD);
+                    }
+                    gl.enable(GL::CULL_FACE);
+                },
+                MaterialType::Water { .. } => {
+                    gl.enable(GL::CULL_FACE);
+                },
+                MaterialType::WhipTrail { .. }
+                | MaterialType::SlashArc { .. }
+                | MaterialType::MagicCircle { .. }
+                | MaterialType::GodRays { .. } => {
+                    gl.blend_func(GL::SRC_ALPHA, GL::ONE_MINUS_SRC_ALPHA);
+                    gl.enable(GL::CULL_FACE);
+                    gl.enable(GL::DEPTH_TEST);
+                },
+                MaterialType::HealthBar { .. } => {
+                    gl.enable(GL::CULL_FACE);
+                    gl.enable(GL::DEPTH_TEST);
+                },
+                _ => {},
+            }
         }
 
         // Re-enable state that may have been disabled by material batches
@@ -742,6 +801,8 @@ impl Renderer {
                 u_texture: self.gl.get_uniform_location(&program, "u_texture"),
                 u_outline_width: self.gl.get_uniform_location(&program, "u_outline_width"),
                 u_dissolve: self.gl.get_uniform_location(&program, "u_dissolve"),
+                u_palette: self.gl.get_uniform_location(&program, "u_palette"),
+                u_use_palette: self.gl.get_uniform_location(&program, "u_use_palette"),
                 u_uv_offset: self.gl.get_uniform_location(&program, "u_uv_offset"),
                 u_uv_scale: self.gl.get_uniform_location(&program, "u_uv_scale"),
                 u_depth: self.gl.get_uniform_location(&program, "u_depth"),
@@ -1092,23 +1153,24 @@ fn set_mat4(gl: &GL, loc: &Option<WebGlUniformLocation>, m: &Mat4) {
 }
 
 /// Sort key for grouping objects by shader program (minimizes program switches).
-/// Parallax renders first (background), sprites last.
+/// Parallax renders first (background), then world geometry, sprites, VFX, fog, HUD.
+/// Wide gaps allow future layer insertion without renumbering.
 fn material_sort_key(m: &MaterialType) -> u8 {
     match m {
         MaterialType::Parallax { .. } => 0,
-        MaterialType::Unlit { .. } => 1,
-        MaterialType::Gradient { .. } => 2,
-        MaterialType::Sprite { .. } => 3,
-        MaterialType::Water { .. } => 4,
-        MaterialType::Glow { .. } => 5,
-        MaterialType::Ripple { .. } => 6,
-        MaterialType::TronWall { .. } => 7,
-        MaterialType::WhipTrail { .. } => 8,
-        MaterialType::SlashArc { .. } => 9,
-        MaterialType::MagicCircle { .. } => 10,
-        MaterialType::GodRays { .. } => 11,
-        MaterialType::FogLayer { .. } => 12,
-        MaterialType::HealthBar { .. } => 13,
+        MaterialType::Unlit { .. } => 10,
+        MaterialType::Gradient { .. } => 15,
+        MaterialType::Water { .. } => 20,
+        MaterialType::Sprite { .. } => 30,
+        MaterialType::Glow { .. } => 35,
+        MaterialType::Ripple { .. } => 40,
+        MaterialType::TronWall { .. } => 45,
+        MaterialType::WhipTrail { .. } => 50,
+        MaterialType::SlashArc { .. } => 52,
+        MaterialType::MagicCircle { .. } => 54,
+        MaterialType::GodRays { .. } => 56,
+        MaterialType::FogLayer { .. } => 60,
+        MaterialType::HealthBar { .. } => 70,
     }
 }
 

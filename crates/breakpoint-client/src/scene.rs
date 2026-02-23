@@ -67,6 +67,15 @@ pub enum MeshType {
     Quad,
 }
 
+/// Blend mode for sprite rendering (MBAACC-style).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BlendMode {
+    #[default]
+    Normal,
+    Additive,
+    Subtractive,
+}
+
 /// Material types matching the GLSL shader programs.
 #[derive(Debug, Clone, Copy)]
 pub enum MaterialType {
@@ -98,6 +107,10 @@ pub enum MaterialType {
         flip_x: bool,
         /// Dissolve amount: 0.0 = solid, 1.0 = fully dissolved. Used for death effects.
         dissolve: f32,
+        /// Outline width: >0.0 enables dark pixel outline (MBAACC-style).
+        outline: f32,
+        /// Blend mode: Normal, Additive, or Subtractive.
+        blend_mode: BlendMode,
     },
     /// Parallax background layer (scrolling textured quad).
     Parallax {

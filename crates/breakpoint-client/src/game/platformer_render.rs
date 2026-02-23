@@ -31,6 +31,17 @@ const BG_ATLAS_ID: u8 = 1;
 /// Sprite atlas ID.
 const ATLAS_ID: u8 = 0;
 
+// MBAACC-style Z-layer constants (painter's algorithm).
+const Z_BG_TILES: f32 = -1.0;
+const Z_WATER: f32 = -0.8;
+const Z_SHADOWS: f32 = -0.5;
+const Z_ENEMIES: f32 = 0.0;
+const Z_PLAYERS: f32 = 0.1;
+const Z_EFFECTS: f32 = 0.5;
+/// Fog layer Z (used by weather system).
+pub const Z_FOG: f32 = 1.0;
+const Z_HUD: f32 = 2.0;
+
 /// Per-player visual state for squash/stretch animation.
 struct PlayerVisualState {
     prev_anim: breakpoint_platformer::physics::AnimState,
@@ -133,10 +144,13 @@ fn animations() -> &'static HashMap<&'static str, SpriteAnimation> {
 struct SpriteParams {
     x: f32,
     y: f32,
+    z: f32,
     w: f32,
     h: f32,
     tint: Vec4,
     flip_x: bool,
+    outline: f32,
+    blend_mode: crate::scene::BlendMode,
 }
 
 /// Helper: add a sprite quad from a SpriteRegion directly.
@@ -159,12 +173,15 @@ fn add_sprite_region_with_dissolve(
             tint: params.tint,
             flip_x: params.flip_x,
             dissolve,
+            outline: params.outline,
+            blend_mode: params.blend_mode,
         },
-        Transform::from_xyz(params.x, params.y, 0.0).with_scale(Vec3::new(params.w, params.h, 1.0)),
+        Transform::from_xyz(params.x, params.y, params.z)
+            .with_scale(Vec3::new(params.w, params.h, 1.0)),
     );
 }
 
-/// Helper: add a sprite quad by name.
+/// Helper: add a sprite quad by name (defaults: z=Z_BG_TILES, no outline, normal blend).
 fn add_sprite(scene: &mut Scene, name: &str, x: f32, y: f32, w: f32, h: f32, tint: Vec4) {
     let region = atlas().get_or_default(name);
     add_sprite_region(
@@ -173,10 +190,13 @@ fn add_sprite(scene: &mut Scene, name: &str, x: f32, y: f32, w: f32, h: f32, tin
         &SpriteParams {
             x,
             y,
+            z: Z_BG_TILES,
             w,
             h,
             tint,
             flip_x: false,
+            outline: 0.0,
+            blend_mode: crate::scene::BlendMode::Normal,
         },
     );
 }
@@ -521,7 +541,7 @@ fn render_tiles(
                         depth,
                         wave_speed: 3.0,
                     },
-                    Transform::from_xyz(wx, wy, 0.05)
+                    Transform::from_xyz(wx, wy, Z_WATER)
                         .with_scale(Vec3::new(tile_size, tile_size, 1.0)),
                 );
                 continue;
@@ -539,10 +559,13 @@ fn render_tiles(
                 &SpriteParams {
                     x: wx,
                     y: wy,
+                    z: Z_BG_TILES,
                     w: tile_size,
                     h: tile_size,
                     tint: white,
                     flip_x: false,
+                    outline: 0.0,
+                    blend_mode: crate::scene::BlendMode::Normal,
                 },
             );
         }
@@ -580,16 +603,36 @@ fn render_enemies(
         } else {
             (enemy_tint, 0.0)
         };
+        // Shadow underneath enemy
+        add_sprite_region(
+            scene,
+            &region,
+            &SpriteParams {
+                x: enemy.x,
+                y: enemy.y - tile_size * 0.4,
+                z: Z_SHADOWS,
+                w: tile_size * 1.2,
+                h: tile_size * 2.0 * 0.3,
+                tint: Vec4::new(0.0, 0.0, 0.0, 0.35),
+                flip_x: !enemy.facing_right,
+                outline: 0.0,
+                blend_mode: crate::scene::BlendMode::Normal,
+            },
+        );
+        // Enemy sprite
         add_sprite_region_with_dissolve(
             scene,
             &region,
             &SpriteParams {
                 x: enemy.x,
                 y: enemy.y,
+                z: Z_ENEMIES,
                 w: tile_size,
-                h: tile_size * 2.5,
+                h: tile_size * 2.0,
                 tint,
                 flip_x: !enemy.facing_right,
+                outline: 1.0,
+                blend_mode: crate::scene::BlendMode::Normal,
             },
             dissolve,
         );
@@ -621,10 +664,13 @@ fn render_projectiles(
                 &SpriteParams {
                     x: proj.x + offset,
                     y: proj.y,
+                    z: Z_EFFECTS,
                     w: tile_size * 0.5,
                     h: tile_size * 0.5,
                     tint: Vec4::new(1.0, 0.3, 0.9, alpha),
                     flip_x: false,
+                    outline: 0.0,
+                    blend_mode: crate::scene::BlendMode::Additive,
                 },
             );
         }
@@ -650,10 +696,13 @@ fn render_projectiles(
             &SpriteParams {
                 x: proj.x,
                 y: proj.y,
+                z: Z_EFFECTS,
                 w: tile_size * 0.5,
                 h: tile_size * 0.5,
                 tint: Vec4::new(1.0, 0.3, 0.9, 1.0),
                 flip_x: false,
+                outline: 0.0,
+                blend_mode: crate::scene::BlendMode::Normal,
             },
         );
     }
@@ -701,17 +750,37 @@ fn render_players(
         // Squash/stretch scaling based on movement state
         let (sx, sy) = squash_stretch_scale(player, *pid, dt);
 
-        // 32x64 sprites: render at 2.5x tile height for taller characters
+        // Shadow underneath player
+        add_sprite_region(
+            scene,
+            &region,
+            &SpriteParams {
+                x: player.x,
+                y: player.y - tile_size * 0.4,
+                z: Z_SHADOWS,
+                w: tile_size * 1.2,
+                h: tile_size * 2.0 * 0.3,
+                tint: Vec4::new(0.0, 0.0, 0.0, 0.35),
+                flip_x: !player.facing_right,
+                outline: 0.0,
+                blend_mode: crate::scene::BlendMode::Normal,
+            },
+        );
+
+        // 16x32 sprites: render at 2.0x tile height
         add_sprite_region(
             scene,
             &region,
             &SpriteParams {
                 x: player.x,
                 y: player.y,
+                z: Z_PLAYERS,
                 w: tile_size * sx,
-                h: tile_size * 2.5 * sy,
+                h: tile_size * 2.0 * sy,
                 tint,
                 flip_x: !player.facing_right,
+                outline: 1.0,
+                blend_mode: crate::scene::BlendMode::Normal,
             },
         );
 
@@ -737,10 +806,13 @@ fn render_death_respawn(
         &SpriteParams {
             x: player.x,
             y: player.y,
+            z: Z_PLAYERS,
             w: tile_size,
-            h: tile_size * 2.5,
+            h: tile_size * 2.0,
             tint: Vec4::new(1.0, 1.0, 1.0, fade_alpha),
             flip_x: !player.facing_right,
+            outline: 1.0,
+            blend_mode: crate::scene::BlendMode::Normal,
         },
     );
 }
@@ -802,7 +874,7 @@ fn render_player_effects(
                     color: circle_color,
                 },
                 Transform::from_xyz(player.x, player.y - tile_size * 0.3, 0.12)
-                    .with_scale(Vec3::new(tile_size * 2.5, tile_size * 2.5, 1.0)),
+                    .with_scale(Vec3::new(tile_size * 2.0, tile_size * 2.0, 1.0)),
             );
         }
     }
@@ -820,10 +892,13 @@ fn render_player_effects(
                 &SpriteParams {
                     x: player.x + offset,
                     y: player.y,
+                    z: Z_EFFECTS,
                     w: tile_size,
-                    h: tile_size * 2.5,
+                    h: tile_size * 2.0,
                     tint: Vec4::new(0.3, 1.0, 0.4, alpha),
                     flip_x: !player.facing_right,
+                    outline: 0.0,
+                    blend_mode: crate::scene::BlendMode::Additive,
                 },
             );
         }
@@ -884,7 +959,7 @@ fn render_player_hearts(
             fill,
             color: final_color,
         },
-        Transform::from_xyz(player.x, bar_y, 0.3).with_scale(Vec3::new(bar_w, bar_h, 1.0)),
+        Transform::from_xyz(player.x, bar_y, Z_HUD).with_scale(Vec3::new(bar_w, bar_h, 1.0)),
     );
 }
 

@@ -156,6 +156,8 @@ impl ParticleSystem {
                     tint,
                     flip_x: false,
                     dissolve: 0.0,
+                    outline: 0.0,
+                    blend_mode: crate::scene::BlendMode::Normal,
                 },
                 Transform::from_xyz(p.x, p.y, 0.1).with_scale(glam::Vec3::new(p.size, p.size, 1.0)),
             );

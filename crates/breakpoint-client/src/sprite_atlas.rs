@@ -94,56 +94,56 @@ impl SpriteAnimation {
 }
 
 // ================================================================
-// Atlas layout constants (2048x1024)
+// Atlas layout constants (1024x512)
 // ================================================================
 
 /// Atlas dimensions.
-pub const ATLAS_W: u32 = 2048;
-pub const ATLAS_H: u32 = 1024;
+pub const ATLAS_W: u32 = 1024;
+pub const ATLAS_H: u32 = 512;
 
 // Y-range assignments:
-// 0-127:   Player sprites (32x64) — 2 rows of 64 columns
-// 128-319: Enemy sprites (32x64) — 3 rows of 64 columns
-// 320-575: Tile sprites (16x16) — per-theme, 16 rows x 128 cols
-// 576-703: UI, props, HUD, power-ups (16x16 & 32x32)
-// 704-831: Particles + combat VFX (8x8 & 64x64)
-// 832-1023: Reserved (caustic tex, foam, LUT strips)
+// 0-63:    Player sprites (16x32) — 2 rows of 64 columns
+// 64-159:  Enemy sprites (16x32) — 3 rows of 64 columns
+// 160-287: Tile sprites (16x16) — per-theme, 8 rows x 64 cols
+// 288-351: UI, props, HUD, power-ups (16x16 & 32x32)
+// 352-415: Particles + combat VFX (8x8 & 32x32)
+// 416-511: Reserved (caustic tex, foam, LUT strips)
 
 /// Build the platformer sprite sheet with all named regions.
-/// Atlas is 2048x1024 with 32x64 characters, 16x16 tiles, and 8x8 particles.
+/// Atlas is 1024x512 with 16x32 characters, 16x16 tiles, and 8x8 particles.
 pub fn build_platformer_atlas() -> SpriteSheet {
     let mut sheet = SpriteSheet::new(ATLAS_W, ATLAS_H);
 
-    // ── Player sprites (32x64) — Y 0-127 ───────────────────
+    // ── Player sprites (16x32) — Y 0-63 ────────────────────
     add_player_sprites(&mut sheet);
 
-    // ── Enemy sprites (32x64) — Y 128-319 ──────────────────
+    // ── Enemy sprites (16x32) — Y 64-159 ─────────────────
     add_enemy_sprites(&mut sheet);
 
-    // ── Tile sprites (16x16) — Y 320-575 ──────────────────
+    // ── Tile sprites (16x16) — Y 160-287 ─────────────────
     add_tile_sprites(&mut sheet);
 
-    // ── Power-ups, HUD, props (16x16 & 32x32) — Y 576-703 ─
+    // ── Power-ups, HUD, props (16x16 & 32x32) — Y 288-351 ─
     add_ui_sprites(&mut sheet);
 
-    // ── Particle + VFX sprites (8x8 & 64x64) — Y 704-831 ──
+    // ── Particle + VFX sprites (8x8 & 32x32) — Y 352-415 ──
     add_particle_sprites(&mut sheet);
 
-    // ── Combat VFX sprites (64x64) — Y 704-831 ─────────────
+    // ── Combat VFX sprites (32x32) — Y 384-415 ─────────────
     add_combat_vfx_sprites(&mut sheet);
 
     sheet
 }
 
 // ================================================================
-// Player sprites (32x64) — Y 0-127
-// Row 0 (Y 0-63):  idle(8f), walk(8f), run(8f), jump(4f), fall(4f)
-// Row 1 (Y 64-127): attack(8f), hurt(4f), death(6f), wall_slide(3f), crouch(3f), dash(4f)
+// Player sprites (16x32) — Y 0-63
+// Row 0 (Y 0-31):  idle(8f), walk(8f), run(8f), jump(4f), fall(4f)
+// Row 1 (Y 32-63): attack(8f), hurt(4f), death(6f), wall_slide(3f), crouch(3f), dash(4f)
 // ================================================================
 
 fn add_player_sprites(sheet: &mut SpriteSheet) {
-    let w = 32u32;
-    let h = 64u32;
+    let w = 16u32;
+    let h = 32u32;
 
     // Row 0 (Y=0)
     let mut x = 0u32;
@@ -317,22 +317,22 @@ fn player_frame_name(prefix: &str, idx: u32) -> &'static str {
 }
 
 // ================================================================
-// Enemy sprites (32x64) — Y 128-319
-// Row 0 (Y 128-191): Skeleton walk(4f), attack(3f), death(4f)
+// Enemy sprites (16x32) — Y 64-159
+// Row 0 (Y 64-95):   Skeleton walk(4f), attack(3f), death(4f)
 //                     Bat fly(4f), death(2f)
-// Row 1 (Y 192-255): Knight walk(4f), attack(3f), death(4f)
+// Row 1 (Y 96-127):  Knight walk(4f), attack(3f), death(4f)
 //                     Medusa float(4f), death(2f)
-// Row 2 (Y 256-319): Ghost drift(4f), phase(3f), death(3f)
+// Row 2 (Y 128-159): Ghost drift(4f), phase(3f), death(3f)
 //                     Gargoyle perch(2f), swoop(4f), death(3f)
 //                     Projectile(3f)
 // ================================================================
 
 fn add_enemy_sprites(sheet: &mut SpriteSheet) {
-    let w = 32u32;
-    let h = 64u32;
+    let w = 16u32;
+    let h = 32u32;
 
-    // Row 0 (Y=128): Skeleton + Bat
-    let y0 = 128u32;
+    // Row 0 (Y=64): Skeleton + Bat
+    let y0 = 64u32;
     let mut x = 0u32;
 
     // Skeleton walk: 4 frames
@@ -369,8 +369,8 @@ fn add_enemy_sprites(sheet: &mut SpriteSheet) {
         sheet.add(name, x + i * w, y0, w, h);
     }
 
-    // Row 1 (Y=192): Knight + Medusa
-    let y1 = 192u32;
+    // Row 1 (Y=96): Knight + Medusa
+    let y1 = 96u32;
     x = 0;
 
     // Knight walk: 4 frames
@@ -407,8 +407,8 @@ fn add_enemy_sprites(sheet: &mut SpriteSheet) {
         sheet.add(name, x + i * w, y1, w, h);
     }
 
-    // Row 2 (Y=256): Ghost + Gargoyle + Projectile
-    let y2 = 256u32;
+    // Row 2 (Y=128): Ghost + Gargoyle + Projectile
+    let y2 = 128u32;
     x = 0;
 
     // Ghost drift: 4 frames
@@ -551,16 +551,16 @@ fn enemy_frame_name(prefix: &str, idx: u32) -> &'static str {
 }
 
 // ================================================================
-// Tile sprites (16x16) — Y 320-575
+// Tile sprites (16x16) — Y 160-287
 // 4 visual groups × 16 bitmask tiles + shared tiles
 //
-// Layout at Y=320:
-//   Row 0-1 (Y 320-351): Castle Interior tiles (16 bitmask + decoratives)
-//   Row 2-3 (Y 352-383): Underground tiles (16 bitmask + decoratives)
-//   Row 4-5 (Y 384-415): Sacred tiles (16 bitmask + decoratives)
-//   Row 6-7 (Y 416-447): Fortress tiles (16 bitmask + decoratives)
-//   Row 8-9 (Y 448-479): Shared tiles (platform, spikes, checkpoint, etc.)
-//   Row 10-15 (Y 480-575): Decorative tiles, theme-specific props
+// Layout at Y=160:
+//   Row 0 (Y 160-175): Castle Interior tiles (16 bitmask + decoratives)
+//   Row 1 (Y 176-191): Underground tiles (16 bitmask + decoratives)
+//   Row 2 (Y 192-207): Sacred tiles (16 bitmask + decoratives)
+//   Row 3 (Y 208-223): Fortress tiles (16 bitmask + decoratives)
+//   Row 4 (Y 224-239): Shared tiles (platform, spikes, checkpoint, etc.)
+//   Row 5-7 (Y 240-287): Decorative tiles, theme-specific props
 // ================================================================
 
 /// Tileset visual group for theme-based tile selection.
@@ -577,37 +577,37 @@ fn add_tile_sprites(sheet: &mut SpriteSheet) {
 
     // Per-group bitmask tiles: 16 tiles per group (4-neighbor: UDLR = 16 combos)
     // Each group starts at a known Y offset from the tile region base (320)
-    add_bitmask_tiles(sheet, "castle", 0, 320, tile);
-    add_bitmask_tiles(sheet, "underground", 0, 352, tile);
-    add_bitmask_tiles(sheet, "sacred", 0, 384, tile);
-    add_bitmask_tiles(sheet, "fortress", 0, 416, tile);
+    add_bitmask_tiles(sheet, "castle", 0, 160, tile);
+    add_bitmask_tiles(sheet, "underground", 0, 176, tile);
+    add_bitmask_tiles(sheet, "sacred", 0, 192, tile);
+    add_bitmask_tiles(sheet, "fortress", 0, 208, tile);
 
     // Theme-specific decorative tiles (after bitmask tiles in each row)
     let deco_x = 16 * tile; // X=256
 
     // Castle decoratives
-    sheet.add("castle_bookshelf", deco_x, 320, tile, tile);
-    sheet.add("castle_banner", deco_x + tile, 320, tile, tile);
-    sheet.add("castle_pillar_top", deco_x + 2 * tile, 320, tile, tile);
-    sheet.add("castle_pillar_mid", deco_x + 3 * tile, 320, tile, tile);
+    sheet.add("castle_bookshelf", deco_x, 160, tile, tile);
+    sheet.add("castle_banner", deco_x + tile, 160, tile, tile);
+    sheet.add("castle_pillar_top", deco_x + 2 * tile, 160, tile, tile);
+    sheet.add("castle_pillar_mid", deco_x + 3 * tile, 160, tile, tile);
 
     // Underground decoratives
-    sheet.add("underground_coffin", deco_x, 352, tile, tile);
-    sheet.add("underground_bones", deco_x + tile, 352, tile, tile);
-    sheet.add("underground_mushroom", deco_x + 2 * tile, 352, tile, tile);
+    sheet.add("underground_coffin", deco_x, 176, tile, tile);
+    sheet.add("underground_bones", deco_x + tile, 176, tile, tile);
+    sheet.add("underground_mushroom", deco_x + 2 * tile, 176, tile, tile);
 
     // Sacred decoratives
-    sheet.add("sacred_altar", deco_x, 384, tile, tile);
-    sheet.add("sacred_candle", deco_x + tile, 384, tile, tile);
-    sheet.add("sacred_rune", deco_x + 2 * tile, 384, tile, tile);
+    sheet.add("sacred_altar", deco_x, 192, tile, tile);
+    sheet.add("sacred_candle", deco_x + tile, 192, tile, tile);
+    sheet.add("sacred_rune", deco_x + 2 * tile, 192, tile, tile);
 
     // Fortress decoratives
-    sheet.add("fortress_weapon_rack", deco_x, 416, tile, tile);
-    sheet.add("fortress_anvil", deco_x + tile, 416, tile, tile);
-    sheet.add("fortress_shield", deco_x + 2 * tile, 416, tile, tile);
+    sheet.add("fortress_weapon_rack", deco_x, 208, tile, tile);
+    sheet.add("fortress_anvil", deco_x + tile, 208, tile, tile);
+    sheet.add("fortress_shield", deco_x + 2 * tile, 208, tile, tile);
 
-    // Shared tiles (Y=448)
-    let sy = 448u32;
+    // Shared tiles (Y=224)
+    let sy = 224u32;
     let mut x = 0u32;
 
     // Platform: 3 variants
@@ -838,12 +838,12 @@ fn add_legacy_stone_aliases(sheet: &mut SpriteSheet) {
 }
 
 // ================================================================
-// UI / Power-up / Props sprites — Y 576-703
+// UI / Power-up / Props sprites — Y 288-351
 // ================================================================
 
 fn add_ui_sprites(sheet: &mut SpriteSheet) {
     let tile = 16u32;
-    let y = 576u32;
+    let y = 288u32;
 
     // Power-ups (16x16)
     sheet.add("powerup_holy_water", 0, y, tile, tile);
@@ -869,11 +869,11 @@ fn add_ui_sprites(sheet: &mut SpriteSheet) {
 }
 
 // ================================================================
-// Particle sprites (8x8) — Y 704-767
+// Particle sprites (8x8) — Y 352-383
 // ================================================================
 
 fn add_particle_sprites(sheet: &mut SpriteSheet) {
-    let y = 704u32;
+    let y = 352u32;
     let mut x = 0u32;
 
     for i in 0..4u32 {
@@ -959,8 +959,8 @@ fn add_particle_sprites(sheet: &mut SpriteSheet) {
         sheet.add(name, x + i * 8, y, 8, 8);
     }
 
-    // Ambient particle types (Y=712)
-    let ay = 712u32;
+    // Ambient particle types (Y=356)
+    let ay = 356u32;
     sheet.add("particle_sparkle_0", 0, ay, 8, 8);
     sheet.add("particle_sparkle_1", 8, ay, 8, 8);
     sheet.add("particle_snowflake_0", 16, ay, 8, 8);
@@ -970,12 +970,12 @@ fn add_particle_sprites(sheet: &mut SpriteSheet) {
 }
 
 // ================================================================
-// Combat VFX sprites (64x64) — Y 768-831
+// Combat VFX sprites (32x32) — Y 384-415
 // ================================================================
 
 fn add_combat_vfx_sprites(sheet: &mut SpriteSheet) {
-    let vfx_y = 768u32;
-    let size = 64u32;
+    let vfx_y = 384u32;
+    let size = 32u32;
     let mut x = 0u32;
 
     // Slash arc VFX: 5 frames
@@ -1499,11 +1499,11 @@ mod tests {
     fn sprite_sheet_uv_coords() {
         let sheet = build_platformer_atlas();
         let r = sheet.get("player_idle_0").unwrap();
-        // 0,0 -> 32,64 on 2048x1024 atlas
+        // 0,0 -> 16,32 on 1024x512 atlas
         assert!((r.u0 - 0.0).abs() < 1e-6);
         assert!((r.v0 - 0.0).abs() < 1e-6);
-        assert!((r.u1 - 32.0 / 2048.0).abs() < 1e-6);
-        assert!((r.v1 - 64.0 / 1024.0).abs() < 1e-6);
+        assert!((r.u1 - 16.0 / 1024.0).abs() < 1e-6);
+        assert!((r.v1 - 32.0 / 512.0).abs() < 1e-6);
     }
 
     #[test]
@@ -1680,9 +1680,9 @@ mod tests {
     }
 
     #[test]
-    fn atlas_dimensions_are_2048x1024() {
-        assert_eq!(ATLAS_W, 2048);
-        assert_eq!(ATLAS_H, 1024);
+    fn atlas_dimensions_are_1024x512() {
+        assert_eq!(ATLAS_W, 1024);
+        assert_eq!(ATLAS_H, 512);
     }
 
     #[test]
