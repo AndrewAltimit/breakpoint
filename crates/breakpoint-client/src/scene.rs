@@ -179,6 +179,14 @@ pub struct SceneLighting {
     pub grade_contrast: f32,
     /// Per-room saturation (1.0=neutral).
     pub saturation: f32,
+    /// GBA-style color ramp: shadow color (RGB). Zero = disabled.
+    pub ramp_shadow: [f32; 3],
+    /// GBA-style color ramp: midtone color (RGB).
+    pub ramp_mid: [f32; 3],
+    /// GBA-style color ramp: highlight color (RGB).
+    pub ramp_highlight: [f32; 3],
+    /// GBA-style posterization bit depth (0.0=off, 31.0=5-bit GBA).
+    pub posterize: f32,
 }
 
 /// A renderable object in the scene.
@@ -212,6 +220,10 @@ impl Scene {
                 grade_highlights: [1.0, 1.0, 1.0],
                 grade_contrast: 1.0,
                 saturation: 1.0,
+                ramp_shadow: [0.0, 0.0, 0.0],
+                ramp_mid: [0.0, 0.0, 0.0],
+                ramp_highlight: [0.0, 0.0, 0.0],
+                posterize: 0.0,
             },
         }
     }

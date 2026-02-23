@@ -48,6 +48,11 @@ struct ShaderProgram {
     u_light_count: Option<WebGlUniformLocation>,
     u_ambient: Option<WebGlUniformLocation>,
     u_ambient_color: Option<WebGlUniformLocation>,
+    // GBA-style color ramp uniforms
+    u_ramp_shadow: Option<WebGlUniformLocation>,
+    u_ramp_mid: Option<WebGlUniformLocation>,
+    u_ramp_highlight: Option<WebGlUniformLocation>,
+    u_posterize: Option<WebGlUniformLocation>,
     // Whip trail uniforms
     u_arc_progress: Option<WebGlUniformLocation>,
     // Post-process uniforms
@@ -527,6 +532,20 @@ impl Renderer {
                         let ac = &scene.lighting.ambient_color;
                         gl.uniform3f(Some(loc), ac[0], ac[1], ac[2]);
                     }
+                    // GBA-style color ramp + posterization
+                    if let Some(loc) = &prog.u_ramp_shadow {
+                        let rs = &scene.lighting.ramp_shadow;
+                        gl.uniform3f(Some(loc), rs[0], rs[1], rs[2]);
+                    }
+                    if let Some(loc) = &prog.u_ramp_mid {
+                        let rm = &scene.lighting.ramp_mid;
+                        gl.uniform3f(Some(loc), rm[0], rm[1], rm[2]);
+                    }
+                    if let Some(loc) = &prog.u_ramp_highlight {
+                        let rh = &scene.lighting.ramp_highlight;
+                        gl.uniform3f(Some(loc), rh[0], rh[1], rh[2]);
+                    }
+                    set_f32(gl, &prog.u_posterize, scene.lighting.posterize);
                     for (i, light) in scene.lighting.lights.iter().take(32).enumerate() {
                         if let Some(loc) = prog.u_lights.get(i).and_then(|l| l.as_ref()) {
                             gl.uniform4f(Some(loc), light[0], light[1], light[2], light[3]);
@@ -812,6 +831,10 @@ impl Renderer {
                 u_light_count: self.gl.get_uniform_location(&program, "u_light_count"),
                 u_ambient: self.gl.get_uniform_location(&program, "u_ambient"),
                 u_ambient_color: self.gl.get_uniform_location(&program, "u_ambient_color"),
+                u_ramp_shadow: self.gl.get_uniform_location(&program, "u_ramp_shadow"),
+                u_ramp_mid: self.gl.get_uniform_location(&program, "u_ramp_mid"),
+                u_ramp_highlight: self.gl.get_uniform_location(&program, "u_ramp_highlight"),
+                u_posterize: self.gl.get_uniform_location(&program, "u_posterize"),
                 u_arc_progress: self.gl.get_uniform_location(&program, "u_arc_progress"),
                 u_scene_texture: self.gl.get_uniform_location(&program, "u_scene"),
                 u_scanline_intensity: self

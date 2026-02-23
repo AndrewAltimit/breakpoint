@@ -242,7 +242,7 @@ fn spawn_ambient_particle(
             p.vx = (fastrand::f32() - 0.5) * 0.3;
             p.vy = (fastrand::f32() - 0.5) * 0.2;
             p.size = 0.04 + fastrand::f32() * 0.03;
-            p.color = Vec4::new(0.6, 0.5, 0.4, 0.3);
+            p.color = Vec4::new(0.5, 0.4, 0.35, 0.25);
         },
         AmbientType::GoldenSparkles => {
             p.vx = (fastrand::f32() - 0.5) * 0.2;
@@ -254,7 +254,7 @@ fn spawn_ambient_particle(
             p.vx = (fastrand::f32() - 0.5) * 0.4;
             p.vy = 0.5 + fastrand::f32() * 0.8;
             p.size = 0.03 + fastrand::f32() * 0.03;
-            p.color = Vec4::new(1.0, 0.5, 0.2, 0.6);
+            p.color = Vec4::new(1.0, 0.45, 0.15, 0.65);
         },
         AmbientType::Snowflakes => {
             p.vx = 0.3 + fastrand::f32() * 0.5;
@@ -336,7 +336,7 @@ impl WeatherSystem {
             MeshType::Quad,
             MaterialType::FogLayer {
                 density: self.fog_density,
-                color: Vec4::new(0.15, 0.12, 0.2, 0.5),
+                color: Vec4::new(0.08, 0.06, 0.12, 0.5),
             },
             Transform::from_xyz(
                 self.camera_x,

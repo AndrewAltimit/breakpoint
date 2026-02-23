@@ -386,9 +386,11 @@ impl App {
             self.renderer.post_process.grade_highlights = self.scene.lighting.grade_highlights;
             self.renderer.post_process.grade_contrast = self.scene.lighting.grade_contrast;
             self.renderer.post_process.saturation = self.scene.lighting.saturation;
-            // Film grain for dark rooms
-            self.renderer.post_process.film_grain = if self.scene.lighting.ambient < 0.5 {
-                0.03
+            // Graduated film grain for dark rooms
+            self.renderer.post_process.film_grain = if self.scene.lighting.ambient < 0.3 {
+                0.04
+            } else if self.scene.lighting.ambient < 0.5 {
+                0.02
             } else {
                 0.0
             };

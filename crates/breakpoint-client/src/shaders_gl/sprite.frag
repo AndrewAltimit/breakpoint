@@ -21,6 +21,12 @@ uniform float u_fog_density;      // ground fog density
 uniform float u_outline_width;    // >0 enables dark pixel outline on characters
 uniform float u_dissolve;         // 0.0=solid, 1.0=fully dissolved (death effect)
 
+// GBA-style color ramp (all zero = disabled)
+uniform vec3 u_ramp_shadow;      // dark palette color
+uniform vec3 u_ramp_mid;         // midtone palette color
+uniform vec3 u_ramp_highlight;   // bright palette color
+uniform float u_posterize;       // 0.0=off, 31.0=GBA 5-bit depth
+
 out vec4 frag_color;
 
 void main() {
@@ -54,7 +60,7 @@ void main() {
         max_a = max(max_a, texture(u_texture, uv_pos + vec2(0.0, texel_size.y)).a);
         max_a = max(max_a, texture(u_texture, uv_pos - vec2(0.0, texel_size.y)).a);
         if (max_a > 0.5) {
-            frag_color = vec4(0.05, 0.02, 0.08, 0.9);
+            frag_color = vec4(0.08, 0.04, 0.12, 0.9);
             return;
         }
         discard;
@@ -68,6 +74,20 @@ void main() {
     if (u_dissolve > 0.0) {
         float noise = fract(sin(dot(floor(v_uv * 40.0), vec2(12.9898, 78.233))) * 43758.5453);
         if (noise < u_dissolve) discard;
+    }
+
+    // GBA-style color ramp: map luminance through a 3-point palette
+    bool ramp_active = (u_ramp_shadow.r + u_ramp_shadow.g + u_ramp_shadow.b) > 0.01;
+    if (ramp_active) {
+        float lum = dot(color.rgb, vec3(0.299, 0.587, 0.114));
+        vec3 ramped;
+        if (lum < 0.5) {
+            ramped = mix(u_ramp_shadow, u_ramp_mid, lum * 2.0);
+        } else {
+            ramped = mix(u_ramp_mid, u_ramp_highlight, (lum - 0.5) * 2.0);
+        }
+        // Blend ramp with original tinted color to preserve some texture detail
+        color.rgb = mix(color.rgb, ramped, 0.7);
     }
 
     // Apply dynamic lighting if lights are present
@@ -86,9 +106,14 @@ void main() {
         color.rgb *= clamp(light, vec3(0.0), vec3(1.5));
     }
 
+    // GBA 5-bit posterization: reduces color depth for authentic banding
+    if (u_posterize > 0.5) {
+        color.rgb = floor(color.rgb * u_posterize) / u_posterize;
+    }
+
     // Ground fog effect
     if (u_fog_density > 0.01) {
-        vec3 fog_color = vec3(0.15, 0.12, 0.2);
+        vec3 fog_color = vec3(0.08, 0.06, 0.12);
         float fog = smoothstep(0.0, 3.0, v_world_pos.y);
         color.rgb = mix(fog_color, color.rgb, mix(1.0 - u_fog_density * 0.5, 1.0, fog));
     }

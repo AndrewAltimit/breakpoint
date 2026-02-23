@@ -16,14 +16,14 @@ use crate::theme::Theme;
 /// Predefined player color palettes for multiplayer differentiation.
 /// Each entry: (body_r, body_g, body_b) — applied as a tint multiplier.
 const PLAYER_PALETTES: [[f32; 3]; 8] = [
-    [1.0, 1.0, 1.0],  // P1: white (default)
-    [0.6, 0.8, 1.0],  // P2: ice blue
-    [1.0, 0.6, 0.6],  // P3: rose
-    [0.6, 1.0, 0.7],  // P4: mint
-    [1.0, 0.85, 0.5], // P5: gold
-    [0.8, 0.6, 1.0],  // P6: lavender
-    [1.0, 0.7, 0.4],  // P7: amber
-    [0.7, 1.0, 1.0],  // P8: cyan
+    [1.0, 0.85, 0.65], // P1: warm gold/bronze (Belmont-style)
+    [0.6, 0.7, 0.9],   // P2: steel blue
+    [0.75, 0.2, 0.25], // P3: dark crimson
+    [0.3, 0.55, 0.35], // P4: forest green
+    [0.55, 0.35, 0.7], // P5: royal purple
+    [0.75, 0.75, 0.8], // P6: silver
+    [0.9, 0.5, 0.2],   // P7: flame orange
+    [0.35, 0.6, 0.6],  // P8: shadow teal
 ];
 
 /// Background texture atlas ID.
@@ -509,6 +509,24 @@ pub fn sync_platformer_scene(
     render_powerups(scene, &state, tile_size, white);
 }
 
+/// Per-room tile tint for atmospheric coloring of stone/brick surfaces.
+fn room_tile_tint(theme: breakpoint_platformer::course_gen::RoomTheme) -> [f32; 3] {
+    use breakpoint_platformer::course_gen::RoomTheme;
+    match theme {
+        // Castle Interior rooms: gray-mauve stone
+        RoomTheme::Entrance
+        | RoomTheme::Corridor
+        | RoomTheme::GreatHall
+        | RoomTheme::ThroneRoom => [0.75, 0.7, 0.78],
+        // Underground rooms: teal-green stone
+        RoomTheme::Crypt | RoomTheme::Dungeon => [0.5, 0.7, 0.65],
+        // Sacred rooms: warm sandstone
+        RoomTheme::Chapel | RoomTheme::Library => [0.85, 0.75, 0.6],
+        // Fortress rooms: blue-gray steel
+        RoomTheme::Armory | RoomTheme::Tower => [0.65, 0.65, 0.75],
+    }
+}
+
 /// Render course tiles within the visible column and row range.
 #[allow(clippy::too_many_arguments)]
 fn render_tiles(
@@ -522,7 +540,6 @@ fn render_tiles(
     time: f32,
     water_color: Vec4,
 ) {
-    let white = Vec4::ONE;
     for y in min_row..max_row {
         for x in min_col..max_col {
             let tile = state.course.get_tile(x as i32, y as i32);
@@ -553,6 +570,9 @@ fn render_tiles(
             };
             let wx = x as f32 * tile_size + tile_size / 2.0;
             let wy = y as f32 * tile_size + tile_size / 2.0;
+            // Apply per-room tile tint for atmospheric stone coloring
+            let rt = room_tile_tint(state.course.room_theme_at_tile(x as i32, y as i32));
+            let tint = Vec4::new(rt[0], rt[1], rt[2], 1.0);
             add_sprite_region(
                 scene,
                 &region,
@@ -562,7 +582,7 @@ fn render_tiles(
                     z: Z_BG_TILES,
                     w: tile_size,
                     h: tile_size,
-                    tint: white,
+                    tint,
                     flip_x: false,
                     outline: 0.0,
                     blend_mode: crate::scene::BlendMode::Normal,
@@ -667,7 +687,7 @@ fn render_projectiles(
                     z: Z_EFFECTS,
                     w: tile_size * 0.5,
                     h: tile_size * 0.5,
-                    tint: Vec4::new(1.0, 0.3, 0.9, alpha),
+                    tint: Vec4::new(0.4, 0.9, 0.3, alpha),
                     flip_x: false,
                     outline: 0.0,
                     blend_mode: crate::scene::BlendMode::Additive,
@@ -679,7 +699,7 @@ fn render_projectiles(
         scene.add(
             MeshType::Quad,
             MaterialType::Glow {
-                color: Vec4::new(0.8, 0.2, 0.9, 0.4),
+                color: Vec4::new(0.3, 0.7, 0.2, 0.4),
                 intensity: 1.2,
             },
             Transform::from_xyz(proj.x, proj.y, -0.05).with_scale(Vec3::new(
@@ -699,7 +719,7 @@ fn render_projectiles(
                 z: Z_EFFECTS,
                 w: tile_size * 0.5,
                 h: tile_size * 0.5,
-                tint: Vec4::new(1.0, 0.3, 0.9, 1.0),
+                tint: Vec4::new(0.4, 0.9, 0.3, 1.0),
                 flip_x: false,
                 outline: 0.0,
                 blend_mode: crate::scene::BlendMode::Normal,
@@ -843,7 +863,7 @@ fn render_player_effects(
             MaterialType::SlashArc {
                 progress,
                 angle,
-                color: Vec4::new(1.0, 0.9, 0.5, 0.9),
+                color: Vec4::new(1.0, 0.7, 0.3, 0.9),
             },
             Transform::from_xyz(
                 player.x + dir * tile_size * 0.5,
@@ -862,8 +882,8 @@ fn render_player_effects(
         );
         if is_magic_powerup {
             let circle_color = match player.active_powerup {
-                Some(PowerUpKind::HolyWater) => Vec4::new(0.3, 0.6, 1.0, 0.7),
-                Some(PowerUpKind::Crucifix) => Vec4::new(1.0, 0.85, 0.3, 0.7),
+                Some(PowerUpKind::HolyWater) => Vec4::new(0.15, 0.4, 0.9, 0.7),
+                Some(PowerUpKind::Crucifix) => Vec4::new(1.0, 0.9, 0.4, 0.8),
                 _ => Vec4::new(1.0, 1.0, 1.0, 0.5),
             };
             scene.add(
@@ -895,7 +915,7 @@ fn render_player_effects(
                     z: Z_EFFECTS,
                     w: tile_size,
                     h: tile_size * 2.0,
-                    tint: Vec4::new(0.3, 1.0, 0.4, alpha),
+                    tint: Vec4::new(1.0, 0.6, 0.2, alpha),
                     flip_x: !player.facing_right,
                     outline: 0.0,
                     blend_mode: crate::scene::BlendMode::Additive,
@@ -1049,16 +1069,16 @@ fn render_godrays(
 fn room_ambient_color(theme: breakpoint_platformer::course_gen::RoomTheme) -> [f32; 3] {
     use breakpoint_platformer::course_gen::RoomTheme;
     match theme {
-        RoomTheme::Entrance => [0.30, 0.25, 0.15],   // warm amber
-        RoomTheme::Corridor => [0.15, 0.13, 0.12],   // dim stone
-        RoomTheme::GreatHall => [0.25, 0.20, 0.10],  // golden
-        RoomTheme::Library => [0.18, 0.15, 0.10],    // warm brown
-        RoomTheme::Armory => [0.20, 0.10, 0.05],     // forge red
-        RoomTheme::Chapel => [0.25, 0.22, 0.10],     // sacred gold
-        RoomTheme::Crypt => [0.08, 0.10, 0.18],      // cold blue
-        RoomTheme::Tower => [0.20, 0.20, 0.25],      // open sky
-        RoomTheme::Dungeon => [0.10, 0.12, 0.08],    // sickly green
-        RoomTheme::ThroneRoom => [0.18, 0.08, 0.22], // royal purple
+        RoomTheme::Entrance => [0.20, 0.17, 0.10],   // warm amber
+        RoomTheme::Corridor => [0.10, 0.09, 0.08],   // dim stone
+        RoomTheme::GreatHall => [0.17, 0.14, 0.07],  // golden
+        RoomTheme::Library => [0.12, 0.10, 0.07],    // warm brown
+        RoomTheme::Armory => [0.14, 0.07, 0.03],     // forge red
+        RoomTheme::Chapel => [0.17, 0.15, 0.07],     // sacred gold
+        RoomTheme::Crypt => [0.05, 0.07, 0.12],      // cold blue
+        RoomTheme::Tower => [0.14, 0.14, 0.17],      // open sky
+        RoomTheme::Dungeon => [0.07, 0.08, 0.05],    // sickly green
+        RoomTheme::ThroneRoom => [0.12, 0.05, 0.15], // royal purple
     }
 }
 
@@ -1071,7 +1091,7 @@ fn torch_light_color(theme: breakpoint_platformer::course_gen::RoomTheme) -> [f3
         RoomTheme::Chapel => [1.0, 0.9, 0.6],     // warm candlelight
         RoomTheme::Dungeon => [0.5, 0.8, 0.3],    // sickly green
         RoomTheme::ThroneRoom => [0.8, 0.5, 1.0], // royal purple
-        _ => [1.0, 0.8, 0.5],                     // default warm fire
+        _ => [1.0, 0.65, 0.3],                    // distinctly orange fire
     }
 }
 
@@ -1080,17 +1100,18 @@ fn room_color_grading(
     theme: breakpoint_platformer::course_gen::RoomTheme,
 ) -> ([f32; 3], [f32; 3], f32, f32) {
     use breakpoint_platformer::course_gen::RoomTheme;
+    // Higher contrast (1.15-1.3), lower saturation (0.7-0.85), cooler shadows, warmer highlights
     match theme {
-        RoomTheme::Entrance => ([0.9, 0.85, 0.7], [1.0, 0.95, 0.85], 1.05, 0.95),
-        RoomTheme::Corridor => ([0.8, 0.8, 0.85], [0.95, 0.95, 1.0], 1.1, 0.85),
-        RoomTheme::GreatHall => ([0.9, 0.85, 0.7], [1.0, 0.95, 0.8], 1.05, 1.0),
-        RoomTheme::Library => ([0.85, 0.8, 0.7], [1.0, 0.9, 0.75], 1.0, 0.9),
-        RoomTheme::Armory => ([0.9, 0.7, 0.6], [1.0, 0.8, 0.7], 1.15, 1.1),
-        RoomTheme::Chapel => ([0.9, 0.85, 0.7], [1.0, 1.0, 0.85], 1.0, 1.05),
-        RoomTheme::Crypt => ([0.7, 0.75, 0.9], [0.85, 0.9, 1.0], 1.2, 0.8),
-        RoomTheme::Tower => ([0.85, 0.85, 0.9], [1.0, 1.0, 1.0], 1.05, 1.0),
-        RoomTheme::Dungeon => ([0.75, 0.8, 0.7], [0.9, 0.95, 0.85], 1.15, 0.75),
-        RoomTheme::ThroneRoom => ([0.85, 0.7, 0.9], [0.95, 0.8, 1.0], 1.1, 1.1),
+        RoomTheme::Entrance => ([0.75, 0.7, 0.6], [1.0, 0.9, 0.75], 1.2, 0.8),
+        RoomTheme::Corridor => ([0.65, 0.65, 0.75], [0.9, 0.88, 0.95], 1.25, 0.7),
+        RoomTheme::GreatHall => ([0.75, 0.7, 0.6], [1.0, 0.9, 0.75], 1.2, 0.85),
+        RoomTheme::Library => ([0.7, 0.65, 0.55], [1.0, 0.85, 0.7], 1.15, 0.8),
+        RoomTheme::Armory => ([0.8, 0.55, 0.45], [1.0, 0.75, 0.6], 1.3, 0.85),
+        RoomTheme::Chapel => ([0.75, 0.7, 0.6], [1.0, 0.95, 0.8], 1.15, 0.85),
+        RoomTheme::Crypt => ([0.55, 0.6, 0.8], [0.8, 0.85, 1.0], 1.3, 0.7),
+        RoomTheme::Tower => ([0.7, 0.7, 0.8], [0.95, 0.95, 1.0], 1.2, 0.8),
+        RoomTheme::Dungeon => ([0.6, 0.65, 0.55], [0.85, 0.9, 0.8], 1.25, 0.7),
+        RoomTheme::ThroneRoom => ([0.7, 0.55, 0.8], [0.9, 0.75, 1.0], 1.25, 0.8),
     }
 }
 
@@ -1101,13 +1122,13 @@ pub fn room_theme_ambient_type(
     use crate::weather::AmbientType;
     use breakpoint_platformer::course_gen::RoomTheme;
     match theme {
+        RoomTheme::Entrance | RoomTheme::Corridor | RoomTheme::GreatHall => AmbientType::DustMotes,
         RoomTheme::Crypt | RoomTheme::Dungeon => AmbientType::DustMotes,
         RoomTheme::Chapel => AmbientType::GoldenSparkles,
         RoomTheme::Armory => AmbientType::Embers,
         RoomTheme::Tower => AmbientType::Snowflakes,
         RoomTheme::Library => AmbientType::FloatingPages,
-        RoomTheme::ThroneRoom => AmbientType::RoyalSparkles,
-        _ => AmbientType::None,
+        RoomTheme::ThroneRoom => AmbientType::Embers,
     }
 }
 
@@ -1118,7 +1139,9 @@ pub fn room_theme_weather(theme: breakpoint_platformer::course_gen::RoomTheme) -
         RoomTheme::Tower => (true, 0.0),      // open sky — rain
         RoomTheme::Crypt => (false, 0.6),     // thick ground fog
         RoomTheme::Dungeon => (false, 0.4),   // moderate fog
-        RoomTheme::Corridor => (false, 0.15), // faint mist
+        RoomTheme::Corridor => (false, 0.25), // misty corridors
+        RoomTheme::Entrance => (false, 0.1),  // faint haze
+        RoomTheme::GreatHall => (false, 0.1), // faint haze
         _ => (false, 0.0),
     }
 }
@@ -1158,8 +1181,8 @@ fn collect_torch_lights(
                 let wy = y as f32 * tile_size + tile_size / 2.0;
                 // Per-torch flicker using position hash
                 let hash = (x as f32) * 7.3 + (y as f32) * 13.1;
-                let intensity = 1.0 + 0.15 * (time * 8.0 + hash).sin();
-                let radius = 5.0;
+                let intensity = 1.2 + 0.25 * (time * 8.0 + hash).sin();
+                let radius = 6.5;
                 lights.push([wx, wy, intensity, radius]);
                 light_colors.push([torch_rgb[0], torch_rgb[1], torch_rgb[2], 0.0]);
             }
@@ -1186,6 +1209,11 @@ fn collect_torch_lights(
         grade_highlights,
         grade_contrast,
         saturation,
+        // GBA Castlevania color ramp: mauve shadows → bronze midtones → gold highlights
+        ramp_shadow: [0.15, 0.12, 0.22],
+        ramp_mid: [0.58, 0.39, 0.15],
+        ramp_highlight: [1.0, 0.85, 0.2],
+        posterize: 31.0, // GBA 5-bit color depth
     }
 }
 
@@ -1205,10 +1233,10 @@ fn room_theme_bg_atlas(theme: breakpoint_platformer::course_gen::RoomTheme) -> u
 
 /// 6-layer parallax configuration: (scroll_factor, z_depth, v_start, v_height, alpha).
 const PARALLAX_LAYERS: [(f32, f32, f32, f32, f32); 6] = [
-    (0.05, -6.0, 0.0, 1.0 / 6.0, 1.0),       // Layer 0: far sky/void
-    (0.15, -5.0, 1.0 / 6.0, 1.0 / 6.0, 1.0), // Layer 1: distant architecture
-    (0.3, -3.5, 2.0 / 6.0, 1.0 / 6.0, 1.0),  // Layer 2: mid architecture
-    (0.6, -1.5, 3.0 / 6.0, 1.0 / 6.0, 1.0),  // Layer 3: near architecture
+    (0.05, -6.0, 0.0, 1.0 / 6.0, 0.6),       // Layer 0: far sky/void
+    (0.15, -5.0, 1.0 / 6.0, 1.0 / 6.0, 0.7), // Layer 1: distant architecture
+    (0.3, -3.5, 2.0 / 6.0, 1.0 / 6.0, 0.8),  // Layer 2: mid architecture
+    (0.6, -1.5, 3.0 / 6.0, 1.0 / 6.0, 0.9),  // Layer 3: near architecture
     (1.2, 0.4, 4.0 / 6.0, 1.0 / 6.0, 0.15),  // Layer 4: foreground pillars
     (1.5, 0.5, 5.0 / 6.0, 1.0 / 6.0, 0.10),  // Layer 5: close dust/mist
 ];
@@ -1228,7 +1256,7 @@ fn add_parallax_layers(
 
     for &(scroll_factor, z, v_start, v_height, alpha) in &PARALLAX_LAYERS {
         let layer_y = camera_y * scroll_factor + 5.0 * (1.0 - scroll_factor);
-        let tint = Vec4::new(1.0, 1.0, 1.0, alpha);
+        let tint = Vec4::new(0.4, 0.35, 0.5, alpha);
         scene.add(
             MeshType::Quad,
             MaterialType::Parallax {
