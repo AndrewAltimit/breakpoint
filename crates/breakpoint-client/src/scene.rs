@@ -206,6 +206,9 @@ pub struct Scene {
     next_id: ObjectId,
     /// Scene lighting (set by game-specific render code, read by renderer).
     pub lighting: SceneLighting,
+    /// Number of objects in the static layer (tiles, background).
+    /// Objects up to this count are preserved by `clear_dynamic()`.
+    static_count: usize,
 }
 
 impl Scene {
@@ -213,6 +216,7 @@ impl Scene {
         Self {
             objects: Vec::with_capacity(2048),
             next_id: 1,
+            static_count: 0,
             lighting: SceneLighting {
                 lights: Vec::new(),
                 light_colors: Vec::new(),
@@ -271,6 +275,26 @@ impl Scene {
         // Reset to 1: IDs only need frame-local uniqueness since the scene
         // is rebuilt each frame. Prevents u32 overflow at 800 objs * 60fps.
         self.next_id = 1;
+        self.static_count = 0;
+    }
+
+    /// Mark the current objects as the static layer (tiles, background).
+    /// Subsequent `clear_dynamic()` calls will preserve these objects.
+    pub fn mark_static(&mut self) {
+        self.static_count = self.objects.len();
+    }
+
+    /// Clear only dynamic objects (players, enemies, particles) added after
+    /// the last `mark_static()` call, preserving static tile geometry.
+    pub fn clear_dynamic(&mut self) {
+        self.objects.truncate(self.static_count);
+        // Reset next_id from the static boundary to prevent overflow.
+        self.next_id = self.static_count as ObjectId + 1;
+    }
+
+    /// Whether static objects have been marked (tiles are cached).
+    pub fn has_static(&self) -> bool {
+        self.static_count > 0
     }
 
     /// Iterate over all visible objects.

@@ -9,9 +9,9 @@ use breakpoint_core::game_trait::{
     BreakpointGame, GameConfig, GameEvent, GameId, PlayerId, PlayerInputs,
 };
 use breakpoint_core::net::messages::{
-    GameEndMsg, GameStartMsg, GameStateMsg, PlayerScoreEntry, RoundEndMsg, ServerMessage,
+    CourseUpdateMsg, GameEndMsg, GameStartMsg, PlayerScoreEntry, RoundEndMsg, ServerMessage,
 };
-use breakpoint_core::net::protocol::encode_server_message;
+use breakpoint_core::net::protocol::{encode_game_state_fast, encode_server_message};
 use breakpoint_core::player::Player;
 
 /// Commands sent from the WebSocket handler to the game tick loop.
@@ -227,14 +227,10 @@ async fn run_game_tick_loop(
                     breakpoint_core::profile!("serialize_state");
                     game.serialize_state_into(&mut state_buf);
                 }
-                let gs_msg = ServerMessage::GameState(GameStateMsg {
-                    tick,
-                    state_data: state_buf.clone(),
-                });
                 {
                     #[cfg(feature = "profiling")]
                     breakpoint_core::profile!("encode_broadcast");
-                    match encode_server_message(&gs_msg) {
+                    match encode_game_state_fast(tick, &state_buf) {
                         Ok(data) => {
                             let _ = broadcast_tx.send(GameBroadcast::EncodedMessage(
                                 Bytes::from(data),
@@ -242,6 +238,24 @@ async fn run_game_tick_loop(
                         },
                         Err(e) => tracing::error!(
                             tick, error = %e, "Failed to encode GameState"
+                        ),
+                    }
+                }
+
+                // Broadcast course data if changed (first tick or wall break)
+                if let Some(course_bytes) = game.course_data() {
+                    let course_msg = ServerMessage::CourseUpdate(CourseUpdateMsg {
+                        version: tick,
+                        data: course_bytes,
+                    });
+                    match encode_server_message(&course_msg) {
+                        Ok(data) => {
+                            let _ = broadcast_tx.send(
+                                GameBroadcast::EncodedMessage(Bytes::from(data)),
+                            );
+                        },
+                        Err(e) => tracing::error!(
+                            tick, error = %e, "Failed to encode CourseUpdate"
                         ),
                     }
                 }

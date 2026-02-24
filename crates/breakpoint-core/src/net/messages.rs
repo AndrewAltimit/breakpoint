@@ -38,6 +38,9 @@ pub enum MessageType {
 
     // Overlay config
     OverlayConfig = 0x23,
+
+    // Server -> Client (large static data, sent once or on change)
+    CourseUpdate = 0x16,
 }
 
 impl MessageType {
@@ -55,6 +58,7 @@ impl MessageType {
             0x13 => Some(Self::GameStart),
             0x14 => Some(Self::RoundEnd),
             0x15 => Some(Self::GameEnd),
+            0x16 => Some(Self::CourseUpdate),
             0x20 => Some(Self::AlertEvent),
             0x21 => Some(Self::AlertClaimed),
             0x22 => Some(Self::AlertDismissed),
@@ -179,6 +183,13 @@ pub struct GameEndMsg {
     pub final_scores: Vec<PlayerScoreEntry>,
 }
 
+/// Course/map data sent separately from game state (large, rarely changes).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CourseUpdateMsg {
+    pub version: u32,
+    pub data: Vec<u8>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AlertEventMsg {
     pub event: Event,
@@ -241,6 +252,7 @@ pub enum ServerMessage {
     AlertClaimed(AlertClaimedMsg),
     AlertDismissed(AlertDismissedMsg),
     OverlayConfig(OverlayConfigMsg),
+    CourseUpdate(CourseUpdateMsg),
 }
 
 impl ServerMessage {
@@ -257,6 +269,7 @@ impl ServerMessage {
             Self::AlertClaimed(_) => MessageType::AlertClaimed,
             Self::AlertDismissed(_) => MessageType::AlertDismissed,
             Self::OverlayConfig(_) => MessageType::OverlayConfig,
+            Self::CourseUpdate(_) => MessageType::CourseUpdate,
         }
     }
 }

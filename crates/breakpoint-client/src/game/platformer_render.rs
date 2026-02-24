@@ -509,26 +509,23 @@ pub fn sync_platformer_scene(
         }
     }
 
-    scene.clear();
-
     let tile_size = breakpoint_platformer::physics::TILE_SIZE;
 
     // Rebuild tile cache if course changed (new game or first frame)
-    {
+    let course_changed = {
         let mut cache = tile_cache().lock().unwrap_or_else(|e| e.into_inner());
         if cache.width != state.course.width || cache.height != state.course.height {
             cache.rebuild(&state.course);
+            true
+        } else {
+            false
         }
-    }
+    };
 
     // Determine camera room theme for background and lighting
     let _camera_theme = state
         .course
         .room_theme_at_tile((camera_x / tile_size) as i32, (camera_y / tile_size) as i32);
-
-    // Parallax background layers disabled — no dedicated background content in sprite atlas.
-    // add_parallax_layers(scene, camera_x, camera_y, camera_theme);
-    let white = Vec4::ONE;
 
     // Tile culling: only render visible columns and rows.
     // Camera is at z=20, FOV=45°: visible half-width ≈ 15.5, half-height ≈ 8.7 at z=0.
@@ -544,7 +541,35 @@ pub fn sync_platformer_scene(
         .ceil()
         .min(state.course.height as f32) as u32;
 
-    // Collect torch lights for dynamic lighting
+    // Incremental scene: tiles are static, only clear dynamic objects per frame.
+    // Full rebuild on course change (wall break) or camera room transition.
+    if course_changed || !scene.has_static() {
+        scene.clear();
+
+        // Render course tiles (static layer)
+        let wc = &theme.platformer.water_color;
+        let water_color = Vec4::new(wc[0], wc[1], wc[2], wc[3]);
+        render_tiles(
+            scene,
+            &state,
+            tile_size,
+            min_col,
+            max_col,
+            min_row,
+            max_row,
+            time,
+            water_color,
+        );
+
+        // God rays for Chapel rooms (from stained glass light sources)
+        render_godrays(scene, &state, tile_size, camera_x, camera_y);
+
+        scene.mark_static();
+    } else {
+        scene.clear_dynamic();
+    }
+
+    // Collect torch lights for dynamic lighting (always recalculated)
     scene.lighting = collect_torch_lights(
         &state,
         tile_size,
@@ -556,23 +581,8 @@ pub fn sync_platformer_scene(
         theme.platformer.torch_ambient,
     );
 
-    // Render course tiles
-    let wc = &theme.platformer.water_color;
-    let water_color = Vec4::new(wc[0], wc[1], wc[2], wc[3]);
-    render_tiles(
-        scene,
-        &state,
-        tile_size,
-        min_col,
-        max_col,
-        min_row,
-        max_row,
-        time,
-        water_color,
-    );
-
-    // God rays for Chapel rooms (from stained glass light sources)
-    render_godrays(scene, &state, tile_size, camera_x, camera_y);
+    // Dynamic objects: enemies, projectiles, players, powerups
+    let white = Vec4::ONE;
 
     // Render enemies
     render_enemies(scene, &state, tile_size, theme, time);

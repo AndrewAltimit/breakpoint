@@ -165,6 +165,10 @@ pub struct App {
     prev_local_alive: bool,
     /// Frame counter for throttling continuous audio (e.g. Tron grind).
     audio_frame_counter: u32,
+    /// Timestamp (ms) of the last JS bridge push. Throttled to 10 Hz.
+    last_bridge_push: f64,
+    /// Previous AppState for detecting transitions that force a bridge push.
+    prev_bridge_state: AppState,
 }
 
 impl App {
@@ -271,6 +275,8 @@ impl App {
             prev_timestamp: 0.0,
             prev_local_alive: true,
             audio_frame_counter: 0,
+            last_bridge_push: 0.0,
+            prev_bridge_state: AppState::Lobby,
         }
     }
 
@@ -433,10 +439,15 @@ impl App {
                 .draw_screen_flash(self.screen_flash.color, self.screen_flash.alpha());
         }
 
-        // Push UI state to JS
+        // Push UI state to JS (throttled to 10 Hz unless state changed)
         {
             breakpoint_core::profile!("bridge");
-            bridge::push_ui_state(self);
+            let state_changed = self.state != self.prev_bridge_state;
+            if state_changed || timestamp - self.last_bridge_push >= 100.0 {
+                bridge::push_ui_state(self);
+                self.last_bridge_push = timestamp;
+                self.prev_bridge_state = self.state;
+            }
         }
 
         // Push profiling data to JS overlay
@@ -690,23 +701,26 @@ impl App {
         use breakpoint_core::net::messages::ServerMessage;
 
         match msg_type {
-            MessageType::GameState => match decode_server_message(data) {
-                Ok(ServerMessage::GameState(gs)) => {
-                    if let Some(ref mut active) = self.game {
-                        active.prev_state = Some(active.game.serialize_state());
-                        active.game.apply_state(&gs.state_data);
-                        active.cached_state_bytes = Some(gs.state_data);
-                        active.tick = gs.tick;
-                        active.interp_alpha = 0.0;
-                    }
-                },
-                Err(e) => {
-                    crate::diag::console_warn!(
-                        "Failed to decode GameState ({} bytes): {e}",
-                        data.len()
-                    );
-                },
-                _ => {},
+            MessageType::GameState => {
+                // Fast decode: [type_byte | tick_le32 | raw_state_data]
+                match breakpoint_core::net::protocol::decode_game_state_fast(data) {
+                    Ok((tick, state_data)) => {
+                        if let Some(ref mut active) = self.game {
+                            active.prev_state = Some(active.game.serialize_state());
+                            active.game.apply_state(state_data);
+                            // Re-serialize full state (with course) for client-side reads.
+                            active.cached_state_bytes = Some(active.game.serialize_state());
+                            active.tick = tick;
+                            active.interp_alpha = 0.0;
+                        }
+                    },
+                    Err(e) => {
+                        crate::diag::console_warn!(
+                            "Failed to decode GameState ({} bytes): {e}",
+                            data.len()
+                        );
+                    },
+                }
             },
             MessageType::RoundEnd => match decode_server_message(data) {
                 Ok(ServerMessage::RoundEnd(re)) => {
@@ -756,6 +770,22 @@ impl App {
                 Err(e) => {
                     crate::diag::console_warn!(
                         "Failed to decode GameEnd ({} bytes): {e}",
+                        data.len()
+                    );
+                },
+                _ => {},
+            },
+            MessageType::CourseUpdate => match decode_server_message(data) {
+                Ok(ServerMessage::CourseUpdate(cu)) => {
+                    if let Some(ref mut active) = self.game {
+                        active.game.apply_course_data(&cu.data);
+                        // Invalidate cached bytes so next read picks up new course.
+                        active.cached_state_bytes = None;
+                    }
+                },
+                Err(e) => {
+                    crate::diag::console_warn!(
+                        "Failed to decode CourseUpdate ({} bytes): {e}",
                         data.len()
                     );
                 },
