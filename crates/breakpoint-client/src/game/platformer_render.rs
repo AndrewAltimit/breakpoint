@@ -522,12 +522,12 @@ pub fn sync_platformer_scene(
     }
 
     // Determine camera room theme for background and lighting
-    let camera_theme = state
+    let _camera_theme = state
         .course
         .room_theme_at_tile((camera_x / tile_size) as i32, (camera_y / tile_size) as i32);
 
-    // Parallax background layers (scroll in both X and Y)
-    add_parallax_layers(scene, camera_x, camera_y, camera_theme);
+    // Parallax background layers disabled — no dedicated background content in sprite atlas.
+    // add_parallax_layers(scene, camera_x, camera_y, camera_theme);
     let white = Vec4::ONE;
 
     // Tile culling: only render visible columns and rows.
@@ -1325,6 +1325,7 @@ fn collect_torch_lights(
 }
 
 /// 6-layer parallax configuration: (scroll_factor, z_depth, v_start, v_height, alpha).
+#[allow(dead_code)]
 const PARALLAX_LAYERS: [(f32, f32, f32, f32, f32); 6] = [
     (0.05, -6.0, 0.0, 1.0 / 6.0, 0.45),       // Layer 0: far sky/void
     (0.15, -5.0, 1.0 / 6.0, 1.0 / 6.0, 0.55), // Layer 1: distant architecture
@@ -1336,6 +1337,7 @@ const PARALLAX_LAYERS: [(f32, f32, f32, f32, f32); 6] = [
 
 /// Add parallax background layers (6 layers) to the scene.
 /// Scrolls in both X and Y directions for 2D exploration.
+#[allow(dead_code)]
 fn add_parallax_layers(
     scene: &mut Scene,
     camera_x: f32,
