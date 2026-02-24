@@ -24,6 +24,7 @@ struct ShaderProgram {
     u_intensity: Option<WebGlUniformLocation>,
     u_camera_pos: Option<WebGlUniformLocation>,
     u_fog_density: Option<WebGlUniformLocation>,
+    u_fog_color: Option<WebGlUniformLocation>,
     u_resolution: Option<WebGlUniformLocation>,
     // Sprite shader uniforms
     u_sprite_rect: Option<WebGlUniformLocation>,
@@ -141,6 +142,11 @@ pub struct Renderer {
     post_fbo: Option<PostProcessFBO>,
     /// Post-processing settings.
     pub post_process: PostProcessConfig,
+    /// Sprite batch: reusable CPU-side vertex buffer (cleared each frame).
+    batch_vertices: Vec<f32>,
+    /// Sprite batch: VAO + VBO for dynamic upload (created lazily).
+    batch_vao: Option<WebGlVertexArrayObject>,
+    batch_vbo: Option<web_sys::WebGlBuffer>,
 }
 
 /// Key for mesh cache — identifies unique mesh configurations.
@@ -253,6 +259,9 @@ impl Renderer {
             palettes: HashMap::new(),
             post_fbo: None,
             post_process: PostProcessConfig::default(),
+            batch_vertices: Vec::with_capacity(9 * 6 * 1024),
+            batch_vao: None,
+            batch_vbo: None,
         };
 
         renderer.compile_programs()?;
@@ -387,10 +396,9 @@ impl Renderer {
             }
         }
 
-        let gl = &self.gl;
-
-        gl.clear_color(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
-        gl.clear(GL::COLOR_BUFFER_BIT | GL::DEPTH_BUFFER_BIT);
+        self.gl
+            .clear_color(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
+        self.gl.clear(GL::COLOR_BUFFER_BIT | GL::DEPTH_BUFFER_BIT);
 
         let vp = camera.view_projection();
 
@@ -414,8 +422,30 @@ impl Renderer {
             .collect();
         sorted.sort_by_key(|obj| material_sort_key(&obj.material));
 
+        // --- Sprite batching: draw simple sprites (no outline, no dissolve) in bulk ---
+        // Partition sprites by blend mode for batched drawing.
+        let has_batch_program = self.programs.contains_key("sprite_batch");
+        if has_batch_program {
+            self.ensure_batch_vao();
+            self.draw_sprite_batches(&sorted, &vp, scene, fog_density, camera);
+        }
+
+        let gl = &self.gl;
         let mut active_program: &str = "";
+        // Track whether lighting uniforms have been set for the current sprite program.
+        // These are scene-global (same for all sprites), so we set them once per program switch.
+        let mut sprite_lighting_set = false;
         for obj in &sorted {
+            // Skip sprites that were drawn in the batch pass
+            if has_batch_program
+                && matches!(
+                    &obj.material,
+                    MaterialType::Sprite { outline, dissolve, .. }
+                        if *outline == 0.0 && *dissolve == 0.0
+                )
+            {
+                continue;
+            }
             let model = obj.transform.matrix();
             let mvp = vp * model;
 
@@ -443,6 +473,7 @@ impl Renderer {
             if program_name != active_program {
                 gl.use_program(Some(&prog.program));
                 active_program = program_name;
+                sprite_lighting_set = false;
             }
 
             // Common uniforms
@@ -522,43 +553,49 @@ impl Renderer {
                             gl.blend_equation(GL::FUNC_REVERSE_SUBTRACT);
                         },
                     }
-                    // Set lighting uniforms (32 colored lights)
-                    let light_count = scene.lighting.lights.len().min(32) as i32;
-                    if let Some(loc) = &prog.u_light_count {
-                        gl.uniform1i(Some(loc), light_count);
-                    }
-                    set_f32(gl, &prog.u_ambient, scene.lighting.ambient);
-                    if let Some(loc) = &prog.u_ambient_color {
-                        let ac = &scene.lighting.ambient_color;
-                        gl.uniform3f(Some(loc), ac[0], ac[1], ac[2]);
-                    }
-                    // GBA-style color ramp + posterization
-                    if let Some(loc) = &prog.u_ramp_shadow {
-                        let rs = &scene.lighting.ramp_shadow;
-                        gl.uniform3f(Some(loc), rs[0], rs[1], rs[2]);
-                    }
-                    if let Some(loc) = &prog.u_ramp_mid {
-                        let rm = &scene.lighting.ramp_mid;
-                        gl.uniform3f(Some(loc), rm[0], rm[1], rm[2]);
-                    }
-                    if let Some(loc) = &prog.u_ramp_highlight {
-                        let rh = &scene.lighting.ramp_highlight;
-                        gl.uniform3f(Some(loc), rh[0], rh[1], rh[2]);
-                    }
-                    set_f32(gl, &prog.u_posterize, scene.lighting.posterize);
-                    for (i, light) in scene.lighting.lights.iter().take(32).enumerate() {
-                        if let Some(loc) = prog.u_lights.get(i).and_then(|l| l.as_ref()) {
-                            gl.uniform4f(Some(loc), light[0], light[1], light[2], light[3]);
+                    // Set lighting uniforms ONCE per sprite program switch
+                    // (lights/ambient/ramp are scene-global, same for all sprites)
+                    if !sprite_lighting_set {
+                        sprite_lighting_set = true;
+                        let light_count = scene.lighting.lights.len().min(32) as i32;
+                        if let Some(loc) = &prog.u_light_count {
+                            gl.uniform1i(Some(loc), light_count);
                         }
-                        // Upload light color (default white if not provided)
-                        if let Some(loc) = prog.u_light_color.get(i).and_then(|l| l.as_ref()) {
-                            let c = scene
-                                .lighting
-                                .light_colors
-                                .get(i)
-                                .copied()
-                                .unwrap_or([1.0, 1.0, 1.0, 0.0]);
-                            gl.uniform4f(Some(loc), c[0], c[1], c[2], c[3]);
+                        set_f32(gl, &prog.u_ambient, scene.lighting.ambient);
+                        if let Some(loc) = &prog.u_ambient_color {
+                            let ac = &scene.lighting.ambient_color;
+                            gl.uniform3f(Some(loc), ac[0], ac[1], ac[2]);
+                        }
+                        if let Some(loc) = &prog.u_ramp_shadow {
+                            let rs = &scene.lighting.ramp_shadow;
+                            gl.uniform3f(Some(loc), rs[0], rs[1], rs[2]);
+                        }
+                        if let Some(loc) = &prog.u_ramp_mid {
+                            let rm = &scene.lighting.ramp_mid;
+                            gl.uniform3f(Some(loc), rm[0], rm[1], rm[2]);
+                        }
+                        if let Some(loc) = &prog.u_ramp_highlight {
+                            let rh = &scene.lighting.ramp_highlight;
+                            gl.uniform3f(Some(loc), rh[0], rh[1], rh[2]);
+                        }
+                        set_f32(gl, &prog.u_posterize, scene.lighting.posterize);
+                        if let Some(loc) = &prog.u_fog_color {
+                            let fc = &scene.lighting.fog_color;
+                            gl.uniform3f(Some(loc), fc[0], fc[1], fc[2]);
+                        }
+                        for (i, light) in scene.lighting.lights.iter().take(32).enumerate() {
+                            if let Some(loc) = prog.u_lights.get(i).and_then(|l| l.as_ref()) {
+                                gl.uniform4f(Some(loc), light[0], light[1], light[2], light[3]);
+                            }
+                            if let Some(loc) = prog.u_light_color.get(i).and_then(|l| l.as_ref()) {
+                                let c = scene
+                                    .lighting
+                                    .light_colors
+                                    .get(i)
+                                    .copied()
+                                    .unwrap_or([1.0, 1.0, 1.0, 0.0]);
+                                gl.uniform4f(Some(loc), c[0], c[1], c[2], c[3]);
+                            }
                         }
                     }
                     // Disable backface culling for sprites
@@ -738,6 +775,11 @@ impl Renderer {
                 include_str!("shaders_gl/sprite.frag"),
             ),
             (
+                "sprite_batch",
+                include_str!("shaders_gl/sprite_batch.vert"),
+                include_str!("shaders_gl/sprite_batch.frag"),
+            ),
+            (
                 "parallax",
                 include_str!("shaders_gl/parallax.vert"),
                 include_str!("shaders_gl/parallax.frag"),
@@ -813,6 +855,7 @@ impl Renderer {
                 u_intensity: self.gl.get_uniform_location(&program, "u_intensity"),
                 u_camera_pos: self.gl.get_uniform_location(&program, "u_camera_pos"),
                 u_fog_density: self.gl.get_uniform_location(&program, "u_fog_density"),
+                u_fog_color: self.gl.get_uniform_location(&program, "u_fog_color"),
                 u_resolution: self.gl.get_uniform_location(&program, "u_resolution"),
                 u_sprite_rect: self.gl.get_uniform_location(&program, "u_sprite_rect"),
                 u_tint: self.gl.get_uniform_location(&program, "u_tint"),
@@ -1164,6 +1207,277 @@ impl Renderer {
 
         let vertex_count = data.len() as i32 / 8;
         Some(MeshBuffers { vao, vertex_count })
+    }
+
+    /// Draw all batchable sprites grouped by blend mode.
+    /// A sprite is batchable if outline == 0.0 and dissolve == 0.0.
+    fn draw_sprite_batches(
+        &mut self,
+        sorted: &[&crate::scene::RenderObject],
+        vp: &Mat4,
+        scene: &Scene,
+        fog_density: f32,
+        camera: &Camera,
+    ) {
+        use crate::scene::BlendMode;
+
+        // Collect batchable sprites per blend mode
+        let mut normal_sprites: Vec<&crate::scene::RenderObject> = Vec::new();
+        let mut additive_sprites: Vec<&crate::scene::RenderObject> = Vec::new();
+        let mut subtractive_sprites: Vec<&crate::scene::RenderObject> = Vec::new();
+
+        for obj in sorted {
+            if let MaterialType::Sprite {
+                outline,
+                dissolve,
+                blend_mode,
+                ..
+            } = &obj.material
+                && *outline == 0.0
+                && *dissolve == 0.0
+            {
+                match blend_mode {
+                    BlendMode::Normal => normal_sprites.push(obj),
+                    BlendMode::Additive => additive_sprites.push(obj),
+                    BlendMode::Subtractive => subtractive_sprites.push(obj),
+                }
+            }
+        }
+
+        if normal_sprites.is_empty()
+            && additive_sprites.is_empty()
+            && subtractive_sprites.is_empty()
+        {
+            return;
+        }
+
+        // Build all batch vertex data first (needs &mut self)
+        // We'll store them in temporary Vecs to avoid borrow issues.
+        let mut normal_verts: Vec<f32> = Vec::new();
+        let mut additive_verts: Vec<f32> = Vec::new();
+        let mut subtractive_verts: Vec<f32> = Vec::new();
+        if !normal_sprites.is_empty() {
+            self.build_sprite_batch(&normal_sprites);
+            std::mem::swap(&mut normal_verts, &mut self.batch_vertices);
+        }
+        if !additive_sprites.is_empty() {
+            self.build_sprite_batch(&additive_sprites);
+            std::mem::swap(&mut additive_verts, &mut self.batch_vertices);
+        }
+        if !subtractive_sprites.is_empty() {
+            self.build_sprite_batch(&subtractive_sprites);
+            std::mem::swap(&mut subtractive_verts, &mut self.batch_vertices);
+        }
+
+        let gl = &self.gl;
+        let Some(prog) = self.programs.get("sprite_batch") else {
+            return;
+        };
+        gl.use_program(Some(&prog.program));
+
+        // Set view-projection matrix (u_vp)
+        if let Some(loc) = &prog.u_mvp {
+            gl.uniform_matrix4fv_with_f32_array(Some(loc), false, vp.as_ref());
+        }
+        set_f32(gl, &prog.u_fog_density, fog_density);
+        set_vec3(gl, &prog.u_camera_pos, &camera.position);
+
+        // Bind atlas texture (all sprites use atlas 0)
+        gl.active_texture(GL::TEXTURE0);
+        if let Some(tex) = self.atlases.get(&0) {
+            gl.bind_texture(GL::TEXTURE_2D, Some(tex));
+        }
+        if let Some(loc) = &prog.u_texture {
+            gl.uniform1i(Some(loc), 0);
+        }
+
+        // Set lighting uniforms (scene-global)
+        let light_count = scene.lighting.lights.len().min(32) as i32;
+        if let Some(loc) = &prog.u_light_count {
+            gl.uniform1i(Some(loc), light_count);
+        }
+        set_f32(gl, &prog.u_ambient, scene.lighting.ambient);
+        if let Some(loc) = &prog.u_ambient_color {
+            let ac = &scene.lighting.ambient_color;
+            gl.uniform3f(Some(loc), ac[0], ac[1], ac[2]);
+        }
+        if let Some(loc) = &prog.u_ramp_shadow {
+            let rs = &scene.lighting.ramp_shadow;
+            gl.uniform3f(Some(loc), rs[0], rs[1], rs[2]);
+        }
+        if let Some(loc) = &prog.u_ramp_mid {
+            let rm = &scene.lighting.ramp_mid;
+            gl.uniform3f(Some(loc), rm[0], rm[1], rm[2]);
+        }
+        if let Some(loc) = &prog.u_ramp_highlight {
+            let rh = &scene.lighting.ramp_highlight;
+            gl.uniform3f(Some(loc), rh[0], rh[1], rh[2]);
+        }
+        set_f32(gl, &prog.u_posterize, scene.lighting.posterize);
+        if let Some(loc) = &prog.u_fog_color {
+            let fc = &scene.lighting.fog_color;
+            gl.uniform3f(Some(loc), fc[0], fc[1], fc[2]);
+        }
+        for (i, light) in scene.lighting.lights.iter().take(32).enumerate() {
+            if let Some(loc) = prog.u_lights.get(i).and_then(|l| l.as_ref()) {
+                gl.uniform4f(Some(loc), light[0], light[1], light[2], light[3]);
+            }
+            if let Some(loc) = prog.u_light_color.get(i).and_then(|l| l.as_ref()) {
+                let c = scene
+                    .lighting
+                    .light_colors
+                    .get(i)
+                    .copied()
+                    .unwrap_or([1.0, 1.0, 1.0, 0.0]);
+                gl.uniform4f(Some(loc), c[0], c[1], c[2], c[3]);
+            }
+        }
+
+        gl.disable(GL::CULL_FACE);
+
+        // Draw Normal blend batch
+        if !normal_verts.is_empty() {
+            gl.blend_func(GL::SRC_ALPHA, GL::ONE_MINUS_SRC_ALPHA);
+            gl.blend_equation(GL::FUNC_ADD);
+            self.upload_and_draw_batch_data(&normal_verts);
+        }
+
+        // Draw Additive blend batch
+        if !additive_verts.is_empty() {
+            gl.blend_func(GL::SRC_ALPHA, GL::ONE);
+            gl.blend_equation(GL::FUNC_ADD);
+            self.upload_and_draw_batch_data(&additive_verts);
+        }
+
+        // Draw Subtractive blend batch
+        if !subtractive_verts.is_empty() {
+            gl.blend_func(GL::SRC_ALPHA, GL::ONE);
+            gl.blend_equation(GL::FUNC_REVERSE_SUBTRACT);
+            self.upload_and_draw_batch_data(&subtractive_verts);
+        }
+
+        // Restore default blend state
+        gl.blend_func(GL::SRC_ALPHA, GL::ONE_MINUS_SRC_ALPHA);
+        gl.blend_equation(GL::FUNC_ADD);
+        gl.enable(GL::CULL_FACE);
+    }
+
+    /// Ensure the batch VAO/VBO is created (lazy init).
+    fn ensure_batch_vao(&mut self) {
+        if self.batch_vao.is_some() {
+            return;
+        }
+        let gl = &self.gl;
+        let vao = match gl.create_vertex_array() {
+            Some(v) => v,
+            None => return,
+        };
+        let vbo = match gl.create_buffer() {
+            Some(b) => b,
+            None => return,
+        };
+        gl.bind_vertex_array(Some(&vao));
+        gl.bind_buffer(GL::ARRAY_BUFFER, Some(&vbo));
+
+        // Batch vertex layout: pos(3) + uv(2) + tint(4) = 9 floats = 36 bytes
+        let stride = 9 * 4;
+        // location 0: position (vec3)
+        gl.enable_vertex_attrib_array(0);
+        gl.vertex_attrib_pointer_with_i32(0, 3, GL::FLOAT, false, stride, 0);
+        // location 1: uv (vec2)
+        gl.enable_vertex_attrib_array(1);
+        gl.vertex_attrib_pointer_with_i32(1, 2, GL::FLOAT, false, stride, 12);
+        // location 2: tint (vec4)
+        gl.enable_vertex_attrib_array(2);
+        gl.vertex_attrib_pointer_with_i32(2, 4, GL::FLOAT, false, stride, 20);
+
+        gl.bind_vertex_array(None);
+        self.batch_vao = Some(vao);
+        self.batch_vbo = Some(vbo);
+    }
+
+    /// Build batch vertex data for a set of batchable sprites.
+    /// Each sprite becomes 6 vertices (2 triangles), with pre-computed
+    /// world-space positions and atlas UVs.
+    fn build_sprite_batch(&mut self, sprites: &[&crate::scene::RenderObject]) {
+        self.batch_vertices.clear();
+        for obj in sprites {
+            let MaterialType::Sprite {
+                sprite_rect,
+                tint,
+                flip_x,
+                ..
+            } = &obj.material
+            else {
+                continue;
+            };
+            // Pre-compute world-space quad corners from transform
+            let t = &obj.transform;
+            let half_x = t.scale.x * 0.5;
+            let half_y = t.scale.y * 0.5;
+            let cx = t.translation.x;
+            let cy = t.translation.y;
+            let z = t.translation.z;
+
+            // Quad corners (no rotation for 2D sprites)
+            let x0 = cx - half_x;
+            let x1 = cx + half_x;
+            let y0 = cy - half_y;
+            let y1 = cy + half_y;
+
+            // Pre-compute atlas UVs from sprite_rect + flip
+            let (u0, u1) = if *flip_x {
+                (sprite_rect.z, sprite_rect.x) // reversed
+            } else {
+                (sprite_rect.x, sprite_rect.z)
+            };
+            // V is inverted: sprite_rect.w = v_bottom, sprite_rect.y = v_top
+            let v0 = sprite_rect.w; // bottom
+            let v1 = sprite_rect.y; // top
+
+            let tr = tint.x;
+            let tg = tint.y;
+            let tb = tint.z;
+            let ta = tint.w;
+
+            // Triangle 1: bottom-left, top-right, bottom-right
+            self.batch_vertices
+                .extend_from_slice(&[x0, y0, z, u0, v0, tr, tg, tb, ta]);
+            self.batch_vertices
+                .extend_from_slice(&[x1, y1, z, u1, v1, tr, tg, tb, ta]);
+            self.batch_vertices
+                .extend_from_slice(&[x1, y0, z, u1, v0, tr, tg, tb, ta]);
+            // Triangle 2: bottom-left, top-left, top-right
+            self.batch_vertices
+                .extend_from_slice(&[x0, y0, z, u0, v0, tr, tg, tb, ta]);
+            self.batch_vertices
+                .extend_from_slice(&[x0, y1, z, u0, v1, tr, tg, tb, ta]);
+            self.batch_vertices
+                .extend_from_slice(&[x1, y1, z, u1, v1, tr, tg, tb, ta]);
+        }
+    }
+
+    /// Upload batch vertex data and draw. Uses GL handle directly to avoid self borrow issues.
+    fn upload_and_draw_batch_data(&self, data: &[f32]) {
+        if data.is_empty() {
+            return;
+        }
+        let gl = &self.gl;
+        let Some(vao) = &self.batch_vao else { return };
+        let Some(vbo) = &self.batch_vbo else { return };
+
+        gl.bind_vertex_array(Some(vao));
+        gl.bind_buffer(GL::ARRAY_BUFFER, Some(vbo));
+
+        // Always use buffer_data (simpler than tracking capacity for immutable self)
+        unsafe {
+            let view = js_sys::Float32Array::view(data);
+            gl.buffer_data_with_array_buffer_view(GL::ARRAY_BUFFER, &view, GL::DYNAMIC_DRAW);
+        }
+
+        let vertex_count = (data.len() / 9) as i32;
+        gl.draw_arrays(GL::TRIANGLES, 0, vertex_count);
+        gl.bind_vertex_array(None);
     }
 }
 

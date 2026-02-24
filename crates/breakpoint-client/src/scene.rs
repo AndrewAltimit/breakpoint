@@ -187,6 +187,8 @@ pub struct SceneLighting {
     pub ramp_highlight: [f32; 3],
     /// GBA-style posterization bit depth (0.0=off, 31.0=5-bit GBA).
     pub posterize: f32,
+    /// Per-room fog color (RGB). Used by sprite shader ground fog.
+    pub fog_color: [f32; 3],
 }
 
 /// A renderable object in the scene.
@@ -209,7 +211,7 @@ pub struct Scene {
 impl Scene {
     pub fn new() -> Self {
         Self {
-            objects: Vec::with_capacity(512),
+            objects: Vec::with_capacity(2048),
             next_id: 1,
             lighting: SceneLighting {
                 lights: Vec::new(),
@@ -224,6 +226,7 @@ impl Scene {
                 ramp_mid: [0.0, 0.0, 0.0],
                 ramp_highlight: [0.0, 0.0, 0.0],
                 posterize: 0.0,
+                fog_color: [0.12, 0.10, 0.18],
             },
         }
     }
@@ -265,8 +268,9 @@ impl Scene {
     /// Clear all objects, preserving allocated capacity for reuse.
     pub fn clear(&mut self) {
         self.objects.clear();
-        // Don't reset next_id to 1 — preserving monotonic IDs avoids
-        // accidental reuse if any code holds a stale ObjectId.
+        // Reset to 1: IDs only need frame-local uniqueness since the scene
+        // is rebuilt each frame. Prevents u32 overflow at 800 objs * 60fps.
+        self.next_id = 1;
     }
 
     /// Iterate over all visible objects.
@@ -329,13 +333,13 @@ mod tests {
         assert_eq!(scene.object_count(), 10);
         scene.clear();
         assert_eq!(scene.object_count(), 0);
-        // IDs keep incrementing after clear (monotonic to avoid stale ID reuse)
+        // IDs reset after clear (frame-local uniqueness, prevents u32 overflow)
         let id = scene.add(
             MeshType::Cuboid,
             MaterialType::Unlit { color: Vec4::ONE },
             Transform::default(),
         );
-        assert!(id > 10);
+        assert_eq!(id, 1);
     }
 
     #[test]

@@ -214,7 +214,7 @@ impl Default for PlatformerTheme {
             bloom_intensity: 0.45,
             vignette_intensity: 0.20,
             crt_curvature: 0.08,
-            torch_ambient: 1.0,
+            torch_ambient: 0.15,
             water_color: [0.08, 0.2, 0.4, 0.65],
         }
     }

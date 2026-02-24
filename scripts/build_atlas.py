@@ -39,46 +39,86 @@ def add_frames(prefix, count, x_start, y, w, h):
         SPRITES.append((f"{prefix}_{i}", x_start + i * w, y, w, h))
 
 
-# --- Row 0-3 (Y 0-63): Player sprites (16x32 each) ---
-add_frames("player_idle", 6, 0, 0, 16, 32)
-add_frames("player_walk", 6, 96, 0, 16, 32)
-add_frames("player_jump", 3, 192, 0, 16, 32)
-add_frames("player_fall", 3, 240, 0, 16, 32)
-add_frames("player_attack", 6, 288, 0, 16, 32)
-add_frames("player_hurt", 2, 384, 0, 16, 32)
-add_frames("player_dead", 4, 416, 0, 16, 32)
+# --- Player sprites (16x32) — Row 0 (Y=0) ---
+add_frames("player_idle", 8, 0, 0, 16, 32)
+add_frames("player_walk", 8, 128, 0, 16, 32)
+add_frames("player_run", 8, 256, 0, 16, 32)
+add_frames("player_jump", 4, 384, 0, 16, 32)
+add_frames("player_fall", 4, 448, 0, 16, 32)
 
-# --- Row 4-7 (Y 64-127): Enemy sprites (16x32 each) ---
+# --- Player sprites (16x32) — Row 1 (Y=32) ---
+add_frames("player_attack", 8, 0, 32, 16, 32)
+add_frames("player_hurt", 4, 128, 32, 16, 32)
+add_frames("player_dead", 6, 192, 32, 16, 32)
+add_frames("player_wall_slide", 3, 288, 32, 16, 32)
+add_frames("player_crouch", 3, 336, 32, 16, 32)
+add_frames("player_dash", 4, 384, 32, 16, 32)
+
+# --- Enemy sprites (16x32) — Row 0 (Y=64) ---
 add_frames("skeleton_walk", 4, 0, 64, 16, 32)
 add_frames("skeleton_attack", 3, 64, 64, 16, 32)
 add_frames("skeleton_death", 4, 112, 64, 16, 32)
 add_frames("bat_fly", 4, 176, 64, 16, 32)
 add_frames("bat_death", 2, 240, 64, 16, 32)
-add_frames("knight_walk", 4, 272, 64, 16, 32)
-add_frames("knight_attack", 3, 336, 64, 16, 32)
-add_frames("knight_death", 4, 384, 64, 16, 32)
-add_frames("medusa_float", 4, 0, 96, 16, 32)
-add_frames("medusa_death", 2, 64, 96, 16, 32)
-add_frames("projectile", 3, 96, 96, 16, 16)
 
-# --- Row 8-11 (Y 128-191): Tiles (16x16 each) ---
-tile_x = 0
-tile_y = 128
-for name in [
+# --- Enemy sprites (16x32) — Row 1 (Y=96) ---
+add_frames("knight_walk", 4, 0, 96, 16, 32)
+add_frames("knight_attack", 3, 64, 96, 16, 32)
+add_frames("knight_death", 4, 112, 96, 16, 32)
+add_frames("medusa_float", 4, 176, 96, 16, 32)
+add_frames("medusa_death", 2, 240, 96, 16, 32)
+
+# --- Enemy sprites (16x32) — Row 2 (Y=128) ---
+add_frames("ghost_drift", 4, 0, 128, 16, 32)
+add_frames("ghost_phase", 3, 64, 128, 16, 32)
+add_frames("ghost_death", 3, 112, 128, 16, 32)
+add_frames("gargoyle_perch", 2, 160, 128, 16, 32)
+add_frames("gargoyle_swoop", 4, 192, 128, 16, 32)
+add_frames("gargoyle_death", 3, 256, 128, 16, 32)
+add_frames("projectile", 3, 304, 128, 16, 16)
+
+# --- Bitmask tiles (Y 160-208): 16 tiles per group, 4 groups ---
+# Matches sprite_atlas.rs: add_bitmask_tiles(sheet, group, 0, Y, 16)
+for group_idx, group_name in enumerate(["castle", "underground", "sacred", "fortress"]):
+    base_y = 160 + group_idx * 16
+    for i in range(16):
+        SPRITES.append((f"{group_name}_tile_{i}", i * 16, base_y, 16, 16))
+
+# Theme-specific decorative tiles (X=256 in each row)
+deco_x = 256
+SPRITES.append(("castle_bookshelf", deco_x, 160, 16, 16))
+SPRITES.append(("castle_banner", deco_x + 16, 160, 16, 16))
+SPRITES.append(("castle_pillar_top", deco_x + 32, 160, 16, 16))
+SPRITES.append(("castle_pillar_mid", deco_x + 48, 160, 16, 16))
+SPRITES.append(("underground_coffin", deco_x, 176, 16, 16))
+SPRITES.append(("underground_bones", deco_x + 16, 176, 16, 16))
+SPRITES.append(("underground_mushroom", deco_x + 32, 176, 16, 16))
+SPRITES.append(("sacred_altar", deco_x, 192, 16, 16))
+SPRITES.append(("sacred_candle", deco_x + 16, 192, 16, 16))
+SPRITES.append(("sacred_rune", deco_x + 32, 192, 16, 16))
+SPRITES.append(("fortress_weapon_rack", deco_x, 208, 16, 16))
+SPRITES.append(("fortress_anvil", deco_x + 16, 208, 16, 16))
+SPRITES.append(("fortress_shield", deco_x + 32, 208, 16, 16))
+
+# Legacy stone_brick aliases (at Y=160, same as castle bitmask tiles)
+# These overlap with castle_tile_* but the draw function only runs once per position
+for idx, name in enumerate([
     "stone_brick_top", "stone_brick_inner", "stone_brick_left",
     "stone_brick_right", "stone_brick_top_left", "stone_brick_top_right",
     "stone_brick_bottom_left", "stone_brick_bottom_right",
-]:
-    SPRITES.append((name, tile_x, tile_y, 16, 16))
-    tile_x += 16
+]):
+    # Map legacy names to the same atlas positions as castle_tile_*
+    # stone_brick_top maps to castle_tile_14, etc. (matching sprite_atlas.rs aliases)
+    SPRITES.append((name, idx * 16, 160, 16, 16))
 
+# --- Shared tiles (Y=224): platforms, spikes, checkpoints, etc. ---
+tile_x = 0
+tile_y = 224
 add_frames("platform", 3, tile_x, tile_y, 16, 16)
 tile_x += 48
 add_frames("spikes", 2, tile_x, tile_y, 16, 16)
 tile_x += 32
 
-tile_x = 0
-tile_y = 144
 add_frames("checkpoint_flag_down", 2, tile_x, tile_y, 16, 16)
 tile_x += 32
 add_frames("checkpoint_flag_up", 2, tile_x, tile_y, 16, 16)
@@ -92,19 +132,24 @@ tile_x += 32
 add_frames("torch", 4, tile_x, tile_y, 16, 16)
 tile_x += 64
 SPRITES.append(("stained_glass", tile_x, tile_y, 16, 16))
+tile_x += 16
 
-# Water tiles (new for Phase 2)
-SPRITES.append(("water_surface", 224, 144, 16, 16))
-SPRITES.append(("water_body", 240, 144, 16, 16))
+# Water tiles
+SPRITES.append(("water_surface", tile_x, tile_y, 16, 16))
+tile_x += 16
+SPRITES.append(("water_body", tile_x, tile_y, 16, 16))
+tile_x += 16
 
-# Decorative tiles (Phase 6)
-SPRITES.append(("cobweb", 256, 144, 16, 16))
-SPRITES.append(("chain_0", 272, 144, 16, 16))
-SPRITES.append(("chain_1", 288, 144, 16, 16))
+# Decorative tiles
+SPRITES.append(("cobweb", tile_x, tile_y, 16, 16))
+tile_x += 16
+SPRITES.append(("chain_0", tile_x, tile_y, 16, 16))
+tile_x += 16
+SPRITES.append(("chain_1", tile_x, tile_y, 16, 16))
 
-# --- Row 12-15 (Y 192-255): Power-ups + HUD ---
+# --- Power-ups + HUD (Y=288) ---
 pu_x = 0
-pu_y = 192
+pu_y = 288
 for name in [
     "powerup_holy_water", "powerup_crucifix", "powerup_speed_boots",
     "powerup_double_jump", "powerup_armor", "powerup_invincibility",
@@ -113,18 +158,18 @@ for name in [
     SPRITES.append((name, pu_x, pu_y, 16, 16))
     pu_x += 16
 
-SPRITES.append(("heart_full", 0, 208, 16, 16))
-SPRITES.append(("heart_empty", 16, 208, 16, 16))
+SPRITES.append(("heart_full", 0, 304, 16, 16))
+SPRITES.append(("heart_empty", 16, 304, 16, 16))
 
 prop_x = 32
-prop_y = 208
+prop_y = 304
 for name in ["prop_candelabra", "prop_cross", "prop_gravestone"]:
     SPRITES.append((name, prop_x, prop_y, 16, 16))
     prop_x += 16
 
-# --- Row 16-23 (Y 256-383): Particle sprites ---
+# --- Particle sprites (Y=352) ---
 part_x = 0
-part_y = 256
+part_y = 352
 add_frames("particle_dust", 4, part_x, part_y, 8, 8)
 part_x += 32
 add_frames("particle_spark", 3, part_x, part_y, 8, 8)
@@ -143,6 +188,16 @@ part_x += 24
 add_frames("particle_water", 3, part_x, part_y, 8, 8)
 part_x += 24
 add_frames("particle_ember", 3, part_x, part_y, 8, 8)
+
+# --- Ambient particle sprites (8x8, Y=356) ---
+add_frames("particle_sparkle", 2, 0, 356, 8, 8)
+add_frames("particle_snowflake", 2, 16, 356, 8, 8)
+add_frames("particle_page", 2, 32, 356, 8, 8)
+
+# --- VFX sprites (32x32, Y=384) ---
+add_frames("vfx_slash", 5, 0, 384, 32, 32)
+add_frames("vfx_magic_circle", 4, 160, 384, 32, 32)
+add_frames("vfx_hit_spark", 4, 288, 384, 32, 32)
 
 # ═══════════════════════════════════════════════════════════════════
 # GothicVania-style pixel art generation
@@ -193,6 +248,38 @@ PAL = {
     "water_surface": (60, 140, 200),
     "water_body": (40, 90, 160),
     "water_highlight": (100, 180, 240),
+}
+
+# Theme-specific tile palettes for bitmask tiles
+TILE_PALETTES = {
+    "castle": {
+        "light": (120, 110, 100),
+        "mid": (90, 82, 75),
+        "dark": (65, 58, 52),
+        "mortar": (75, 70, 62),
+        "accent": (110, 90, 80),
+    },
+    "underground": {
+        "light": (80, 110, 95),
+        "mid": (55, 85, 70),
+        "dark": (35, 60, 50),
+        "mortar": (45, 70, 58),
+        "accent": (70, 100, 85),
+    },
+    "sacred": {
+        "light": (130, 120, 95),
+        "mid": (100, 90, 70),
+        "dark": (70, 62, 50),
+        "mortar": (85, 78, 60),
+        "accent": (140, 125, 80),
+    },
+    "fortress": {
+        "light": (115, 120, 130),
+        "mid": (85, 90, 100),
+        "dark": (60, 65, 75),
+        "mortar": (70, 75, 85),
+        "accent": (100, 105, 120),
+    },
 }
 
 
@@ -386,6 +473,123 @@ def draw_player_dead(draw, bx, by, frame):
         rect(draw, bx + 2, y + 21, 8, 2, PAL["hair_dark"])
 
 
+def draw_player_run(draw, bx, by, frame):
+    """Running: leaned forward with speed lines."""
+    leg = [0, 2, 3, 2, 0, -2, -3, -2][frame % 8]
+    y = by
+    # Boots (wide stride)
+    rect(draw, bx + 3 + leg, y + 26, 3, 4, PAL["boots"])
+    rect(draw, bx + 10 - leg, y + 26, 3, 4, PAL["boots"])
+    # Legs
+    rect(draw, bx + 4 + leg, y + 22, 2, 5, PAL["cloth_dark"])
+    rect(draw, bx + 10 - leg, y + 22, 2, 5, PAL["cloth_dark"])
+    # Body (leaned forward)
+    rect(draw, bx + 5, y + 14, 8, 8, PAL["cloth_mid"])
+    rect(draw, bx + 6, y + 15, 6, 6, PAL["cloth_dark"])
+    # Cape streaming behind
+    cape_w = 4 + abs(leg)
+    rect(draw, bx + 1, y + 12, cape_w, 14, PAL["cape_red"])
+    rect(draw, bx + 1, y + 14, cape_w - 1, 12, PAL["cape_shadow"])
+    rect(draw, bx + 5, y + 21, 8, 1, PAL["gold_shadow"])
+    # Arms pumping
+    rect(draw, bx + 3, y + 14, 2, 6, PAL["skin"])
+    rect(draw, bx + 12, y + 16, 2, 4, PAL["skin"])
+    # Head (leaned)
+    rect(draw, bx + 6, y + 6, 6, 8, PAL["skin"])
+    rect(draw, bx + 5, y + 4, 8, 4, PAL["hair_dark"])
+    rect(draw, bx + 5, y + 6, 2, 6, PAL["hair_dark"])
+    px(draw, bx + 8, y + 9, (255, 255, 255))
+    px(draw, bx + 11, y + 9, (255, 255, 255))
+    # Speed lines
+    if frame % 2 == 0:
+        px(draw, bx + 1, y + 18, (200, 200, 220), 120)
+        px(draw, bx + 0, y + 20, (200, 200, 220), 80)
+
+
+def draw_player_wall_slide(draw, bx, by, frame):
+    """Wall slide: pressed against wall, sliding down."""
+    y = by + [0, 1, 0][frame % 3]
+    # Boots pressed against wall
+    rect(draw, bx + 10, y + 27, 3, 3, PAL["boots"])
+    rect(draw, bx + 10, y + 24, 3, 4, PAL["boots"])
+    # Legs together against wall
+    rect(draw, bx + 9, y + 22, 3, 6, PAL["cloth_dark"])
+    # Body pressed to right side
+    rect(draw, bx + 6, y + 14, 7, 8, PAL["cloth_mid"])
+    rect(draw, bx + 7, y + 15, 5, 6, PAL["cloth_dark"])
+    # Cape hanging away from wall
+    rect(draw, bx + 2, y + 13, 4, 13, PAL["cape_red"])
+    rect(draw, bx + 2, y + 15, 3, 11, PAL["cape_shadow"])
+    rect(draw, bx + 6, y + 21, 7, 1, PAL["gold_shadow"])
+    # Arms reaching up
+    rect(draw, bx + 11, y + 10, 2, 5, PAL["skin"])
+    rect(draw, bx + 5, y + 16, 2, 5, PAL["skin"])
+    # Head looking up
+    rect(draw, bx + 7, y + 6, 6, 8, PAL["skin"])
+    rect(draw, bx + 6, y + 4, 8, 4, PAL["hair_dark"])
+    px(draw, bx + 9, y + 9, (255, 255, 255))
+    px(draw, bx + 11, y + 9, (255, 255, 255))
+
+
+def draw_player_crouch(draw, bx, by, frame):
+    """Crouch: squished down pose."""
+    y = by + [0, 0, 1][frame % 3]
+    # Boots (wider stance)
+    rect(draw, bx + 3, y + 27, 3, 3, PAL["boots"])
+    rect(draw, bx + 10, y + 27, 3, 3, PAL["boots"])
+    # Legs (bent)
+    rect(draw, bx + 4, y + 24, 3, 4, PAL["cloth_dark"])
+    rect(draw, bx + 9, y + 24, 3, 4, PAL["cloth_dark"])
+    # Body (compressed)
+    rect(draw, bx + 4, y + 18, 8, 6, PAL["cloth_mid"])
+    rect(draw, bx + 5, y + 19, 6, 4, PAL["cloth_dark"])
+    # Cape (draped low)
+    rect(draw, bx + 2, y + 17, 3, 10, PAL["cape_red"])
+    rect(draw, bx + 2, y + 19, 2, 8, PAL["cape_shadow"])
+    rect(draw, bx + 4, y + 23, 8, 1, PAL["gold_shadow"])
+    # Arms
+    rect(draw, bx + 3, y + 19, 2, 4, PAL["skin"])
+    rect(draw, bx + 11, y + 19, 2, 4, PAL["skin"])
+    # Head (ducked)
+    rect(draw, bx + 5, y + 12, 6, 6, PAL["skin"])
+    rect(draw, bx + 4, y + 10, 8, 4, PAL["hair_dark"])
+    rect(draw, bx + 4, y + 12, 2, 4, PAL["hair_dark"])
+    px(draw, bx + 7, y + 14, (255, 255, 255))
+    px(draw, bx + 10, y + 14, (255, 255, 255))
+
+
+def draw_player_dash(draw, bx, by, frame):
+    """Dash: horizontal streaked motion."""
+    y = by
+    # Afterimage trail (fading)
+    alpha = max(0, 160 - frame * 40)
+    if alpha > 0:
+        rect(draw, bx + 0, y + 14, 4, 12, PAL["cape_red"], alpha)
+        rect(draw, bx + 0, y + 16, 3, 8, PAL["cape_shadow"], alpha // 2)
+    # Boots (together, horizontal)
+    rect(draw, bx + 8, y + 26, 4, 4, PAL["boots"])
+    # Legs (extended back)
+    rect(draw, bx + 6, y + 22, 4, 5, PAL["cloth_dark"])
+    # Body (horizontal lunge)
+    rect(draw, bx + 5, y + 14, 8, 8, PAL["cloth_mid"])
+    rect(draw, bx + 6, y + 15, 6, 6, PAL["cloth_dark"])
+    rect(draw, bx + 5, y + 21, 8, 1, PAL["gold_shadow"])
+    # Arms (forward thrust)
+    rect(draw, bx + 12, y + 15, 3, 2, PAL["skin"])
+    rect(draw, bx + 3, y + 17, 2, 4, PAL["skin"])
+    # Head
+    rect(draw, bx + 6, y + 6, 6, 8, PAL["skin"])
+    rect(draw, bx + 5, y + 4, 8, 4, PAL["hair_dark"])
+    rect(draw, bx + 5, y + 6, 2, 6, PAL["hair_dark"])
+    px(draw, bx + 8, y + 9, (255, 255, 255))
+    px(draw, bx + 11, y + 9, (255, 255, 255))
+    # Speed streaks
+    for i in range(3):
+        sx = bx + 1 + i
+        sy = y + 16 + i * 3
+        px(draw, sx, sy, (220, 220, 240), 140 - i * 40)
+
+
 # ── Enemy sprite drawing ───────────────────────────────────────────
 
 def draw_skeleton(draw, bx, by, frame, action="walk"):
@@ -536,7 +740,128 @@ def draw_medusa(draw, bx, by, frame, alive=True):
     rect(draw, bx + 11, y + 15, 2, 4, PAL["skin"])
 
 
+def draw_ghost(draw, bx, by, frame, action="drift"):
+    """Ghost: ethereal floating enemy, translucent."""
+    if action == "death":
+        alpha = max(0, 180 - frame * 60)
+        rect(draw, bx + 4, by + 10, 8, 14, (180, 200, 220), alpha)
+        return
+    y = by + [0, -1, -2, -1][frame % 4]
+    alpha = 180 if action == "drift" else [180, 120, 60][frame % 3]
+    # Wispy lower body
+    wave = [0, 1, 0, -1][frame % 4]
+    rect(draw, bx + 4 + wave, y + 22, 8, 8, (160, 180, 200), alpha - 40)
+    rect(draw, bx + 5, y + 26, 2, 4, (140, 160, 180), alpha - 60)
+    rect(draw, bx + 9, y + 26, 2, 4, (140, 160, 180), alpha - 60)
+    # Body
+    rect(draw, bx + 4, y + 12, 8, 10, (180, 200, 220), alpha)
+    rect(draw, bx + 5, y + 13, 6, 8, (200, 220, 240), alpha - 20)
+    # Head
+    rect(draw, bx + 5, y + 6, 6, 6, (200, 210, 230), alpha)
+    # Eyes (glowing)
+    px(draw, bx + 6, y + 9, (100, 200, 255), min(255, alpha + 40))
+    px(draw, bx + 9, y + 9, (100, 200, 255), min(255, alpha + 40))
+    # Mouth
+    px(draw, bx + 7, y + 11, (60, 60, 80), alpha)
+    px(draw, bx + 8, y + 11, (60, 60, 80), alpha)
+
+
+def draw_gargoyle(draw, bx, by, frame, action="perch"):
+    """Gargoyle: stone winged creature."""
+    if action == "death":
+        scatter = frame * 2
+        for i in range(5):
+            ox = random.Random(frame * 11 + i).randint(-scatter, scatter)
+            oy = random.Random(frame * 11 + i + 40).randint(0, scatter)
+            rect(draw, bx + 6 + ox, by + 14 + i * 3 + oy, 3, 2, PAL["stone_mid"])
+        return
+    y = by + ([0, 0][frame % 2] if action == "perch" else [0, -1, -2, -1][frame % 4])
+    # Legs/talons
+    rect(draw, bx + 4, y + 27, 3, 3, PAL["stone_dark"])
+    rect(draw, bx + 9, y + 27, 3, 3, PAL["stone_dark"])
+    # Body
+    rect(draw, bx + 4, y + 16, 8, 12, PAL["stone_mid"])
+    rect(draw, bx + 5, y + 17, 6, 10, PAL["stone_dark"])
+    # Wings
+    if action == "swoop":
+        wing_spread = [4, 6, 5, 3][frame % 4]
+        rect(draw, bx + 4 - wing_spread, y + 14, wing_spread, 5, PAL["stone_mid"])
+        rect(draw, bx + 12, y + 14, wing_spread, 5, PAL["stone_mid"])
+    else:
+        # Folded wings
+        rect(draw, bx + 2, y + 16, 3, 8, PAL["stone_mid"])
+        rect(draw, bx + 11, y + 16, 3, 8, PAL["stone_mid"])
+    # Head (horned)
+    rect(draw, bx + 5, y + 8, 6, 8, PAL["stone_mid"])
+    rect(draw, bx + 6, y + 9, 4, 6, PAL["stone_dark"])
+    # Horns
+    px(draw, bx + 4, y + 7, PAL["stone_light"])
+    px(draw, bx + 4, y + 6, PAL["stone_light"])
+    px(draw, bx + 11, y + 7, PAL["stone_light"])
+    px(draw, bx + 11, y + 6, PAL["stone_light"])
+    # Eyes
+    px(draw, bx + 6, y + 11, (255, 100, 40))
+    px(draw, bx + 9, y + 11, (255, 100, 40))
+
+
 # ── Tile drawing ───────────────────────────────────────────────────
+
+def draw_bitmask_tile(draw, bx, by, group, mask_idx):
+    """Draw a themed bitmask tile. mask_idx: 0-15 (UDLR = 4 bits).
+
+    Bit layout: 0=Up, 1=Down, 2=Left, 3=Right.
+    A set bit means there IS a neighbor in that direction.
+    """
+    pal = TILE_PALETTES.get(group, TILE_PALETTES["castle"])
+    has_up = bool(mask_idx & 1)
+    has_down = bool(mask_idx & 2)
+    has_left = bool(mask_idx & 4)
+    has_right = bool(mask_idx & 8)
+
+    # Base fill
+    rect(draw, bx, by, 16, 16, pal["mid"])
+
+    # Brick pattern: horizontal mortar lines
+    rect(draw, bx, by + 7, 16, 1, pal["mortar"])
+    rect(draw, bx, by + 15, 16, 1, pal["mortar"])
+    # Vertical mortar (offset between rows for brick pattern)
+    rect(draw, bx + 7, by, 1, 8, pal["mortar"])
+    rect(draw, bx + 3, by + 8, 1, 8, pal["mortar"])
+    rect(draw, bx + 11, by + 8, 1, 8, pal["mortar"])
+
+    # Per-brick highlights
+    rect(draw, bx + 1, by + 1, 5, 1, pal["light"])
+    rect(draw, bx + 9, by + 1, 5, 1, pal["light"])
+    rect(draw, bx + 1, by + 9, 5, 1, pal["light"])
+    # Per-brick shadows
+    rect(draw, bx + 1, by + 6, 5, 1, pal["dark"])
+    rect(draw, bx + 9, by + 6, 5, 1, pal["dark"])
+
+    # Edge treatment based on exposed sides (no neighbor)
+    if not has_up:
+        # Exposed top: cap/highlight
+        rect(draw, bx, by, 16, 2, pal["light"])
+        rect(draw, bx, by, 16, 1, pal["accent"])
+    if not has_down:
+        # Exposed bottom: shadow edge
+        rect(draw, bx, by + 14, 16, 2, pal["dark"])
+    if not has_left:
+        # Exposed left: highlight
+        rect(draw, bx, by, 2, 16, pal["light"])
+    if not has_right:
+        # Exposed right: shadow
+        rect(draw, bx + 14, by, 2, 16, pal["dark"])
+
+    # Corner accents for external corners
+    if not has_up and not has_left:
+        px(draw, bx, by, pal["accent"])
+        px(draw, bx + 1, by, pal["accent"])
+        px(draw, bx, by + 1, pal["accent"])
+    if not has_up and not has_right:
+        px(draw, bx + 15, by, pal["accent"])
+        px(draw, bx + 14, by, pal["accent"])
+        px(draw, bx + 15, by + 1, pal["accent"])
+
 
 def draw_stone_brick(draw, bx, by, variant):
     """Draw detailed stone brick with mortar lines."""
@@ -746,6 +1071,153 @@ def draw_chain(draw, bx, by, frame):
             px(draw, bx + 7, cy, highlight, 180)
 
 
+# ── Decorative tile drawing ──────────────────────────────────────
+
+def draw_bookshelf(draw, bx, by):
+    """Castle bookshelf decoration."""
+    rect(draw, bx, by, 16, 16, PAL["wood_dark"])
+    # Shelves
+    for i in range(3):
+        sy = by + 1 + i * 5
+        rect(draw, bx + 1, sy, 14, 1, PAL["wood_light"])
+        # Books
+        colors = [(140, 40, 40), (40, 80, 140), (60, 120, 60), (120, 100, 60)]
+        for j in range(5):
+            bw = 2 + (j % 2)
+            rect(draw, bx + 1 + j * 3, sy + 1, bw, 4, colors[j % 4])
+
+
+def draw_banner(draw, bx, by):
+    """Hanging banner/tapestry."""
+    # Pole
+    rect(draw, bx + 2, by, 12, 2, PAL["stone_light"])
+    # Banner fabric
+    rect(draw, bx + 3, by + 2, 10, 12, PAL["cape_red"])
+    rect(draw, bx + 4, by + 3, 8, 10, PAL["cape_shadow"])
+    # Emblem
+    rect(draw, bx + 6, by + 5, 4, 4, (200, 170, 50))
+    # Frayed bottom
+    for i in range(5):
+        px(draw, bx + 3 + i * 2, by + 14, PAL["cape_red"])
+
+
+def draw_pillar(draw, bx, by, is_top):
+    """Stone pillar section."""
+    rect(draw, bx + 3, by, 10, 16, PAL["stone_mid"])
+    rect(draw, bx + 4, by, 1, 16, PAL["stone_light"])
+    rect(draw, bx + 12, by, 1, 16, PAL["stone_dark"])
+    if is_top:
+        # Capital
+        rect(draw, bx + 1, by, 14, 3, PAL["stone_light"])
+        rect(draw, bx + 2, by + 3, 12, 1, PAL["stone_mortar"])
+    else:
+        # Fluting lines
+        for i in range(3):
+            rect(draw, bx + 5 + i * 2, by, 1, 16, PAL["stone_mortar"])
+
+
+def draw_coffin(draw, bx, by):
+    """Underground coffin decoration."""
+    rect(draw, bx + 2, by + 4, 12, 10, PAL["wood_dark"])
+    rect(draw, bx + 3, by + 5, 10, 8, PAL["wood_mid"])
+    # Cross on lid
+    rect(draw, bx + 7, by + 5, 2, 7, PAL["stone_light"])
+    rect(draw, bx + 5, by + 7, 6, 2, PAL["stone_light"])
+
+
+def draw_bones(draw, bx, by):
+    """Scattered bone pile."""
+    c = PAL["bone"]
+    s = PAL["bone_shadow"]
+    # Crossbones
+    for i in range(8):
+        px(draw, bx + 3 + i, by + 8 + i // 2, c)
+        px(draw, bx + 12 - i, by + 8 + i // 2, s)
+    # Skull
+    rect(draw, bx + 5, by + 4, 6, 5, c)
+    rect(draw, bx + 6, by + 5, 4, 3, s)
+    px(draw, bx + 6, by + 6, PAL["bone_dark"])
+    px(draw, bx + 9, by + 6, PAL["bone_dark"])
+
+
+def draw_mushroom(draw, bx, by):
+    """Glowing underground mushroom."""
+    # Stem
+    rect(draw, bx + 6, by + 8, 4, 8, (180, 170, 150))
+    # Cap
+    rect(draw, bx + 3, by + 5, 10, 4, (80, 160, 100))
+    rect(draw, bx + 4, by + 4, 8, 2, (100, 180, 120))
+    # Glow spots
+    px(draw, bx + 5, by + 6, (140, 220, 160), 200)
+    px(draw, bx + 10, by + 7, (140, 220, 160), 180)
+
+
+def draw_altar(draw, bx, by):
+    """Sacred altar."""
+    # Base
+    rect(draw, bx + 1, by + 10, 14, 6, PAL["stone_light"])
+    rect(draw, bx + 2, by + 8, 12, 3, PAL["stone_mid"])
+    # Top surface
+    rect(draw, bx + 3, by + 7, 10, 2, PAL["gold"])
+    # Candle
+    rect(draw, bx + 7, by + 3, 2, 5, (220, 210, 190))
+    px(draw, bx + 7, by + 2, PAL["fire_bright"])
+    px(draw, bx + 8, by + 2, PAL["fire_mid"])
+
+
+def draw_sacred_candle(draw, bx, by):
+    """Tall sacred candle."""
+    rect(draw, bx + 5, by + 10, 6, 6, PAL["stone_mid"])
+    rect(draw, bx + 6, by + 3, 4, 8, (220, 210, 190))
+    # Flame
+    rect(draw, bx + 7, by + 1, 2, 3, PAL["fire_bright"])
+    px(draw, bx + 7, by, PAL["fire_mid"])
+    px(draw, bx + 8, by, PAL["fire_mid"])
+
+
+def draw_rune(draw, bx, by):
+    """Glowing rune inscription."""
+    rect(draw, bx, by, 16, 16, PAL["stone_dark"])
+    # Rune glyph (simple geometric)
+    c = (100, 160, 220)
+    rect(draw, bx + 4, by + 2, 8, 1, c, 200)
+    rect(draw, bx + 4, by + 13, 8, 1, c, 200)
+    rect(draw, bx + 4, by + 2, 1, 12, c, 180)
+    rect(draw, bx + 11, by + 2, 1, 12, c, 180)
+    # Inner cross
+    rect(draw, bx + 6, by + 5, 4, 1, c, 160)
+    rect(draw, bx + 7, by + 4, 2, 8, c, 160)
+
+
+def draw_weapon_rack(draw, bx, by):
+    """Fortress weapon rack."""
+    rect(draw, bx + 1, by + 2, 2, 14, PAL["wood_dark"])
+    rect(draw, bx + 13, by + 2, 2, 14, PAL["wood_dark"])
+    rect(draw, bx + 1, by + 6, 14, 2, PAL["wood_mid"])
+    # Swords
+    rect(draw, bx + 4, by + 1, 1, 10, PAL["armor_steel"])
+    rect(draw, bx + 7, by + 1, 1, 10, PAL["armor_steel"])
+    rect(draw, bx + 10, by + 1, 1, 10, PAL["armor_steel"])
+
+
+def draw_anvil(draw, bx, by):
+    """Fortress anvil."""
+    rect(draw, bx + 3, by + 8, 10, 6, PAL["stone_dark"])
+    rect(draw, bx + 2, by + 6, 12, 3, PAL["armor_steel"])
+    rect(draw, bx + 4, by + 4, 8, 3, PAL["armor_shadow"])
+    # Horn
+    rect(draw, bx + 1, by + 5, 2, 2, PAL["armor_steel"])
+
+
+def draw_shield(draw, bx, by):
+    """Fortress shield on wall."""
+    rect(draw, bx + 3, by + 2, 10, 12, PAL["armor_steel"])
+    rect(draw, bx + 4, by + 3, 8, 10, PAL["armor_shadow"])
+    # Cross emblem
+    rect(draw, bx + 7, by + 4, 2, 8, PAL["knight_gold"])
+    rect(draw, bx + 5, by + 7, 6, 2, PAL["knight_gold"])
+
+
 # ── Power-up and UI drawing ───────────────────────────────────────
 
 def draw_powerup(draw, bx, by, kind):
@@ -904,6 +1376,100 @@ def draw_particle(draw, bx, by, kind, frame):
         px(draw, bx + 4, by + 4, c, 180)
 
 
+def draw_ambient_particle(draw, bx, by, kind, frame):
+    """Draw 8x8 ambient particle sprites (sparkle, snowflake, page)."""
+    if kind == "sparkle":
+        alpha = [255, 180][frame % 2]
+        px(draw, bx + 3, by + 2, (255, 255, 200), alpha)
+        px(draw, bx + 4, by + 3, (255, 255, 220), alpha)
+        px(draw, bx + 3, by + 4, (255, 255, 200), alpha)
+        px(draw, bx + 2, by + 3, (255, 255, 200), alpha)
+        px(draw, bx + 3, by + 3, (255, 255, 255), alpha)
+    elif kind == "snowflake":
+        alpha = [220, 180][frame % 2]
+        # Cross shape
+        rect(draw, bx + 3, by + 1, 2, 6, (220, 230, 255), alpha)
+        rect(draw, bx + 1, by + 3, 6, 2, (220, 230, 255), alpha)
+        # Diagonal accents
+        px(draw, bx + 2, by + 2, (200, 210, 240), alpha)
+        px(draw, bx + 5, by + 2, (200, 210, 240), alpha)
+        px(draw, bx + 2, by + 5, (200, 210, 240), alpha)
+        px(draw, bx + 5, by + 5, (200, 210, 240), alpha)
+    elif kind == "page":
+        alpha = [240, 200][frame % 2]
+        rect(draw, bx + 1, by + 1, 5, 6, (220, 210, 190), alpha)
+        rect(draw, bx + 2, by + 2, 3, 4, (200, 190, 170), alpha)
+        # Text lines
+        px(draw, bx + 2, by + 3, (100, 90, 80), alpha)
+        px(draw, bx + 3, by + 3, (100, 90, 80), alpha)
+        px(draw, bx + 2, by + 5, (100, 90, 80), alpha)
+
+
+# ── VFX sprite drawing ───────────────────────────────────────────
+
+def draw_vfx_slash(draw, bx, by, frame):
+    """32x32 slash arc VFX."""
+    alpha = max(0, 255 - frame * 40)
+    # Arc sweep that grows with each frame
+    arc_len = min(frame + 1, 5) * 4
+    for i in range(arc_len):
+        angle = (i / arc_len) * 2.5
+        cx = int(bx + 16 + math.cos(angle) * (8 + frame * 2))
+        cy = int(by + 16 + math.sin(angle) * (8 + frame * 2))
+        if bx <= cx < bx + 32 and by <= cy < by + 32:
+            px(draw, cx, cy, (255, 255, 220), alpha)
+            if cx + 1 < bx + 32:
+                px(draw, cx + 1, cy, (255, 240, 180), alpha - 40)
+            if cy + 1 < by + 32:
+                px(draw, cx, cy + 1, (255, 220, 140), alpha - 60)
+    # Core glow
+    rect(draw, bx + 12, by + 12, 8, 8, (255, 255, 200), alpha // 3)
+
+
+def draw_vfx_magic_circle(draw, bx, by, frame):
+    """32x32 rotating magic circle VFX."""
+    cx, cy = bx + 16, by + 16
+    radius = 10
+    alpha = [200, 220, 240, 220][frame % 4]
+    color = (120, 80, 220)
+    # Circle outline
+    for i in range(24):
+        angle = (i / 24) * math.pi * 2 + frame * 0.5
+        px_x = int(cx + math.cos(angle) * radius)
+        px_y = int(cy + math.sin(angle) * radius)
+        if bx <= px_x < bx + 32 and by <= px_y < by + 32:
+            px(draw, px_x, px_y, color, alpha)
+    # Inner rune lines
+    for i in range(6):
+        angle = (i / 6) * math.pi * 2 + frame * 0.3
+        ix = int(cx + math.cos(angle) * 5)
+        iy = int(cy + math.sin(angle) * 5)
+        if bx <= ix < bx + 32 and by <= iy < by + 32:
+            px(draw, ix, iy, (180, 140, 255), alpha)
+    # Center glow
+    rect(draw, bx + 14, by + 14, 4, 4, (200, 160, 255), alpha // 2)
+
+
+def draw_vfx_hit_spark(draw, bx, by, frame):
+    """32x32 impact spark VFX."""
+    alpha = max(0, 255 - frame * 50)
+    cx, cy = bx + 16, by + 16
+    # Expanding star burst
+    spread = 3 + frame * 3
+    for i in range(8):
+        angle = (i / 8) * math.pi * 2
+        for d in range(spread):
+            sx = int(cx + math.cos(angle) * d)
+            sy = int(cy + math.sin(angle) * d)
+            if bx <= sx < bx + 32 and by <= sy < by + 32:
+                a = max(0, alpha - d * 20)
+                color = (255, 255 - d * 15, 100 - d * 10) if d < 5 else (255, 200, 60)
+                color = tuple(max(0, min(255, c)) for c in color)
+                px(draw, sx, sy, color, a)
+    # Core flash
+    rect(draw, bx + 14, by + 14, 4, 4, (255, 255, 220), alpha)
+
+
 # ═══════════════════════════════════════════════════════════════════
 # Atlas builder
 # ═══════════════════════════════════════════════════════════════════
@@ -981,6 +1547,14 @@ def draw_gothic_sprite(draw, name, x, y, w, h):
         draw_player_hurt(draw, x, y, frame)
     elif name.startswith("player_dead"):
         draw_player_dead(draw, x, y, frame)
+    elif name.startswith("player_run"):
+        draw_player_run(draw, x, y, frame)
+    elif name.startswith("player_wall_slide"):
+        draw_player_wall_slide(draw, x, y, frame)
+    elif name.startswith("player_crouch"):
+        draw_player_crouch(draw, x, y, frame)
+    elif name.startswith("player_dash"):
+        draw_player_dash(draw, x, y, frame)
     # Enemy sprites
     elif name.startswith("skeleton_walk"):
         draw_skeleton(draw, x, y, frame, "walk")
@@ -1002,9 +1576,58 @@ def draw_gothic_sprite(draw, name, x, y, w, h):
         draw_medusa(draw, x, y, frame, alive=True)
     elif name.startswith("medusa_death"):
         draw_medusa(draw, x, y, frame, alive=False)
+    elif name.startswith("ghost_drift"):
+        draw_ghost(draw, x, y, frame, "drift")
+    elif name.startswith("ghost_phase"):
+        draw_ghost(draw, x, y, frame, "phase")
+    elif name.startswith("ghost_death"):
+        draw_ghost(draw, x, y, frame, "death")
+    elif name.startswith("gargoyle_perch"):
+        draw_gargoyle(draw, x, y, frame, "perch")
+    elif name.startswith("gargoyle_swoop"):
+        draw_gargoyle(draw, x, y, frame, "swoop")
+    elif name.startswith("gargoyle_death"):
+        draw_gargoyle(draw, x, y, frame, "death")
     elif name.startswith("projectile"):
         draw_projectile(draw, x, y, frame)
-    # Tiles
+    # Bitmask tiles (castle_tile_0-15, underground_tile_0-15, etc.)
+    elif name.startswith("castle_tile_"):
+        draw_bitmask_tile(draw, x, y, "castle", int(name.split("_")[-1]))
+    elif name.startswith("underground_tile_"):
+        draw_bitmask_tile(draw, x, y, "underground", int(name.split("_")[-1]))
+    elif name.startswith("sacred_tile_"):
+        draw_bitmask_tile(draw, x, y, "sacred", int(name.split("_")[-1]))
+    elif name.startswith("fortress_tile_"):
+        draw_bitmask_tile(draw, x, y, "fortress", int(name.split("_")[-1]))
+    # Decorative tiles
+    elif name.startswith("castle_") and name not in ("castle_bookshelf", "castle_banner",
+                                                      "castle_pillar_top", "castle_pillar_mid"):
+        pass  # handled above by castle_tile_
+    elif name == "castle_bookshelf":
+        draw_bookshelf(draw, x, y)
+    elif name == "castle_banner":
+        draw_banner(draw, x, y)
+    elif name in ("castle_pillar_top", "castle_pillar_mid"):
+        draw_pillar(draw, x, y, is_top=("top" in name))
+    elif name == "underground_coffin":
+        draw_coffin(draw, x, y)
+    elif name == "underground_bones":
+        draw_bones(draw, x, y)
+    elif name == "underground_mushroom":
+        draw_mushroom(draw, x, y)
+    elif name == "sacred_altar":
+        draw_altar(draw, x, y)
+    elif name == "sacred_candle":
+        draw_sacred_candle(draw, x, y)
+    elif name == "sacred_rune":
+        draw_rune(draw, x, y)
+    elif name == "fortress_weapon_rack":
+        draw_weapon_rack(draw, x, y)
+    elif name == "fortress_anvil":
+        draw_anvil(draw, x, y)
+    elif name == "fortress_shield":
+        draw_shield(draw, x, y)
+    # Legacy stone_brick aliases (draw same as castle tiles)
     elif name.startswith("stone_brick"):
         draw_stone_brick(draw, x, y, name.replace("stone_brick_", ""))
     elif name.startswith("platform"):
@@ -1045,6 +1668,20 @@ def draw_gothic_sprite(draw, name, x, y, w, h):
     # Props
     elif name.startswith("prop_"):
         draw_prop(draw, x, y, name.replace("prop_", ""))
+    # VFX sprites
+    elif name.startswith("vfx_slash"):
+        draw_vfx_slash(draw, x, y, frame)
+    elif name.startswith("vfx_magic_circle"):
+        draw_vfx_magic_circle(draw, x, y, frame)
+    elif name.startswith("vfx_hit_spark"):
+        draw_vfx_hit_spark(draw, x, y, frame)
+    # Ambient particles
+    elif name.startswith("particle_sparkle"):
+        draw_ambient_particle(draw, x, y, "sparkle", frame)
+    elif name.startswith("particle_snowflake"):
+        draw_ambient_particle(draw, x, y, "snowflake", frame)
+    elif name.startswith("particle_page"):
+        draw_ambient_particle(draw, x, y, "page", frame)
     # Particles
     elif name.startswith("particle_"):
         kind = name.rsplit("_", 1)[0].replace("particle_", "")

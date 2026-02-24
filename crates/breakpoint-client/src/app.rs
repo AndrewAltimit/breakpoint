@@ -970,9 +970,10 @@ impl App {
             (self.camera.position.x / tile_size) as i32,
             (self.camera.position.y / tile_size) as i32,
         );
-        let (raining, fog) = crate::game::platformer_render::room_theme_weather(theme);
+        let (raining, fog, fog_color) = crate::game::platformer_render::room_theme_weather(theme);
         self.weather.raining = raining;
         self.weather.fog_density = fog;
+        self.weather.fog_color = fog_color;
         self.weather.ambient_type = crate::game::platformer_render::room_theme_ambient_type(theme);
     }
 

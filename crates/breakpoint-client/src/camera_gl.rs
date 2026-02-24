@@ -105,6 +105,14 @@ impl Camera {
                 self.position = self.position.lerp(target_pos, lerp_factor);
                 self.target = self.target.lerp(look_at, lerp_factor);
                 self.up = Vec3::Y;
+
+                // Sub-pixel snap: align camera to pixel grid to prevent tile shimmer
+                let pixels_per_unit = 16.0; // 16px tiles
+                let pixel_size = 1.0 / pixels_per_unit;
+                self.position.x = (self.position.x / pixel_size).round() * pixel_size;
+                self.position.y = (self.position.y / pixel_size).round() * pixel_size;
+                self.target.x = (self.target.x / pixel_size).round() * pixel_size;
+                self.target.y = (self.target.y / pixel_size).round() * pixel_size;
             },
             CameraMode::LaserTagFixed => {
                 self.position = Vec3::new(25.0, 62.0, 25.0);

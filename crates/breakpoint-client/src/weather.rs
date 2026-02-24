@@ -2,11 +2,11 @@ use glam::{Vec3, Vec4};
 
 use crate::scene::{MaterialType, MeshType, Scene, Transform};
 
-/// Maximum number of active rain drops.
-const MAX_RAIN_DROPS: usize = 120;
+/// Maximum number of active rain drops (reduced from 120 for draw call budget).
+const MAX_RAIN_DROPS: usize = 60;
 
-/// Maximum number of ambient particles.
-const MAX_AMBIENT_PARTICLES: usize = 40;
+/// Maximum number of ambient particles (reduced from 40 for draw call budget).
+const MAX_AMBIENT_PARTICLES: usize = 20;
 
 /// A single rain drop particle.
 struct RainDrop {
@@ -51,6 +51,8 @@ pub struct WeatherSystem {
     pub raining: bool,
     /// Ground fog density (0.0-1.0).
     pub fog_density: f32,
+    /// Per-room fog color (RGB).
+    pub fog_color: [f32; 3],
     /// Camera X for positioning rain relative to view.
     camera_x: f32,
     camera_y: f32,
@@ -102,6 +104,7 @@ impl WeatherSystem {
             ambient,
             raining: false,
             fog_density: 0.0,
+            fog_color: [0.08, 0.06, 0.12],
             camera_x: 0.0,
             camera_y: 5.0,
             lightning_timer: 0.0,
@@ -295,15 +298,15 @@ impl WeatherSystem {
             if !drop.active {
                 continue;
             }
-            // Sprite-based rain droplets (thin diagonal streaks)
+            // Sprite-based rain droplets (slightly wider for visibility with fewer drops)
             scene.add(
                 MeshType::Quad,
                 MaterialType::Unlit {
-                    color: Vec4::new(0.7, 0.75, 0.9, 0.35),
+                    color: Vec4::new(0.7, 0.75, 0.9, 0.4),
                 },
                 Transform::from_xyz(drop.x, drop.y, 0.2).with_scale(Vec3::new(
-                    0.04,
-                    drop.length,
+                    0.06,
+                    drop.length * 1.2,
                     1.0,
                 )),
             );
@@ -336,7 +339,7 @@ impl WeatherSystem {
             MeshType::Quad,
             MaterialType::FogLayer {
                 density: self.fog_density,
-                color: Vec4::new(0.08, 0.06, 0.12, 0.5),
+                color: Vec4::new(self.fog_color[0], self.fog_color[1], self.fog_color[2], 0.5),
             },
             Transform::from_xyz(
                 self.camera_x,

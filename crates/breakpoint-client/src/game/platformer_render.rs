@@ -26,8 +26,6 @@ const PLAYER_PALETTES: [[f32; 3]; 8] = [
     [0.35, 0.6, 0.6],  // P8: shadow teal
 ];
 
-/// Background texture atlas ID.
-const BG_ATLAS_ID: u8 = 1;
 /// Sprite atlas ID.
 const ATLAS_ID: u8 = 0;
 
@@ -53,6 +51,76 @@ struct PlayerVisualState {
 fn visual_states() -> &'static Mutex<HashMap<u64, PlayerVisualState>> {
     static STATES: OnceLock<Mutex<HashMap<u64, PlayerVisualState>>> = OnceLock::new();
     STATES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Cached tile sprite data: (SpriteRegion, room_tint_rgb).
+/// Avoids per-frame HashMap lookups and bitmask recomputation for static tiles.
+struct TileCache {
+    /// Flat array indexed by ty * width + tx. None = not cached (animated/water/empty tile).
+    entries: Vec<Option<(SpriteRegion, [f32; 3])>>,
+    width: u32,
+    height: u32,
+}
+
+impl TileCache {
+    fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            width: 0,
+            height: 0,
+        }
+    }
+
+    /// Get cached data for a tile, or None if not cached.
+    fn get(&self, tx: i32, ty: i32) -> Option<&(SpriteRegion, [f32; 3])> {
+        if tx < 0 || ty < 0 || tx as u32 >= self.width || ty as u32 >= self.height {
+            return None;
+        }
+        let idx = ty as u32 * self.width + tx as u32;
+        self.entries.get(idx as usize).and_then(|e| e.as_ref())
+    }
+
+    /// Rebuild the cache for a new course.
+    fn rebuild(&mut self, course: &breakpoint_platformer::course_gen::Course) {
+        use breakpoint_platformer::course_gen::Tile;
+        self.width = course.width;
+        self.height = course.height;
+        let total = (self.width * self.height) as usize;
+        self.entries.clear();
+        self.entries.resize(total, None);
+
+        let sheet = atlas();
+        for ty in 0..self.height as i32 {
+            for tx in 0..self.width as i32 {
+                let tile = course.get_tile(tx, ty);
+                // Only cache static (non-animated) tile sprite regions
+                let region = match &tile {
+                    Tile::Empty | Tile::PowerUpSpawn | Tile::Water => continue,
+                    Tile::StoneBrick => Some(stone_brick_region(sheet, course, tx, ty)),
+                    Tile::Platform => Some(sheet.get_or_default("platform_0")),
+                    Tile::Spikes => Some(sheet.get_or_default("spikes_0")),
+                    Tile::Checkpoint => Some(sheet.get_or_default("checkpoint_flag_down_0")),
+                    Tile::Ladder => Some(sheet.get_or_default("ladder")),
+                    Tile::BreakableWall => Some(sheet.get_or_default("breakable_wall_0")),
+                    Tile::DecoStainedGlass => Some(sheet.get_or_default("stained_glass")),
+                    Tile::DecoCobweb => Some(sheet.get_or_default("cobweb")),
+                    // Animated tiles can't be cached (depend on time)
+                    Tile::Finish | Tile::DecoTorch | Tile::DecoChain => continue,
+                };
+                if let Some(region) = region {
+                    let rt = room_tile_tint(course.room_theme_at_tile(tx, ty));
+                    let idx = (ty as u32 * self.width + tx as u32) as usize;
+                    self.entries[idx] = Some((region, rt));
+                }
+            }
+        }
+    }
+}
+
+/// Global tile cache — rebuilt when the course changes.
+fn tile_cache() -> &'static Mutex<TileCache> {
+    static CACHE: OnceLock<Mutex<TileCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(TileCache::new()))
 }
 
 /// Hit freeze state for anime-style impact pauses.
@@ -445,6 +513,14 @@ pub fn sync_platformer_scene(
 
     let tile_size = breakpoint_platformer::physics::TILE_SIZE;
 
+    // Rebuild tile cache if course changed (new game or first frame)
+    {
+        let mut cache = tile_cache().lock().unwrap_or_else(|e| e.into_inner());
+        if cache.width != state.course.width || cache.height != state.course.height {
+            cache.rebuild(&state.course);
+        }
+    }
+
     // Determine camera room theme for background and lighting
     let camera_theme = state
         .course
@@ -454,9 +530,11 @@ pub fn sync_platformer_scene(
     add_parallax_layers(scene, camera_x, camera_y, camera_theme);
     let white = Vec4::ONE;
 
-    // Tile culling: only render visible columns and rows
-    let visible_half_x = 20.0;
-    let visible_half_y = 15.0;
+    // Tile culling: only render visible columns and rows.
+    // Camera is at z=20, FOV=45°: visible half-width ≈ 15.5, half-height ≈ 8.7 at z=0.
+    // Add 2-tile margin for smooth scrolling.
+    let visible_half_x = 17.0;
+    let visible_half_y = 11.0;
     let min_col = ((camera_x - visible_half_x) / tile_size).floor().max(0.0) as u32;
     let max_col = ((camera_x + visible_half_x) / tile_size)
         .ceil()
@@ -540,16 +618,19 @@ fn render_tiles(
     time: f32,
     water_color: Vec4,
 ) {
+    let cache = tile_cache().lock().unwrap_or_else(|e| e.into_inner());
+
     for y in min_row..max_row {
         for x in min_col..max_col {
-            let tile = state.course.get_tile(x as i32, y as i32);
+            let tx = x as i32;
+            let ty = y as i32;
+            let tile = state.course.get_tile(tx, ty);
 
             // Water tiles use a special material
             if is_water_tile(&tile) {
                 let wx = x as f32 * tile_size + tile_size / 2.0;
                 let wy = y as f32 * tile_size + tile_size / 2.0;
-                // Check if this is a surface tile (empty or non-water above)
-                let above = state.course.get_tile(x as i32, y as i32 + 1);
+                let above = state.course.get_tile(tx, ty + 1);
                 let depth = if is_water_tile(&above) { 0.8 } else { 0.4 };
                 scene.add(
                     MeshType::Quad,
@@ -564,14 +645,35 @@ fn render_tiles(
                 continue;
             }
 
-            let Some(region) = tile_sprite_region(&tile, &state.course, x as i32, y as i32, time)
-            else {
-                continue;
-            };
             let wx = x as f32 * tile_size + tile_size / 2.0;
             let wy = y as f32 * tile_size + tile_size / 2.0;
-            // Apply per-room tile tint for atmospheric stone coloring
-            let rt = room_tile_tint(state.course.room_theme_at_tile(x as i32, y as i32));
+
+            // Try cache first (static tiles: stone, platform, spikes, etc.)
+            if let Some((region, rt)) = cache.get(tx, ty) {
+                let tint = Vec4::new(rt[0], rt[1], rt[2], 1.0);
+                add_sprite_region(
+                    scene,
+                    region,
+                    &SpriteParams {
+                        x: wx,
+                        y: wy,
+                        z: Z_BG_TILES,
+                        w: tile_size,
+                        h: tile_size,
+                        tint,
+                        flip_x: false,
+                        outline: 0.0,
+                        blend_mode: crate::scene::BlendMode::Normal,
+                    },
+                );
+                continue;
+            }
+
+            // Animated or uncached tiles: compute per-frame
+            let Some(region) = tile_sprite_region(&tile, &state.course, tx, ty, time) else {
+                continue;
+            };
+            let rt = room_tile_tint(state.course.room_theme_at_tile(tx, ty));
             let tint = Vec4::new(rt[0], rt[1], rt[2], 1.0);
             add_sprite_region(
                 scene,
@@ -1132,17 +1234,19 @@ pub fn room_theme_ambient_type(
     }
 }
 
-/// Per-room weather configuration: (raining, fog_density).
-pub fn room_theme_weather(theme: breakpoint_platformer::course_gen::RoomTheme) -> (bool, f32) {
+/// Per-room weather configuration: (raining, fog_density, fog_color_rgb).
+pub fn room_theme_weather(
+    theme: breakpoint_platformer::course_gen::RoomTheme,
+) -> (bool, f32, [f32; 3]) {
     use breakpoint_platformer::course_gen::RoomTheme;
     match theme {
-        RoomTheme::Tower => (true, 0.0),      // open sky — rain
-        RoomTheme::Crypt => (false, 0.6),     // thick ground fog
-        RoomTheme::Dungeon => (false, 0.4),   // moderate fog
-        RoomTheme::Corridor => (false, 0.25), // misty corridors
-        RoomTheme::Entrance => (false, 0.1),  // faint haze
-        RoomTheme::GreatHall => (false, 0.1), // faint haze
-        _ => (false, 0.0),
+        RoomTheme::Tower => (true, 0.0, [0.10, 0.10, 0.15]), // open sky — rain, no fog
+        RoomTheme::Crypt => (false, 0.6, [0.08, 0.10, 0.18]), // thick cold blue fog
+        RoomTheme::Dungeon => (false, 0.4, [0.10, 0.12, 0.08]), // sickly green fog
+        RoomTheme::Corridor => (false, 0.25, [0.10, 0.08, 0.12]), // misty purple haze
+        RoomTheme::Entrance => (false, 0.1, [0.12, 0.10, 0.08]), // warm haze
+        RoomTheme::GreatHall => (false, 0.1, [0.12, 0.10, 0.08]), // warm haze
+        _ => (false, 0.0, [0.08, 0.06, 0.12]),               // default dark purple
     }
 }
 
@@ -1200,6 +1304,8 @@ fn collect_torch_lights(
     let (grade_shadows, grade_highlights, grade_contrast, saturation) =
         room_color_grading(center_theme);
 
+    let (_, _, fog_color) = room_theme_weather(center_theme);
+
     SceneLighting {
         lights,
         light_colors,
@@ -1213,21 +1319,8 @@ fn collect_torch_lights(
         ramp_shadow: [0.40, 0.35, 0.48],
         ramp_mid: [0.85, 0.68, 0.45],
         ramp_highlight: [1.0, 0.90, 0.35],
-        posterize: 16.0, // GBA 4-bit banding for authentic look
-    }
-}
-
-/// Map room theme to background atlas ID (10-13, falling back to BG_ATLAS_ID).
-fn room_theme_bg_atlas(theme: breakpoint_platformer::course_gen::RoomTheme) -> u8 {
-    use breakpoint_platformer::course_gen::RoomTheme;
-    match theme {
-        RoomTheme::Entrance
-        | RoomTheme::Corridor
-        | RoomTheme::GreatHall
-        | RoomTheme::ThroneRoom => 10, // Castle Interior
-        RoomTheme::Crypt | RoomTheme::Dungeon => 11, // Underground
-        RoomTheme::Chapel | RoomTheme::Library => 12, // Sacred
-        RoomTheme::Armory | RoomTheme::Tower => 13,  // Fortress/Tower
+        posterize: 48.0, // Subtle banding for GBA-style look
+        fog_color,
     }
 }
 
@@ -1249,14 +1342,15 @@ fn add_parallax_layers(
     camera_y: f32,
     camera_theme: breakpoint_platformer::course_gen::RoomTheme,
 ) {
-    // Try themed atlas first, fall back to default BG atlas
-    let _themed_atlas = room_theme_bg_atlas(camera_theme);
-    // For now, use the default BG atlas (themed atlases loaded when available)
-    let atlas = BG_ATLAS_ID;
+    // Use the main sprite atlas (ID 0) — background content is there
+    let atlas = ATLAS_ID;
+
+    // Pull parallax tint from the room's atmospheric theme
+    let ambient = room_ambient_color(camera_theme);
 
     for &(scroll_factor, z, v_start, v_height, alpha) in &PARALLAX_LAYERS {
         let layer_y = camera_y * scroll_factor + 5.0 * (1.0 - scroll_factor);
-        let tint = Vec4::new(0.80, 0.72, 0.90, alpha);
+        let tint = Vec4::new(ambient[0], ambient[1], ambient[2], alpha);
         scene.add(
             MeshType::Quad,
             MaterialType::Parallax {
