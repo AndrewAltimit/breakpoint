@@ -405,6 +405,7 @@ impl Renderer {
         // Frustum culling: extract frustum planes from the VP matrix and skip
         // objects whose bounding sphere is entirely outside any plane. This avoids
         // draw calls for off-screen objects (significant for Tron with 500+ walls).
+        breakpoint_core::profile!("render_cull");
         let frustum = extract_frustum_planes(&vp);
 
         // Sort by shader program to minimize expensive gl.use_program() switches.
@@ -424,12 +425,14 @@ impl Renderer {
 
         // --- Sprite batching: draw simple sprites (no outline, no dissolve) in bulk ---
         // Partition sprites by blend mode for batched drawing.
+        breakpoint_core::profile!("render_batch");
         let has_batch_program = self.programs.contains_key("sprite_batch");
         if has_batch_program {
             self.ensure_batch_vao();
             self.draw_sprite_batches(&sorted, &vp, scene, fog_density, camera);
         }
 
+        breakpoint_core::profile!("render_draw");
         let gl = &self.gl;
         let mut active_program: &str = "";
         // Track whether lighting uniforms have been set for the current sprite program.
@@ -747,6 +750,7 @@ impl Renderer {
 
         // Post-processing pass: read FBO, draw fullscreen quad with effects
         if use_postfx {
+            breakpoint_core::profile!("render_postfx");
             self.draw_postprocess_pass();
         }
     }

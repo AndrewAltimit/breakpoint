@@ -594,6 +594,55 @@ fn build_tron_hud(_app: &App) -> serde_json::Value {
     serde_json::Value::Null
 }
 
+/// Push profiling data to the JS overlay and emit DevTools performance marks.
+#[cfg(all(target_family = "wasm", feature = "profiling"))]
+pub fn push_profile_data() {
+    let scopes = breakpoint_core::profiling::ProfileFrame::snapshot();
+    if scopes.is_empty() {
+        return;
+    }
+
+    // Emit performance marks for browser DevTools
+    if let Some(window) = web_sys::window() {
+        if let Ok(perf) = js_sys::Reflect::get(&window, &"performance".into()) {
+            if !perf.is_undefined() {
+                for scope in &scopes {
+                    let measure_name = format!("bp:{}", scope.name);
+                    let _ = js_sys::Reflect::apply(
+                        &js_sys::Function::from(
+                            js_sys::Reflect::get(&perf, &"measure".into()).unwrap_or_default(),
+                        ),
+                        &perf,
+                        &js_sys::Array::of3(
+                            &wasm_bindgen::JsValue::from_str(&measure_name),
+                            &wasm_bindgen::JsValue::UNDEFINED,
+                            &wasm_bindgen::JsValue::from_f64(scope.duration_us / 1000.0),
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    // Push scope data as JSON to _breakpointProfileUpdate
+    let scopes_json: Vec<serde_json::Value> = scopes
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "name": s.name,
+                "us": s.duration_us,
+            })
+        })
+        .collect();
+    let json = serde_json::json!({ "scopes": scopes_json });
+    if let Ok(json_str) = serde_json::to_string(&json) {
+        call_window_fn("_breakpointProfileUpdate", Some(&json_str));
+    }
+}
+
+#[cfg(all(not(target_family = "wasm"), feature = "profiling"))]
+pub fn push_profile_data() {}
+
 /// Show fatal error overlay via JS (WebGL2 failure, unrecoverable errors).
 #[cfg(target_family = "wasm")]
 pub fn show_fatal_error(msg: &str) {

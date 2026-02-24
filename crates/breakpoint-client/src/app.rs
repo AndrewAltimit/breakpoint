@@ -276,6 +276,11 @@ impl App {
 
     /// Main frame update, called each requestAnimationFrame.
     pub fn frame(&mut self, timestamp: f64) {
+        #[cfg(feature = "profiling")]
+        breakpoint_core::profiling::ProfileFrame::reset();
+        #[cfg(feature = "profiling")]
+        breakpoint_core::profile!("frame");
+
         let dt = if self.prev_timestamp > 0.0 {
             ((timestamp - self.prev_timestamp) / 1000.0) as f32
         } else {
@@ -292,37 +297,49 @@ impl App {
         }
 
         // Process network messages
-        self.process_network(timestamp);
+        {
+            breakpoint_core::profile!("network");
+            self.process_network(timestamp);
+        }
 
         // Process overlay events
-        self.overlay
-            .process_events(&mut self.overlay_queue, &mut self.audio_events);
+        {
+            breakpoint_core::profile!("overlay");
+            self.overlay
+                .process_events(&mut self.overlay_queue, &mut self.audio_events);
+        }
 
         // State-specific update
-        match self.state {
-            AppState::Lobby => {},
-            AppState::InGame => {
-                self.update_game(dt);
-            },
-            AppState::BetweenRounds => {},
-            AppState::GameOver => {
-                // Auto-return to lobby after 30s
-                if let Some(start) = self.game_over_timestamp {
-                    let elapsed = (timestamp - start) / 1000.0;
-                    if elapsed >= 30.0 {
-                        self.transition_to(AppState::Lobby);
+        {
+            breakpoint_core::profile!("game_update");
+            match self.state {
+                AppState::Lobby => {},
+                AppState::InGame => {
+                    self.update_game(dt);
+                },
+                AppState::BetweenRounds => {},
+                AppState::GameOver => {
+                    // Auto-return to lobby after 30s
+                    if let Some(start) = self.game_over_timestamp {
+                        let elapsed = (timestamp - start) / 1000.0;
+                        if elapsed >= 30.0 {
+                            self.transition_to(AppState::Lobby);
+                        }
                     }
-                }
-            },
+                },
+            }
         }
 
         // Update camera
-        self.camera.update(dt);
+        {
+            breakpoint_core::profile!("camera");
+            self.camera.update(dt);
 
-        // Screen shake
-        if self.screen_shake.timer > 0.0 {
-            self.screen_shake.tick(dt);
-            self.camera.apply_shake(self.screen_shake.offset);
+            // Screen shake
+            if self.screen_shake.timer > 0.0 {
+                self.screen_shake.tick(dt);
+                self.camera.apply_shake(self.screen_shake.offset);
+            }
         }
 
         // Screen flash
@@ -337,14 +354,20 @@ impl App {
         }
 
         // Update and render particles into the scene
-        self.particle_system.tick(dt);
-        self.particle_system.render(&mut self.scene);
+        {
+            breakpoint_core::profile!("particles");
+            self.particle_system.tick(dt);
+            self.particle_system.render(&mut self.scene);
+        }
 
         // Update and render weather
-        self.weather
-            .set_camera(self.camera.position.x, self.camera.position.y);
-        self.weather.tick(dt);
-        self.weather.render(&mut self.scene);
+        {
+            breakpoint_core::profile!("weather");
+            self.weather
+                .set_camera(self.camera.position.x, self.camera.position.y);
+            self.weather.tick(dt);
+            self.weather.render(&mut self.scene);
+        }
 
         // Lightning flash overlay
         if self.weather.lightning_intensity > 0.01 && !self.screen_flash.active {
@@ -397,17 +420,28 @@ impl App {
         } else {
             self.renderer.post_process = crate::renderer::PostProcessConfig::default();
         }
-        self.renderer
-            .draw(&self.scene, &self.camera, dt, clear_color, fog_density);
+        {
+            breakpoint_core::profile!("render");
+            self.renderer
+                .draw(&self.scene, &self.camera, dt, clear_color, fog_density);
+        }
 
         // Draw screen flash overlay after scene (additive blend)
         if self.screen_flash.active {
+            breakpoint_core::profile!("postfx");
             self.renderer
                 .draw_screen_flash(self.screen_flash.color, self.screen_flash.alpha());
         }
 
         // Push UI state to JS
-        bridge::push_ui_state(self);
+        {
+            breakpoint_core::profile!("bridge");
+            bridge::push_ui_state(self);
+        }
+
+        // Push profiling data to JS overlay
+        #[cfg(feature = "profiling")]
+        bridge::push_profile_data();
 
         // End frame
         self.input.end_frame();

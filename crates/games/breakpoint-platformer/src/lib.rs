@@ -488,10 +488,16 @@ impl BreakpointGame for PlatformRacer {
         let mut events = Vec::new();
 
         // 1. Player movement and physics
-        self.process_player_movement(dt);
+        {
+            breakpoint_core::profile!("plat_physics");
+            self.process_player_movement(dt);
+        }
 
         // 2. Player attacks vs enemies
-        let combat_events = self.process_combat();
+        let combat_events = {
+            breakpoint_core::profile!("plat_combat");
+            self.process_combat()
+        };
         // Convert combat events to game events if needed
         for ce in &combat_events {
             if let CombatEvent::PlayerDied { player_id } = ce {
@@ -503,10 +509,16 @@ impl BreakpointGame for PlatformRacer {
         }
 
         // 3. Enemy AI ticks
-        self.process_enemies(dt);
+        {
+            breakpoint_core::profile!("plat_enemies");
+            self.process_enemies(dt);
+        }
 
         // 4. Enemy/projectile vs player damage
-        let damage_events = self.process_damage();
+        let damage_events = {
+            breakpoint_core::profile!("plat_damage");
+            self.process_damage()
+        };
         for ce in &damage_events {
             if let CombatEvent::PlayerDied { player_id } = ce {
                 events.push(GameEvent::ScoreUpdate {
@@ -516,18 +528,25 @@ impl BreakpointGame for PlatformRacer {
             }
         }
 
-        // 5. Power-up collection
-        self.process_powerups();
+        // 5. Power-up collection + tick active power-ups
+        {
+            breakpoint_core::profile!("plat_powerups");
+            self.process_powerups();
+            self.tick_active_powerups(dt);
+        }
 
-        // 6. Tick active power-ups
-        self.tick_active_powerups(dt);
+        // 6. Rubber banding
+        {
+            breakpoint_core::profile!("plat_rubber_band");
+            self.update_rubber_banding();
+        }
 
-        // 7. Rubber banding
-        self.update_rubber_banding();
-
-        // 8. Check finish / round completion
-        let finish_events = self.check_finish();
-        events.extend(finish_events);
+        // 7. Check finish / round completion
+        {
+            breakpoint_core::profile!("plat_finish");
+            let finish_events = self.check_finish();
+            events.extend(finish_events);
+        }
 
         events
     }

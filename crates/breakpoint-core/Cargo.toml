@@ -10,6 +10,7 @@ authors.workspace = true
 [features]
 default = []
 test-helpers = []
+profiling = []
 
 [dependencies]
 serde.workspace = true

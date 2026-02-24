@@ -174,12 +174,22 @@ async fn run_game_tick_loop(
     let is_tron = config.game_id == GameId::Tron;
     let bot_player_ids: Vec<PlayerId> = players.iter().filter(|p| p.is_bot).map(|p| p.id).collect();
 
+    #[cfg(feature = "profiling")]
+    let mut profile_stats = breakpoint_core::profiling::ProfileStats::new(120);
+
     loop {
         tokio::select! {
             _ = interval.tick() => {
+                #[cfg(feature = "profiling")]
+                breakpoint_core::profiling::ProfileFrame::reset();
+                #[cfg(feature = "profiling")]
+                breakpoint_core::profile!("tick");
+
                 // Generate bot inputs for Tron games
                 #[cfg(feature = "tron")]
                 if is_tron && !bot_player_ids.is_empty() {
+                    #[cfg(feature = "profiling")]
+                    breakpoint_core::profile!("bot_input");
                     let bot_state = game.serialize_state();
                     if let Ok(state) =
                         rmp_serde::from_slice::<breakpoint_tron::TronState>(&bot_state)
@@ -205,23 +215,56 @@ async fn run_game_tick_loop(
                 };
 
                 tick += 1;
-                let events = game.update(1.0 / tick_rate, &inputs);
+                let events = {
+                    #[cfg(feature = "profiling")]
+                    breakpoint_core::profile!("game_update");
+                    game.update(1.0 / tick_rate, &inputs)
+                };
 
                 // Broadcast game state (reuse buffer to avoid per-tick allocations)
-                game.serialize_state_into(&mut state_buf);
+                {
+                    #[cfg(feature = "profiling")]
+                    breakpoint_core::profile!("serialize_state");
+                    game.serialize_state_into(&mut state_buf);
+                }
                 let gs_msg = ServerMessage::GameState(GameStateMsg {
                     tick,
                     state_data: state_buf.clone(),
                 });
-                match encode_server_message(&gs_msg) {
-                    Ok(data) => {
-                        let _ = broadcast_tx.send(GameBroadcast::EncodedMessage(
-                            Bytes::from(data),
-                        ));
-                    },
-                    Err(e) => tracing::error!(
-                        tick, error = %e, "Failed to encode GameState"
-                    ),
+                {
+                    #[cfg(feature = "profiling")]
+                    breakpoint_core::profile!("encode_broadcast");
+                    match encode_server_message(&gs_msg) {
+                        Ok(data) => {
+                            let _ = broadcast_tx.send(GameBroadcast::EncodedMessage(
+                                Bytes::from(data),
+                            ));
+                        },
+                        Err(e) => tracing::error!(
+                            tick, error = %e, "Failed to encode GameState"
+                        ),
+                    }
+                }
+
+                // Record profiling stats
+                #[cfg(feature = "profiling")]
+                {
+                    let scopes =
+                        breakpoint_core::profiling::ProfileFrame::snapshot();
+                    profile_stats.record_frame(&scopes);
+                    if tick.is_multiple_of(100) {
+                        let report = profile_stats.compute();
+                        for s in &report {
+                            tracing::info!(
+                                scope = s.name,
+                                min_us = format!("{:.0}", s.min_us),
+                                max_us = format!("{:.0}", s.max_us),
+                                mean_us = format!("{:.0}", s.mean_us),
+                                p95_us = format!("{:.0}", s.p95_us),
+                                "profile"
+                            );
+                        }
+                    }
                 }
 
                 // Check for round completion

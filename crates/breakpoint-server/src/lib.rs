@@ -45,7 +45,10 @@ pub fn build_app(config: ServerConfig) -> (Router<()>, AppState) {
             axum::routing::post(api::claim_event),
         )
         .route("/events/stream", axum::routing::get(sse::event_stream))
-        .route("/status", axum::routing::get(api::get_status))
+        .route("/status", axum::routing::get(api::get_status));
+    #[cfg(feature = "profiling")]
+    let api_routes = api_routes.route("/profile", axum::routing::get(api::get_profile));
+    let api_routes = api_routes
         .layer(middleware::from_fn_with_state(
             state.clone(),
             bearer_auth_layer,

@@ -16,6 +16,13 @@ golf = ["dep:breakpoint-golf"]
 platformer = ["dep:breakpoint-platformer"]
 lasertag = ["dep:breakpoint-lasertag"]
 tron = ["dep:breakpoint-tron"]
+profiling = [
+    "breakpoint-core/profiling",
+    "breakpoint-golf?/profiling",
+    "breakpoint-platformer?/profiling",
+    "breakpoint-lasertag?/profiling",
+    "breakpoint-tron?/profiling",
+]
 
 [dependencies]
 breakpoint-core = { path = "../breakpoint-core" }

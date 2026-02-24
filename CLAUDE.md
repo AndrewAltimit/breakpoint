@@ -47,6 +47,11 @@ wasm-pack build crates/breakpoint-client --target web --out-dir ../../web/pkg
 
 # Server with GitHub polling feature
 cargo build -p breakpoint-server --features github-poller
+
+# Build with profiling (feature-gated, zero overhead when disabled)
+cargo build -p breakpoint-server --features profiling
+wasm-pack build crates/breakpoint-client --target web --out-dir ../../web/pkg --features profiling
+cargo clippy --workspace --all-targets --features profiling -- -D warnings
 ```
 
 ### Containerized CI (matches what GitHub Actions runs)

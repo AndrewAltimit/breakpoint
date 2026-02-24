@@ -207,6 +207,30 @@ pub async fn get_status(State(state): State<AppState>) -> Json<StatusResponse> {
     })
 }
 
+/// GET /api/v1/profile — returns profiling stats (only available with `profiling` feature).
+#[cfg(feature = "profiling")]
+pub async fn get_profile() -> Json<breakpoint_core::profiling::ProfileReport> {
+    // Server-side profiling stats are collected per game loop task (thread-local),
+    // so this endpoint returns the calling thread's stats. For a more complete
+    // picture, the game loop logs stats via tracing every 100 ticks.
+    let scopes = breakpoint_core::profiling::ProfileFrame::snapshot();
+    Json(breakpoint_core::profiling::ProfileReport {
+        frame_count: 0,
+        scopes: scopes
+            .iter()
+            .map(|s| breakpoint_core::profiling::ScopeStats {
+                name: s.name.to_string(),
+                min_us: s.duration_us,
+                max_us: s.duration_us,
+                mean_us: s.duration_us,
+                p95_us: s.duration_us,
+                last_us: s.duration_us,
+                sample_count: 1,
+            })
+            .collect(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
