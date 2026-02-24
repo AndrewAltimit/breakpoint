@@ -4,6 +4,7 @@ precision highp float;
 in vec2 v_uv;
 in vec3 v_world_pos;
 in vec4 v_tint;
+in float v_outline;
 
 uniform sampler2D u_texture;
 
@@ -31,6 +32,21 @@ void main() {
 
     // MBAACC-style binary alpha: snap to 0 or 1 for crisp pixel edges
     color.a = step(0.5, color.a) * v_tint.a;
+
+    // Pixel outline: if this pixel is transparent but a neighbor has alpha, draw dark outline
+    if (v_outline > 0.0 && color.a < 0.01) {
+        vec2 texel_size = 1.0 / vec2(textureSize(u_texture, 0));
+        float max_a = 0.0;
+        max_a = max(max_a, texture(u_texture, v_uv + vec2(texel_size.x, 0.0)).a);
+        max_a = max(max_a, texture(u_texture, v_uv - vec2(texel_size.x, 0.0)).a);
+        max_a = max(max_a, texture(u_texture, v_uv + vec2(0.0, texel_size.y)).a);
+        max_a = max(max_a, texture(u_texture, v_uv - vec2(0.0, texel_size.y)).a);
+        if (max_a > 0.5) {
+            frag_color = vec4(0.08, 0.04, 0.12, 0.9);
+            return;
+        }
+        discard;
+    }
 
     if (color.a < 0.01) {
         discard;

@@ -1018,12 +1018,12 @@ impl App {
         // methods only mutate disjoint fields (particles, audio_events,
         // prev_hp_map, prev_enemy_alive, prev_powerups).
         let state = unsafe { &*state_ptr };
-        let sheet = crate::sprite_atlas::build_platformer_atlas();
+        let sheet = crate::game::platformer_render::atlas();
 
-        self.detect_player_hp_changes(state, &sheet);
-        self.detect_enemy_kills(state, &sheet);
-        self.detect_powerup_collections(state, &sheet);
-        self.emit_torch_embers(state, &sheet);
+        self.detect_player_hp_changes(state, sheet);
+        self.detect_enemy_kills(state, sheet);
+        self.detect_powerup_collections(state, sheet);
+        self.emit_torch_embers(state, sheet);
     }
 
     /// Configure weather system based on the current room theme under the camera.

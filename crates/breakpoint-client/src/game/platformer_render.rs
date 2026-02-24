@@ -195,7 +195,7 @@ fn squash_stretch_scale(
 }
 
 /// Cached sprite sheet — built once on first call.
-fn atlas() -> &'static SpriteSheet {
+pub fn atlas() -> &'static SpriteSheet {
     static SHEET: OnceLock<SpriteSheet> = OnceLock::new();
     SHEET.get_or_init(build_platformer_atlas)
 }
@@ -225,26 +225,43 @@ fn add_sprite_region(scene: &mut Scene, region: &SpriteRegion, params: &SpritePa
 }
 
 /// Helper: add a sprite quad with dissolve effect.
+/// Non-dissolve sprites are written directly to the scene batch buffer,
+/// bypassing RenderObject creation (avoids frustum cull + sort overhead).
 fn add_sprite_region_with_dissolve(
     scene: &mut Scene,
     region: &SpriteRegion,
     params: &SpriteParams,
     dissolve: f32,
 ) {
-    scene.add(
-        MeshType::Quad,
-        MaterialType::Sprite {
-            atlas_id: ATLAS_ID,
-            sprite_rect: region.to_vec4(),
-            tint: params.tint,
-            flip_x: params.flip_x,
-            dissolve,
-            outline: params.outline,
-            blend_mode: params.blend_mode,
-        },
-        Transform::from_xyz(params.x, params.y, params.z)
-            .with_scale(Vec3::new(params.w, params.h, 1.0)),
-    );
+    if dissolve == 0.0 {
+        scene.add_batch_sprite(
+            params.x,
+            params.y,
+            params.z,
+            params.w,
+            params.h,
+            region.to_vec4(),
+            params.tint,
+            params.flip_x,
+            params.outline,
+            params.blend_mode,
+        );
+    } else {
+        scene.add(
+            MeshType::Quad,
+            MaterialType::Sprite {
+                atlas_id: ATLAS_ID,
+                sprite_rect: region.to_vec4(),
+                tint: params.tint,
+                flip_x: params.flip_x,
+                dissolve,
+                outline: params.outline,
+                blend_mode: params.blend_mode,
+            },
+            Transform::from_xyz(params.x, params.y, params.z)
+                .with_scale(Vec3::new(params.w, params.h, 1.0)),
+        );
+    }
 }
 
 /// Helper: add a sprite quad by name (defaults: z=Z_BG_TILES, no outline, normal blend).

@@ -209,6 +209,12 @@ pub struct Scene {
     /// Number of objects in the static layer (tiles, background).
     /// Objects up to this count are preserved by `clear_dynamic()`.
     static_count: usize,
+    /// Pre-built sprite batch vertex data (10 floats/vertex × 6 vertices/sprite).
+    /// Written by game render code via `add_batch_sprite()`, consumed directly by
+    /// the renderer — bypasses RenderObject creation, frustum culling, and sorting.
+    pub batch_normal: Vec<f32>,
+    pub batch_additive: Vec<f32>,
+    pub batch_subtractive: Vec<f32>,
 }
 
 impl Scene {
@@ -217,6 +223,10 @@ impl Scene {
             objects: Vec::with_capacity(2048),
             next_id: 1,
             static_count: 0,
+            // Pre-allocate batch buffers: ~600 tiles × 10 floats × 6 verts = 36000 floats.
+            batch_normal: Vec::with_capacity(40_000),
+            batch_additive: Vec::with_capacity(4_000),
+            batch_subtractive: Vec::with_capacity(4_000),
             lighting: SceneLighting {
                 lights: Vec::new(),
                 light_colors: Vec::new(),
@@ -269,6 +279,59 @@ impl Scene {
         self.objects.retain(|o| o.id != id);
     }
 
+    /// Add a sprite directly to the pre-built batch buffer (10 floats × 6 vertices).
+    /// Bypasses RenderObject creation for batchable sprites (no dissolve).
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_batch_sprite(
+        &mut self,
+        x: f32,
+        y: f32,
+        z: f32,
+        w: f32,
+        h: f32,
+        sprite_rect: Vec4,
+        tint: Vec4,
+        flip_x: bool,
+        outline: f32,
+        blend_mode: BlendMode,
+    ) {
+        let half_x = w * 0.5;
+        let half_y = h * 0.5;
+        let x0 = x - half_x;
+        let x1 = x + half_x;
+        let y0 = y - half_y;
+        let y1 = y + half_y;
+
+        let (u0, u1) = if flip_x {
+            (sprite_rect.z, sprite_rect.x)
+        } else {
+            (sprite_rect.x, sprite_rect.z)
+        };
+        let v0 = sprite_rect.w; // bottom
+        let v1 = sprite_rect.y; // top
+
+        let tr = tint.x;
+        let tg = tint.y;
+        let tb = tint.z;
+        let ta = tint.w;
+        let ol = outline;
+
+        let buf = match blend_mode {
+            BlendMode::Normal => &mut self.batch_normal,
+            BlendMode::Additive => &mut self.batch_additive,
+            BlendMode::Subtractive => &mut self.batch_subtractive,
+        };
+        // 10 floats per vertex: pos(3) + uv(2) + tint(4) + outline(1)
+        // Triangle 1: bottom-left, top-right, bottom-right
+        buf.extend_from_slice(&[x0, y0, z, u0, v0, tr, tg, tb, ta, ol]);
+        buf.extend_from_slice(&[x1, y1, z, u1, v1, tr, tg, tb, ta, ol]);
+        buf.extend_from_slice(&[x1, y0, z, u1, v0, tr, tg, tb, ta, ol]);
+        // Triangle 2: bottom-left, top-left, top-right
+        buf.extend_from_slice(&[x0, y0, z, u0, v0, tr, tg, tb, ta, ol]);
+        buf.extend_from_slice(&[x0, y1, z, u0, v1, tr, tg, tb, ta, ol]);
+        buf.extend_from_slice(&[x1, y1, z, u1, v1, tr, tg, tb, ta, ol]);
+    }
+
     /// Clear all objects, preserving allocated capacity for reuse.
     pub fn clear(&mut self) {
         self.objects.clear();
@@ -276,6 +339,9 @@ impl Scene {
         // is rebuilt each frame. Prevents u32 overflow at 800 objs * 60fps.
         self.next_id = 1;
         self.static_count = 0;
+        self.batch_normal.clear();
+        self.batch_additive.clear();
+        self.batch_subtractive.clear();
     }
 
     /// Mark the current objects as the static layer (tiles, background).
@@ -290,6 +356,10 @@ impl Scene {
         self.objects.truncate(self.static_count);
         // Reset next_id from the static boundary to prevent overflow.
         self.next_id = self.static_count as ObjectId + 1;
+        // Batch buffers are rebuilt each frame.
+        self.batch_normal.clear();
+        self.batch_additive.clear();
+        self.batch_subtractive.clear();
     }
 
     /// Whether static objects have been marked (tiles are cached).
