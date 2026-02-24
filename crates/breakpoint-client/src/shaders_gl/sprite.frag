@@ -103,6 +103,9 @@ void main() {
             float attenuation = 1.0 - smoothstep(0.0, radius, dist);
             light += attenuation * intensity * lcolor;
         }
+        // GBA-style: enforce minimum visibility floor so dark areas stay readable
+        // Uses u_ambient to scale the floor: darker rooms get a lower floor
+        light = max(light, vec3(u_ambient * 0.4));
         color.rgb *= clamp(light, vec3(0.0), vec3(1.5));
     }
 
@@ -113,7 +116,7 @@ void main() {
 
     // Ground fog effect
     if (u_fog_density > 0.01) {
-        vec3 fog_color = vec3(0.08, 0.06, 0.12);
+        vec3 fog_color = vec3(0.12, 0.10, 0.18);
         float fog = smoothstep(0.0, 3.0, v_world_pos.y);
         color.rgb = mix(fog_color, color.rgb, mix(1.0 - u_fog_density * 0.5, 1.0, fog));
     }
