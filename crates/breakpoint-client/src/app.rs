@@ -59,9 +59,6 @@ pub struct ActiveGame {
     pub game_id: GameId,
     pub tick: u32,
     pub tick_accumulator: f32,
-    pub prev_state: Option<Vec<u8>>,
-    pub interp_alpha: f32,
-    pub cached_state_bytes: Option<Vec<u8>>,
 }
 
 /// Network role for this client.
@@ -706,12 +703,8 @@ impl App {
                 match breakpoint_core::net::protocol::decode_game_state_fast(data) {
                     Ok((tick, state_data)) => {
                         if let Some(ref mut active) = self.game {
-                            active.prev_state = Some(active.game.serialize_state());
                             active.game.apply_state(state_data);
-                            // Re-serialize full state (with course) for client-side reads.
-                            active.cached_state_bytes = Some(active.game.serialize_state());
                             active.tick = tick;
-                            active.interp_alpha = 0.0;
                         }
                     },
                     Err(e) => {
@@ -779,8 +772,6 @@ impl App {
                 Ok(ServerMessage::CourseUpdate(cu)) => {
                     if let Some(ref mut active) = self.game {
                         active.game.apply_course_data(&cu.data);
-                        // Invalidate cached bytes so next read picks up new course.
-                        active.cached_state_bytes = None;
                     }
                 },
                 Err(e) => {
@@ -933,9 +924,11 @@ impl App {
             #[cfg(feature = "platformer")]
             GameId::Platformer => {
                 if let Some(ref role) = self.network_role
-                    && let Some(s) =
-                        read_game_state::<breakpoint_platformer::PlatformerState>(active)
-                    && let Some(p) = s.players.get(&role.local_player_id)
+                    && let Some(racer) = active
+                        .game
+                        .as_any()
+                        .downcast_ref::<breakpoint_platformer::PlatformRacer>()
+                    && let Some(p) = racer.state().players.get(&role.local_player_id)
                 {
                     self.camera.set_mode(CameraMode::PlatformerFollow {
                         player_pos: Vec2::new(p.x, p.y),
@@ -1006,18 +999,31 @@ impl App {
     /// Detect HP changes and enemy kills in the platformer for particle/audio effects.
     #[cfg(feature = "platformer")]
     fn detect_platformer_events(&mut self) {
-        let Some(ref active) = self.game else {
-            return;
+        // Obtain a pointer to the platformer state, then drop the immutable
+        // borrow of self.game so the detect_* methods can take &mut self.
+        let state_ptr: *const breakpoint_platformer::PlatformerState = {
+            let Some(ref active) = self.game else {
+                return;
+            };
+            let Some(racer) = active
+                .game
+                .as_any()
+                .downcast_ref::<breakpoint_platformer::PlatformRacer>()
+            else {
+                return;
+            };
+            racer.state()
         };
-        let Some(state) = read_game_state::<breakpoint_platformer::PlatformerState>(active) else {
-            return;
-        };
+        // SAFETY: self.game is not modified by any code below; the detect_*
+        // methods only mutate disjoint fields (particles, audio_events,
+        // prev_hp_map, prev_enemy_alive, prev_powerups).
+        let state = unsafe { &*state_ptr };
         let sheet = crate::sprite_atlas::build_platformer_atlas();
 
-        self.detect_player_hp_changes(&state, &sheet);
-        self.detect_enemy_kills(&state, &sheet);
-        self.detect_powerup_collections(&state, &sheet);
-        self.emit_torch_embers(&state, &sheet);
+        self.detect_player_hp_changes(state, &sheet);
+        self.detect_enemy_kills(state, &sheet);
+        self.detect_powerup_collections(state, &sheet);
+        self.emit_torch_embers(state, &sheet);
     }
 
     /// Configure weather system based on the current room theme under the camera.
@@ -1026,9 +1032,14 @@ impl App {
         let Some(ref active) = self.game else {
             return;
         };
-        let Some(state) = read_game_state::<breakpoint_platformer::PlatformerState>(active) else {
+        let Some(racer) = active
+            .game
+            .as_any()
+            .downcast_ref::<breakpoint_platformer::PlatformRacer>()
+        else {
             return;
         };
+        let state = racer.state();
         let tile_size = breakpoint_platformer::physics::TILE_SIZE;
         let theme = state.course.room_theme_at_tile(
             (self.camera.position.x / tile_size) as i32,
@@ -1284,15 +1295,21 @@ impl App {
             },
             #[cfg(feature = "platformer")]
             GameId::Platformer => {
-                crate::game::platformer_render::sync_platformer_scene(
-                    &mut self.scene,
-                    active,
-                    &self.theme,
-                    dt,
-                    self.camera.position.x,
-                    self.camera.position.y,
-                    self.renderer.time(),
-                );
+                if let Some(racer) = active
+                    .game
+                    .as_any()
+                    .downcast_ref::<breakpoint_platformer::PlatformRacer>()
+                {
+                    crate::game::platformer_render::sync_platformer_scene(
+                        &mut self.scene,
+                        racer.state(),
+                        &self.theme,
+                        dt,
+                        self.camera.position.x,
+                        self.camera.position.y,
+                        self.renderer.time(),
+                    );
+                }
             },
             #[cfg(feature = "lasertag")]
             GameId::LaserTag => {
@@ -1377,9 +1394,6 @@ impl App {
             game_id,
             tick: 0,
             tick_accumulator: 0.0,
-            prev_state: None,
-            interp_alpha: 0.0,
-            cached_state_bytes: None,
         });
         self.network_role = Some(NetworkRole {
             is_leader: self.lobby.is_leader,

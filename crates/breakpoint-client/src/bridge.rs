@@ -170,11 +170,14 @@ fn build_platformer_hud(app: &App) -> serde_json::Value {
         return serde_json::Value::Null;
     }
 
-    let state: Option<breakpoint_platformer::PlatformerState> =
-        crate::game::read_game_state(active);
-    let Some(state) = state else {
+    let Some(racer) = active
+        .game
+        .as_any()
+        .downcast_ref::<breakpoint_platformer::PlatformRacer>()
+    else {
         return serde_json::Value::Null;
     };
+    let state = racer.state();
 
     let players_json: Vec<serde_json::Value> = app
         .lobby
@@ -282,8 +285,29 @@ fn build_platformer_hud(app: &App) -> serde_json::Value {
     })
 }
 
+/// Cached minimap grid data (rooms, connections, grid dimensions).
+/// Only rebuilt when `course_version` changes (wall breaks are rare).
+#[cfg(target_family = "wasm")]
+struct MinimapCache {
+    course_version: u32,
+    grid_cols: u32,
+    grid_rows: u32,
+    room_w: u32,
+    room_h: u32,
+    rooms: Vec<serde_json::Value>,
+    connections: Vec<serde_json::Value>,
+}
+
+#[cfg(target_family = "wasm")]
+fn minimap_cache() -> &'static std::sync::Mutex<Option<MinimapCache>> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<Option<MinimapCache>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(None))
+}
+
 /// Build compact minimap data for the 2D labyrinth.
 /// Sends room grid positions, connections, themes, and player locations.
+/// Grid data is cached and only rebuilt when the course version changes.
 #[cfg(target_family = "wasm")]
 fn build_platformer_minimap(
     state: &breakpoint_platformer::PlatformerState,
@@ -291,84 +315,104 @@ fn build_platformer_minimap(
 ) -> serde_json::Value {
     use breakpoint_platformer::course_gen::{GRID_COLS, GRID_ROWS, ROOM_H, ROOM_W, Tile};
 
-    let course = &state.course;
+    let mut guard = minimap_cache().lock().unwrap_or_else(|e| e.into_inner());
 
-    // Build room list: [col, row, has_finish, has_checkpoint, theme_color_index]
-    let mut rooms = Vec::new();
-    let mut connections = Vec::new();
-    for col in 0..GRID_COLS {
-        for row in 0..GRID_ROWS {
-            let bx = col * ROOM_W + ROOM_W / 2;
-            let by = row * ROOM_H + ROOM_H / 2;
-            if course.get_tile(bx as i32, by as i32) != Tile::Empty {
-                continue;
-            }
-            let idx = col as usize * GRID_ROWS as usize + row as usize;
-            let dist = if idx < course.room_distances.len() {
-                course.room_distances[idx]
-            } else {
-                0
-            };
-            // Check for finish tile in room
-            let mut has_finish = false;
-            let mut has_checkpoint = false;
-            for ty in (row * ROOM_H)..((row + 1) * ROOM_H) {
-                for tx in (col * ROOM_W)..((col + 1) * ROOM_W) {
-                    match course.get_tile(tx as i32, ty as i32) {
-                        Tile::Finish => has_finish = true,
-                        Tile::Checkpoint => has_checkpoint = true,
-                        _ => {},
-                    }
+    // Rebuild grid data if course version changed
+    let needs_rebuild = guard
+        .as_ref()
+        .map(|c| c.course_version != state.course_version)
+        .unwrap_or(true);
+
+    if needs_rebuild {
+        let course = &state.course;
+        let mut rooms = Vec::new();
+        let mut connections = Vec::new();
+        for col in 0..GRID_COLS {
+            for row in 0..GRID_ROWS {
+                let bx = col * ROOM_W + ROOM_W / 2;
+                let by = row * ROOM_H + ROOM_H / 2;
+                if course.get_tile(bx as i32, by as i32) != Tile::Empty {
+                    continue;
                 }
-            }
-            rooms.push(serde_json::json!([
-                col,
-                row,
-                dist,
-                has_finish,
-                has_checkpoint
-            ]));
-
-            // Check connections to right and up neighbors
-            if col + 1 < GRID_COLS {
-                let nbx = (col + 1) * ROOM_W + ROOM_W / 2;
-                if course.get_tile(nbx as i32, by as i32) == Tile::Empty {
-                    // Check if there's a doorway between them
-                    let wall_x = (col + 1) * ROOM_W;
-                    let mid_y = row * ROOM_H + ROOM_H / 2;
-                    let mut has_door = false;
-                    for dy in 0..4 {
-                        if course.get_tile(wall_x as i32, (mid_y + dy) as i32) != Tile::StoneBrick {
-                            has_door = true;
-                            break;
+                let idx = col as usize * GRID_ROWS as usize + row as usize;
+                let dist = if idx < course.room_distances.len() {
+                    course.room_distances[idx]
+                } else {
+                    0
+                };
+                let mut has_finish = false;
+                let mut has_checkpoint = false;
+                for ty in (row * ROOM_H)..((row + 1) * ROOM_H) {
+                    for tx in (col * ROOM_W)..((col + 1) * ROOM_W) {
+                        match course.get_tile(tx as i32, ty as i32) {
+                            Tile::Finish => has_finish = true,
+                            Tile::Checkpoint => has_checkpoint = true,
+                            _ => {},
                         }
                     }
-                    if has_door {
-                        connections.push(serde_json::json!([col, row, col + 1, row]));
-                    }
                 }
-            }
-            if row + 1 < GRID_ROWS {
-                let nby = (row + 1) * ROOM_H + ROOM_H / 2;
-                if course.get_tile(bx as i32, nby as i32) == Tile::Empty {
-                    let wall_y = (row + 1) * ROOM_H;
-                    let mid_x = col * ROOM_W + ROOM_W / 2;
-                    let mut has_door = false;
-                    for dx in 0..4 {
-                        if course.get_tile((mid_x + dx) as i32, wall_y as i32) != Tile::StoneBrick {
-                            has_door = true;
-                            break;
+                rooms.push(serde_json::json!([
+                    col,
+                    row,
+                    dist,
+                    has_finish,
+                    has_checkpoint
+                ]));
+
+                if col + 1 < GRID_COLS {
+                    let nbx = (col + 1) * ROOM_W + ROOM_W / 2;
+                    if course.get_tile(nbx as i32, by as i32) == Tile::Empty {
+                        let wall_x = (col + 1) * ROOM_W;
+                        let mid_y = row * ROOM_H + ROOM_H / 2;
+                        let mut has_door = false;
+                        for dy in 0..4 {
+                            if course.get_tile(wall_x as i32, (mid_y + dy) as i32)
+                                != Tile::StoneBrick
+                            {
+                                has_door = true;
+                                break;
+                            }
+                        }
+                        if has_door {
+                            connections.push(serde_json::json!([col, row, col + 1, row]));
                         }
                     }
-                    if has_door {
-                        connections.push(serde_json::json!([col, row, col, row + 1]));
+                }
+                if row + 1 < GRID_ROWS {
+                    let nby = (row + 1) * ROOM_H + ROOM_H / 2;
+                    if course.get_tile(bx as i32, nby as i32) == Tile::Empty {
+                        let wall_y = (row + 1) * ROOM_H;
+                        let mid_x = col * ROOM_W + ROOM_W / 2;
+                        let mut has_door = false;
+                        for dx in 0..4 {
+                            if course.get_tile((mid_x + dx) as i32, wall_y as i32)
+                                != Tile::StoneBrick
+                            {
+                                has_door = true;
+                                break;
+                            }
+                        }
+                        if has_door {
+                            connections.push(serde_json::json!([col, row, col, row + 1]));
+                        }
                     }
                 }
             }
         }
+        *guard = Some(MinimapCache {
+            course_version: state.course_version,
+            grid_cols: GRID_COLS,
+            grid_rows: GRID_ROWS,
+            room_w: ROOM_W,
+            room_h: ROOM_H,
+            rooms,
+            connections,
+        });
     }
 
-    // Player dots: [x, y, color_index, is_active]
+    let cached = guard.as_ref().unwrap();
+
+    // Player dots are rebuilt every call (~6 iterations, cheap).
     let player_dots: Vec<serde_json::Value> = lobby_players
         .iter()
         .enumerate()
@@ -381,12 +425,12 @@ fn build_platformer_minimap(
         .collect();
 
     serde_json::json!({
-        "gridCols": GRID_COLS,
-        "gridRows": GRID_ROWS,
-        "roomW": ROOM_W,
-        "roomH": ROOM_H,
-        "rooms": rooms,
-        "connections": connections,
+        "gridCols": cached.grid_cols,
+        "gridRows": cached.grid_rows,
+        "roomW": cached.room_w,
+        "roomH": cached.room_h,
+        "rooms": cached.rooms,
+        "connections": cached.connections,
         "dots": player_dots,
     })
 }

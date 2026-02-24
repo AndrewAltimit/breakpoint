@@ -663,6 +663,10 @@ impl BreakpointGame for PlatformRacer {
         }
     }
 
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn apply_input(&mut self, player_id: PlayerId, input: &[u8]) {
         match rmp_serde::from_slice::<PlatformerInput>(input) {
             Err(e) => {

@@ -85,13 +85,10 @@ pub fn send_player_input(
 }
 
 /// Deserialize the current game state from the active game.
+/// Used by non-platformer games (golf, lasertag, tron) which have small states.
+/// Platformer uses zero-copy downcast via `as_any()` instead.
 pub fn read_game_state<S: serde::de::DeserializeOwned>(active_game: &ActiveGame) -> Option<S> {
-    let bytes = if let Some(ref cached) = active_game.cached_state_bytes {
-        cached.as_slice()
-    } else {
-        return rmp_serde::from_slice(&active_game.game.serialize_state()).ok();
-    };
-    rmp_serde::from_slice(bytes).ok()
+    rmp_serde::from_slice(&active_game.game.serialize_state()).ok()
 }
 
 #[cfg(test)]

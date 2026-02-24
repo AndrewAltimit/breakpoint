@@ -3,8 +3,6 @@ use std::sync::{Mutex, OnceLock};
 
 use glam::{Vec3, Vec4};
 
-use crate::app::ActiveGame;
-use crate::game::read_game_state;
 use crate::scene::{MaterialType, MeshType, Scene, SceneLighting, Transform};
 use crate::sprite_atlas::{
     SpriteAnimation, SpriteRegion, SpriteSheet, bitmask_tile_for_group,
@@ -469,18 +467,13 @@ fn powerup_sprite_name(kind: &breakpoint_platformer::powerups::PowerUpKind) -> &
 /// Sync the scene with the current platformer game state using flat sprites.
 pub fn sync_platformer_scene(
     scene: &mut Scene,
-    active: &ActiveGame,
+    state: &breakpoint_platformer::PlatformerState,
     theme: &Theme,
     dt: f32,
     camera_x: f32,
     camera_y: f32,
     time: f32,
 ) {
-    let state: Option<breakpoint_platformer::PlatformerState> = read_game_state(active);
-    let Some(state) = state else {
-        return;
-    };
-
     // Hit freeze: detect enemy kills and pause rendering for impact weight.
     {
         let mut freeze = hit_freeze().lock().unwrap_or_else(|e| e.into_inner());
@@ -544,7 +537,7 @@ pub fn sync_platformer_scene(
 
     // Collect torch lights for dynamic lighting
     scene.lighting = collect_torch_lights(
-        &state,
+        state,
         tile_size,
         min_col,
         max_col,
@@ -559,7 +552,7 @@ pub fn sync_platformer_scene(
     let water_color = Vec4::new(wc[0], wc[1], wc[2], wc[3]);
     render_tiles(
         scene,
-        &state,
+        state,
         tile_size,
         min_col,
         max_col,
@@ -570,19 +563,19 @@ pub fn sync_platformer_scene(
     );
 
     // God rays for Chapel rooms (from stained glass light sources)
-    render_godrays(scene, &state, tile_size, camera_x, camera_y);
+    render_godrays(scene, state, tile_size, camera_x, camera_y);
 
     // Render enemies
-    render_enemies(scene, &state, tile_size, theme, time);
+    render_enemies(scene, state, tile_size, theme, time);
 
     // Render enemy projectiles
-    render_projectiles(scene, &state, tile_size, time);
+    render_projectiles(scene, state, tile_size, time);
 
     // Render players
-    render_players(scene, &state, tile_size, white, time, dt);
+    render_players(scene, state, tile_size, white, time, dt);
 
     // Render uncollected powerups
-    render_powerups(scene, &state, tile_size, white);
+    render_powerups(scene, state, tile_size, white);
 }
 
 /// Per-room tile tint for atmospheric coloring of stone/brick surfaces.

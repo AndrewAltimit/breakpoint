@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::collections::HashMap;
 use std::fmt;
 use std::time::Duration;
@@ -121,6 +122,9 @@ pub trait BreakpointGame: Send + Sync {
     /// Apply course/map data received from the server.
     /// Default is a no-op for games without separate course data.
     fn apply_course_data(&mut self, _data: &[u8]) {}
+
+    /// Downcast to concrete type for zero-copy state access.
+    fn as_any(&self) -> &dyn Any;
 }
 
 /// Game metadata for the lobby selection screen.
@@ -194,6 +198,10 @@ macro_rules! breakpoint_game_boilerplate {
 
         fn is_round_complete(&self) -> bool {
             self.state.round_complete
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
         }
     };
 }
