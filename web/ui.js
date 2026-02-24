@@ -508,20 +508,75 @@
     }
 
     // ── Platformer HUD ─────────────────────────────────
-    const platformerHudEl   = $("platformer-hud");
-    const platformerMode    = $("platformer-mode");
-    const platformerHazard  = $("platformer-hazard");
+    const platformerHudEl    = $("platformer-hud");
+    const platformerMode     = $("platformer-mode");
+    const platformerRacePos  = $("platformer-race-pos");
+    const platformerHp       = $("platformer-hp");
+    const platformerStatus   = $("platformer-status");
     const platformerRankings = $("platformer-rankings");
+    const platformerPowerupBar  = $("platformer-powerup-bar");
+    const platformerPowerupName = $("platformer-powerup-name");
+    const platformerPowerupFill = $("platformer-powerup-fill");
+    const platformerMinimap     = $("platformer-minimap");
+    const platformerMinimapCtx  = platformerMinimap ? platformerMinimap.getContext("2d") : null;
+    const platformerCheckpointToast = $("platformer-checkpoint-toast");
+    const platformerRoomToast = $("platformer-room-toast");
+    let prevPlatformerCheckpoint = 0;
+    let prevPlatformerRoom = "";
+    let platformerMinimapFrame  = 0;
+    let checkpointToastTimer    = null;
+    let roomToastTimer          = null;
+
+    const PLATFORMER_PLAYER_COLORS = [
+        "#7cf", "#f93", "#7f7", "#f7f", "#97f", "#f90", "#0fb", "#f44",
+    ];
 
     function updatePlatformerHud(state) {
         const hud = state.platformerHud;
         if (!hud || !hud.players) {
             if (platformerHudEl) platformerHudEl.classList.add("hidden");
+            if (platformerMinimap) platformerMinimap.classList.remove("visible");
+            prevPlatformerCheckpoint = 0;
             return;
         }
         platformerHudEl.classList.remove("hidden");
         platformerMode.textContent = hud.mode || "Race";
-        platformerHazard.textContent = hud.mode === "Survival" ? `Hazard: ${Math.round(hud.hazardY)}` : "";
+
+        // Race position
+        if (hud.racePosition && hud.totalRacers) {
+            platformerRacePos.textContent = `${hud.racePosition}/${hud.totalRacers}`;
+        } else {
+            platformerRacePos.textContent = "";
+        }
+
+        // HP hearts
+        const hp = hud.localPlayerHp || 0;
+        const maxHp = hud.localPlayerMaxHp || 3;
+        let heartsHtml = "";
+        for (let i = 0; i < maxHp; i++) {
+            heartsHtml += i < hp
+                ? '<span class="heart full">\u2764</span>'
+                : '<span class="heart empty">\u2764</span>';
+        }
+        platformerHp.innerHTML = heartsHtml;
+
+        // Powerup timer bar
+        updatePlatformerPowerupBar(hud);
+
+        // Status line: deaths + checkpoint
+        let statusParts = [];
+        const deaths = hud.localPlayerDeaths || 0;
+        if (deaths > 0) statusParts.push(`Deaths: ${deaths}`);
+        if (hud.totalCheckpoints > 0) {
+            statusParts.push(`CP: ${hud.localCheckpoint}/${hud.totalCheckpoints}`);
+        }
+        platformerStatus.textContent = statusParts.join(" | ");
+
+        // Checkpoint toast
+        updateCheckpointToast(hud);
+
+        // Room name reveal
+        updateRoomNameToast(hud);
 
         // Checkpoint progress
         const finished = hud.finishCount || 0;
@@ -534,6 +589,10 @@
             let status = "";
             if (p.eliminated) { cls = " eliminated"; status = "OUT"; }
             else if (p.finished) { cls = " finished"; status = p.finishRank ? `#${p.finishRank}` : "DONE"; }
+            else {
+                const hpText = `${p.hp}/${p.maxHp}`;
+                status = hpText;
+            }
             html += `<div class="hud-player-row${cls}">
                 <span class="name">${escapeHtml(p.name)}</span>
                 <span class="value">${status}</span>
@@ -543,6 +602,176 @@
             html += `<div style="font-size:0.65rem;color:#667;margin-top:4px;">${checkpointText}</div>`;
         }
         platformerRankings.innerHTML = html;
+
+        // Minimap — update every 3rd frame for performance
+        platformerMinimapFrame++;
+        if (platformerMinimapFrame % 3 === 0) {
+            updatePlatformerMinimap(hud);
+        }
+    }
+
+    function updatePlatformerPowerupBar(hud) {
+        const timer = hud.powerupTimer || 0;
+        const maxTimer = hud.powerupMaxTimer || 0;
+        const powerup = hud.localPlayerPowerup;
+
+        if (timer > 0 && maxTimer > 0 && powerup) {
+            platformerPowerupBar.classList.remove("hidden");
+            platformerPowerupName.textContent = powerup;
+            const pct = Math.min(100, (timer / maxTimer) * 100);
+            platformerPowerupFill.style.width = pct + "%";
+        } else {
+            platformerPowerupBar.classList.add("hidden");
+        }
+    }
+
+    function updateCheckpointToast(hud) {
+        const cp = hud.localCheckpoint || 0;
+        if (cp > prevPlatformerCheckpoint && prevPlatformerCheckpoint > 0) {
+            // Show checkpoint toast
+            if (platformerCheckpointToast) {
+                platformerCheckpointToast.classList.remove("hidden", "show");
+                // Force reflow to restart animation
+                void platformerCheckpointToast.offsetWidth;
+                platformerCheckpointToast.classList.add("show");
+                if (checkpointToastTimer) clearTimeout(checkpointToastTimer);
+                checkpointToastTimer = setTimeout(() => {
+                    platformerCheckpointToast.classList.add("hidden");
+                    platformerCheckpointToast.classList.remove("show");
+                }, 1300);
+            }
+        }
+        prevPlatformerCheckpoint = cp;
+    }
+
+    // Room theme display names
+    const ROOM_DISPLAY_NAMES = {
+        "Entrance": "Castle Entrance",
+        "Corridor": "Stone Corridor",
+        "GreatHall": "Great Hall",
+        "Library": "Ancient Library",
+        "Armory": "The Armory",
+        "Chapel": "Sacred Chapel",
+        "Crypt": "The Crypt",
+        "Tower": "Tower Ascent",
+        "Dungeon": "Dark Dungeon",
+        "ThroneRoom": "Throne Room",
+    };
+
+    function updateRoomNameToast(hud) {
+        const room = hud.roomName || "";
+        if (room && room !== prevPlatformerRoom && prevPlatformerRoom !== "") {
+            if (platformerRoomToast) {
+                const displayName = ROOM_DISPLAY_NAMES[room] || room;
+                platformerRoomToast.textContent = displayName;
+                platformerRoomToast.classList.remove("hidden", "show");
+                void platformerRoomToast.offsetWidth;
+                platformerRoomToast.classList.add("show");
+                if (roomToastTimer) clearTimeout(roomToastTimer);
+                roomToastTimer = setTimeout(() => {
+                    platformerRoomToast.classList.add("hidden");
+                    platformerRoomToast.classList.remove("show");
+                }, 2600);
+            }
+        }
+        prevPlatformerRoom = room;
+    }
+
+    function updatePlatformerMinimap(hud) {
+        if (!platformerMinimapCtx || !hud.minimap) return;
+
+        const mm = hud.minimap;
+        if (!mm.rooms || !mm.gridCols) return;
+
+        platformerMinimap.classList.add("visible");
+        const ctx = platformerMinimapCtx;
+        const cw = platformerMinimap.width;
+        const ch = platformerMinimap.height;
+
+        ctx.clearRect(0, 0, cw, ch);
+
+        const cols = mm.gridCols;
+        const rows = mm.gridRows;
+        const pad = 4;
+        const roomW = (cw - pad * 2) / cols;
+        const roomH = (ch - pad * 2) / rows;
+        const inset = 2;
+
+        // Distance-based color palette
+        const DIST_COLORS = [
+            "rgba(80, 180, 80, 0.7)",   // 0 entrance (green)
+            "rgba(100, 140, 180, 0.7)", // 1 corridor (blue-gray)
+            "rgba(130, 120, 160, 0.7)", // 2-3 halls
+            "rgba(160, 100, 100, 0.7)", // 4-5 armory
+            "rgba(120, 80, 140, 0.7)",  // 6-7 tower
+            "rgba(180, 60, 80, 0.7)",   // 8+ deep
+        ];
+
+        // Draw connections first (behind rooms)
+        ctx.strokeStyle = "rgba(150, 140, 130, 0.5)";
+        ctx.lineWidth = 2;
+        if (mm.connections) {
+            for (const c of mm.connections) {
+                const x1 = pad + c[0] * roomW + roomW / 2;
+                const y1 = ch - (pad + c[1] * roomH + roomH / 2);
+                const x2 = pad + c[2] * roomW + roomW / 2;
+                const y2 = ch - (pad + c[3] * roomH + roomH / 2);
+                ctx.beginPath();
+                ctx.moveTo(x1, y1);
+                ctx.lineTo(x2, y2);
+                ctx.stroke();
+            }
+        }
+
+        // Draw rooms as rectangles
+        for (const r of mm.rooms) {
+            const col = r[0], row = r[1], dist = r[2];
+            const hasFinish = r[3], hasCheckpoint = r[4];
+            const rx = pad + col * roomW + inset;
+            const ry = ch - (pad + (row + 1) * roomH) + inset;
+            const rw = roomW - inset * 2;
+            const rh = roomH - inset * 2;
+
+            // Color by distance tier
+            const colorIdx = Math.min(Math.floor(dist / 2), DIST_COLORS.length - 1);
+            ctx.fillStyle = DIST_COLORS[colorIdx];
+            ctx.fillRect(rx, ry, rw, rh);
+
+            // Highlight finish room
+            if (hasFinish) {
+                ctx.strokeStyle = "rgba(100, 255, 100, 0.9)";
+                ctx.lineWidth = 2;
+                ctx.strokeRect(rx, ry, rw, rh);
+            }
+            // Highlight checkpoint rooms
+            if (hasCheckpoint) {
+                ctx.strokeStyle = "rgba(255, 221, 102, 0.8)";
+                ctx.lineWidth = 1.5;
+                ctx.strokeRect(rx + 1, ry + 1, rw - 2, rh - 2);
+            }
+        }
+
+        // Draw player dots positioned within the room grid
+        if (mm.dots) {
+            const tileRoomW = mm.roomW || 32;
+            const tileRoomH = mm.roomH || 24;
+            for (const dot of mm.dots) {
+                if (!dot[3]) continue;
+                // Convert world position to grid position
+                const gridX = dot[0] / tileRoomW;
+                const gridY = dot[1] / tileRoomH;
+                const px = pad + gridX * roomW;
+                const py = ch - (pad + gridY * roomH);
+                const color = PLATFORMER_PLAYER_COLORS[dot[2] % 8];
+                ctx.fillStyle = color;
+                ctx.shadowColor = color;
+                ctx.shadowBlur = 4;
+                ctx.beginPath();
+                ctx.arc(px, py, 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.shadowBlur = 0;
+        }
     }
 
     // ── LaserTag HUD ───────────────────────────────────

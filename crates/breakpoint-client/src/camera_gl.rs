@@ -97,14 +97,22 @@ impl Camera {
                 self.up = Vec3::Y;
             },
             CameraMode::PlatformerFollow { player_pos } => {
-                let camera_z = -25.0;
-                let look_y_offset = 3.0;
+                let camera_z = 20.0; // Wider view for 32×24 rooms
+                let look_y_offset = 2.0;
                 let target_pos = Vec3::new(player_pos.x, player_pos.y + look_y_offset, camera_z);
                 let look_at = Vec3::new(player_pos.x, player_pos.y + look_y_offset, 0.0);
 
                 self.position = self.position.lerp(target_pos, lerp_factor);
                 self.target = self.target.lerp(look_at, lerp_factor);
                 self.up = Vec3::Y;
+
+                // Sub-pixel snap: align camera to pixel grid to prevent tile shimmer
+                let pixels_per_unit = 16.0; // 16px tiles
+                let pixel_size = 1.0 / pixels_per_unit;
+                self.position.x = (self.position.x / pixel_size).round() * pixel_size;
+                self.position.y = (self.position.y / pixel_size).round() * pixel_size;
+                self.target.x = (self.target.x / pixel_size).round() * pixel_size;
+                self.target.y = (self.target.y / pixel_size).round() * pixel_size;
             },
             CameraMode::LaserTagFixed => {
                 self.position = Vec3::new(25.0, 62.0, 25.0);

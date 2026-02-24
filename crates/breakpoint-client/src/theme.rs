@@ -80,6 +80,22 @@ pub struct PlatformerTheme {
     pub platform_tile: [f32; 3],
     pub finish_tile: [f32; 3],
     pub hud_text: [f32; 4],
+    pub hp_full: [f32; 3],
+    pub hp_empty: [f32; 3],
+    pub enemy_tint: [f32; 3],
+    pub invincibility_flash: [f32; 3],
+    /// CRT scanline intensity (0.0-1.0).
+    pub scanline_intensity: f32,
+    /// Bloom intensity (0.0-1.0).
+    pub bloom_intensity: f32,
+    /// Vignette intensity (0.0-1.0).
+    pub vignette_intensity: f32,
+    /// CRT barrel distortion curvature (0.0-1.0).
+    pub crt_curvature: f32,
+    /// Ambient light level when torches are present (0.0-1.0).
+    pub torch_ambient: f32,
+    /// Water tile tint color (RGBA).
+    pub water_color: [f32; 4],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,12 +199,23 @@ impl Default for GolfTheme {
 impl Default for PlatformerTheme {
     fn default() -> Self {
         Self {
-            solid_tile: [0.4, 0.4, 0.5],
-            grass_tile: [0.3, 0.6, 0.3],
-            hazard_tile: [0.9, 0.2, 0.1],
-            platform_tile: [0.2, 0.5, 0.9],
-            finish_tile: [1.0, 0.85, 0.1],
-            hud_text: [0.9, 0.9, 0.9, 0.85],
+            // Castlevania GBA/DS gothic palette — dark but readable
+            solid_tile: [0.35, 0.30, 0.40],
+            grass_tile: [0.25, 0.35, 0.25],
+            hazard_tile: [0.7, 0.12, 0.12],
+            platform_tile: [0.40, 0.30, 0.22],
+            finish_tile: [0.8, 0.65, 0.08],
+            hud_text: [0.85, 0.82, 0.78, 0.9],
+            hp_full: [0.7, 0.08, 0.08],
+            hp_empty: [0.2, 0.15, 0.15],
+            enemy_tint: [0.85, 0.82, 0.78],
+            invincibility_flash: [1.0, 0.9, 0.6],
+            scanline_intensity: 0.05,
+            bloom_intensity: 0.45,
+            vignette_intensity: 0.20,
+            crt_curvature: 0.08,
+            torch_ambient: 0.15,
+            water_color: [0.08, 0.2, 0.4, 0.65],
         }
     }
 }

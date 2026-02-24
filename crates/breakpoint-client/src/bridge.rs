@@ -176,11 +176,6 @@ fn build_platformer_hud(app: &App) -> serde_json::Value {
         return serde_json::Value::Null;
     };
 
-    let mode_str = match state.mode {
-        breakpoint_platformer::GameMode::Race => "Race",
-        breakpoint_platformer::GameMode::Survival => "Survival",
-    };
-
     let players_json: Vec<serde_json::Value> = app
         .lobby
         .players
@@ -189,6 +184,9 @@ fn build_platformer_hud(app: &App) -> serde_json::Value {
             let ps = state.players.get(&p.id);
             let eliminated = ps.map(|s| s.eliminated).unwrap_or(false);
             let finished = ps.map(|s| s.finished).unwrap_or(false);
+            let hp = ps.map(|s| s.hp).unwrap_or(0);
+            let max_hp = ps.map(|s| s.max_hp).unwrap_or(3);
+            let deaths = ps.map(|s| s.deaths).unwrap_or(0);
             let finish_rank = state
                 .finish_order
                 .iter()
@@ -200,17 +198,196 @@ fn build_platformer_hud(app: &App) -> serde_json::Value {
                 "eliminated": eliminated,
                 "finished": finished,
                 "finishRank": finish_rank,
+                "hp": hp,
+                "maxHp": max_hp,
+                "deaths": deaths,
             })
         })
         .collect();
 
+    // Local player HUD data
+    let local_id = app.network_role.as_ref().map(|r| r.local_player_id);
+    let local_ps = local_id.and_then(|id| state.players.get(&id));
+    let local_hp = local_ps.map(|s| s.hp).unwrap_or(0);
+    let local_max_hp = local_ps.map(|s| s.max_hp).unwrap_or(3);
+    let local_deaths = local_ps.map(|s| s.deaths).unwrap_or(0);
+    let local_powerup = local_ps
+        .and_then(|s| s.active_powerup.as_ref())
+        .map(|p| format!("{p:?}"))
+        .unwrap_or_default();
+
+    // Powerup timer: find first finite-duration active powerup for local player
+    let (powerup_timer, powerup_max_timer) = local_id
+        .and_then(|id| state.active_powerups.get(&id))
+        .and_then(|pups| {
+            pups.iter()
+                .find(|p| p.remaining.is_finite() && p.remaining > 0.0)
+        })
+        .map(|p| {
+            use breakpoint_core::powerup::PowerUpKind as _;
+            (p.remaining, p.kind.duration())
+        })
+        .unwrap_or((0.0, 0.0));
+
+    // Checkpoint progress
+    let local_checkpoint = local_ps.map(|s| s.last_checkpoint_id).unwrap_or(0);
+    let total_checkpoints = state.course.checkpoint_positions.len();
+
+    // Race position: rank by room distance (then checkpoint_id as tiebreaker)
+    let mut positions: Vec<(u64, u16, u16)> = state
+        .players
+        .iter()
+        .filter(|(_, p)| !p.eliminated)
+        .map(|(id, p)| (*id, p.current_room_distance, p.last_checkpoint_id))
+        .collect();
+    positions.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| b.2.cmp(&a.2)));
+    let race_pos = local_id
+        .and_then(|id| positions.iter().position(|(pid, _, _)| *pid == id))
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let total_racers = positions.len();
+
+    // Minimap: compact course + player data (sent each frame but very small)
+    let minimap = build_platformer_minimap(&state, &app.lobby.players);
+
+    // Room name from local player position
+    let room_name = local_ps
+        .map(|ps| {
+            let tile_size = breakpoint_platformer::physics::TILE_SIZE;
+            let theme = state
+                .course
+                .room_theme_at_tile((ps.x / tile_size) as i32, (ps.y / tile_size) as i32);
+            format!("{theme:?}")
+        })
+        .unwrap_or_default();
+
     serde_json::json!({
-        "mode": mode_str,
+        "mode": "Race",
         "players": players_json,
-        "hazardY": state.hazard_y,
-        "eliminationCount": state.elimination_order.len(),
+        "enemyCount": state.enemies.iter().filter(|e| e.alive).count(),
         "finishCount": state.finish_order.len(),
         "roundTimer": state.round_timer,
+        "localPlayerHp": local_hp,
+        "localPlayerMaxHp": local_max_hp,
+        "localPlayerDeaths": local_deaths,
+        "localPlayerPowerup": local_powerup,
+        "powerupTimer": powerup_timer,
+        "powerupMaxTimer": powerup_max_timer,
+        "racePosition": race_pos,
+        "totalRacers": total_racers,
+        "localCheckpoint": local_checkpoint,
+        "totalCheckpoints": total_checkpoints,
+        "minimap": minimap,
+        "roomName": room_name,
+    })
+}
+
+/// Build compact minimap data for the 2D labyrinth.
+/// Sends room grid positions, connections, themes, and player locations.
+#[cfg(target_family = "wasm")]
+fn build_platformer_minimap(
+    state: &breakpoint_platformer::PlatformerState,
+    lobby_players: &[breakpoint_core::player::Player],
+) -> serde_json::Value {
+    use breakpoint_platformer::course_gen::{GRID_COLS, GRID_ROWS, ROOM_H, ROOM_W, Tile};
+
+    let course = &state.course;
+
+    // Build room list: [col, row, has_finish, has_checkpoint, theme_color_index]
+    let mut rooms = Vec::new();
+    let mut connections = Vec::new();
+    for col in 0..GRID_COLS {
+        for row in 0..GRID_ROWS {
+            let bx = col * ROOM_W + ROOM_W / 2;
+            let by = row * ROOM_H + ROOM_H / 2;
+            if course.get_tile(bx as i32, by as i32) != Tile::Empty {
+                continue;
+            }
+            let idx = col as usize * GRID_ROWS as usize + row as usize;
+            let dist = if idx < course.room_distances.len() {
+                course.room_distances[idx]
+            } else {
+                0
+            };
+            // Check for finish tile in room
+            let mut has_finish = false;
+            let mut has_checkpoint = false;
+            for ty in (row * ROOM_H)..((row + 1) * ROOM_H) {
+                for tx in (col * ROOM_W)..((col + 1) * ROOM_W) {
+                    match course.get_tile(tx as i32, ty as i32) {
+                        Tile::Finish => has_finish = true,
+                        Tile::Checkpoint => has_checkpoint = true,
+                        _ => {},
+                    }
+                }
+            }
+            rooms.push(serde_json::json!([
+                col,
+                row,
+                dist,
+                has_finish,
+                has_checkpoint
+            ]));
+
+            // Check connections to right and up neighbors
+            if col + 1 < GRID_COLS {
+                let nbx = (col + 1) * ROOM_W + ROOM_W / 2;
+                if course.get_tile(nbx as i32, by as i32) == Tile::Empty {
+                    // Check if there's a doorway between them
+                    let wall_x = (col + 1) * ROOM_W;
+                    let mid_y = row * ROOM_H + ROOM_H / 2;
+                    let mut has_door = false;
+                    for dy in 0..4 {
+                        if course.get_tile(wall_x as i32, (mid_y + dy) as i32) != Tile::StoneBrick {
+                            has_door = true;
+                            break;
+                        }
+                    }
+                    if has_door {
+                        connections.push(serde_json::json!([col, row, col + 1, row]));
+                    }
+                }
+            }
+            if row + 1 < GRID_ROWS {
+                let nby = (row + 1) * ROOM_H + ROOM_H / 2;
+                if course.get_tile(bx as i32, nby as i32) == Tile::Empty {
+                    let wall_y = (row + 1) * ROOM_H;
+                    let mid_x = col * ROOM_W + ROOM_W / 2;
+                    let mut has_door = false;
+                    for dx in 0..4 {
+                        if course.get_tile((mid_x + dx) as i32, wall_y as i32) != Tile::StoneBrick {
+                            has_door = true;
+                            break;
+                        }
+                    }
+                    if has_door {
+                        connections.push(serde_json::json!([col, row, col, row + 1]));
+                    }
+                }
+            }
+        }
+    }
+
+    // Player dots: [x, y, color_index, is_active]
+    let player_dots: Vec<serde_json::Value> = lobby_players
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| {
+            state
+                .players
+                .get(&p.id)
+                .map(|ps| serde_json::json!([ps.x, ps.y, i % 8, !ps.eliminated]))
+        })
+        .collect();
+
+    serde_json::json!({
+        "gridCols": GRID_COLS,
+        "gridRows": GRID_ROWS,
+        "roomW": ROOM_W,
+        "roomH": ROOM_H,
+        "rooms": rooms,
+        "connections": connections,
+        "dots": player_dots,
     })
 }
 

@@ -8,10 +8,13 @@ pub mod game;
 mod input;
 pub mod net_client;
 pub mod overlay;
+pub mod particles;
 mod renderer;
 mod scene;
+pub mod sprite_atlas;
 mod storage;
 pub mod theme;
+pub mod weather;
 
 use wasm_bindgen::prelude::*;
 

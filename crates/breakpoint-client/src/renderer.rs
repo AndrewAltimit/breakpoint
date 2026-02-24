@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use glam::{Mat4, Vec3, Vec4};
 use wasm_bindgen::JsCast;
 use web_sys::{
-    WebGl2RenderingContext as GL, WebGlProgram, WebGlShader, WebGlUniformLocation,
-    WebGlVertexArrayObject,
+    WebGl2RenderingContext as GL, WebGlFramebuffer, WebGlProgram, WebGlRenderbuffer, WebGlShader,
+    WebGlTexture, WebGlUniformLocation, WebGlVertexArrayObject,
 };
 
 use crate::camera_gl::Camera;
@@ -24,13 +24,102 @@ struct ShaderProgram {
     u_intensity: Option<WebGlUniformLocation>,
     u_camera_pos: Option<WebGlUniformLocation>,
     u_fog_density: Option<WebGlUniformLocation>,
+    u_fog_color: Option<WebGlUniformLocation>,
     u_resolution: Option<WebGlUniformLocation>,
+    // Sprite shader uniforms
+    u_sprite_rect: Option<WebGlUniformLocation>,
+    u_tint: Option<WebGlUniformLocation>,
+    u_flip_x: Option<WebGlUniformLocation>,
+    u_texture: Option<WebGlUniformLocation>,
+    u_outline_width: Option<WebGlUniformLocation>,
+    u_dissolve: Option<WebGlUniformLocation>,
+    /// Palette texture unit (deferred: indexed palette rendering not yet active).
+    #[allow(dead_code)]
+    u_palette: Option<WebGlUniformLocation>,
+    u_use_palette: Option<WebGlUniformLocation>,
+    // Parallax shader uniforms
+    u_uv_offset: Option<WebGlUniformLocation>,
+    u_uv_scale: Option<WebGlUniformLocation>,
+    // Water shader uniforms
+    u_depth: Option<WebGlUniformLocation>,
+    u_wave_speed: Option<WebGlUniformLocation>,
+    // Lighting uniforms (for lit sprite shader, 32 colored lights)
+    u_lights: Vec<Option<WebGlUniformLocation>>,
+    u_light_color: Vec<Option<WebGlUniformLocation>>,
+    u_light_count: Option<WebGlUniformLocation>,
+    u_ambient: Option<WebGlUniformLocation>,
+    u_ambient_color: Option<WebGlUniformLocation>,
+    // GBA-style color ramp uniforms
+    u_ramp_shadow: Option<WebGlUniformLocation>,
+    u_ramp_mid: Option<WebGlUniformLocation>,
+    u_ramp_highlight: Option<WebGlUniformLocation>,
+    u_posterize: Option<WebGlUniformLocation>,
+    // Whip trail uniforms
+    u_arc_progress: Option<WebGlUniformLocation>,
+    // Post-process uniforms
+    u_scene_texture: Option<WebGlUniformLocation>,
+    u_scanline_intensity: Option<WebGlUniformLocation>,
+    u_bloom_intensity: Option<WebGlUniformLocation>,
+    u_vignette_intensity: Option<WebGlUniformLocation>,
+    u_crt_curvature: Option<WebGlUniformLocation>,
+    u_grade_shadows: Option<WebGlUniformLocation>,
+    u_grade_highlights: Option<WebGlUniformLocation>,
+    u_grade_contrast: Option<WebGlUniformLocation>,
+    u_saturation: Option<WebGlUniformLocation>,
+    u_chromatic_aberration: Option<WebGlUniformLocation>,
+    u_film_grain: Option<WebGlUniformLocation>,
 }
 
 /// Cached mesh GPU buffers.
 struct MeshBuffers {
     vao: WebGlVertexArrayObject,
     vertex_count: i32,
+}
+
+/// Post-processing framebuffer resources.
+struct PostProcessFBO {
+    framebuffer: WebGlFramebuffer,
+    color_texture: WebGlTexture,
+    depth_renderbuffer: WebGlRenderbuffer,
+    width: u32,
+    height: u32,
+}
+
+/// Post-processing configuration.
+pub struct PostProcessConfig {
+    pub scanline_intensity: f32,
+    pub bloom_intensity: f32,
+    pub vignette_intensity: f32,
+    pub crt_curvature: f32,
+    /// Per-room color grading: shadow tint (RGB).
+    pub grade_shadows: [f32; 3],
+    /// Per-room color grading: highlight tint (RGB).
+    pub grade_highlights: [f32; 3],
+    /// Contrast adjustment (1.0 = neutral).
+    pub grade_contrast: f32,
+    /// Color saturation (1.0 = neutral, 0.0 = grayscale).
+    pub saturation: f32,
+    /// Chromatic aberration strength in pixels (0.0 = off, triggered on damage).
+    pub chromatic_aberration: f32,
+    /// Film grain intensity (0.0 = off).
+    pub film_grain: f32,
+}
+
+impl Default for PostProcessConfig {
+    fn default() -> Self {
+        Self {
+            scanline_intensity: 0.0,
+            bloom_intensity: 0.0,
+            vignette_intensity: 0.0,
+            crt_curvature: 0.0,
+            grade_shadows: [1.0, 1.0, 1.0],
+            grade_highlights: [1.0, 1.0, 1.0],
+            grade_contrast: 1.0,
+            saturation: 1.0,
+            chromatic_aberration: 0.0,
+            film_grain: 0.0,
+        }
+    }
 }
 
 /// WebGL2 renderer.
@@ -43,6 +132,21 @@ pub struct Renderer {
     meshes: HashMap<MeshKey, MeshBuffers>,
     time: f32,
     context_lost: std::cell::Cell<bool>,
+    /// Texture atlases keyed by ID.
+    atlases: HashMap<u8, WebGlTexture>,
+    /// Palette textures keyed by ID (256x1 RGBA, for indexed color mode).
+    /// Deferred: not yet populated; infra for future indexed palette rendering.
+    #[allow(dead_code)]
+    palettes: HashMap<u8, WebGlTexture>,
+    /// Post-processing FBO (created lazily on first draw with post-fx).
+    post_fbo: Option<PostProcessFBO>,
+    /// Post-processing settings.
+    pub post_process: PostProcessConfig,
+    /// Sprite batch: reusable CPU-side vertex buffer (cleared each frame).
+    batch_vertices: Vec<f32>,
+    /// Sprite batch: VAO + VBO for dynamic upload (created lazily).
+    batch_vao: Option<WebGlVertexArrayObject>,
+    batch_vbo: Option<web_sys::WebGlBuffer>,
 }
 
 /// Key for mesh cache — identifies unique mesh configurations.
@@ -52,6 +156,7 @@ enum MeshKey {
     Cylinder { segments: u16 },
     Cuboid,
     Plane,
+    Quad,
 }
 
 impl From<&MeshType> for MeshKey {
@@ -61,6 +166,7 @@ impl From<&MeshType> for MeshKey {
             MeshType::Cylinder { segments } => MeshKey::Cylinder { segments },
             MeshType::Cuboid => MeshKey::Cuboid,
             MeshType::Plane => MeshKey::Plane,
+            MeshType::Quad => MeshKey::Quad,
         }
     }
 }
@@ -149,6 +255,13 @@ impl Renderer {
             meshes: HashMap::new(),
             time: 0.0,
             context_lost,
+            atlases: HashMap::new(),
+            palettes: HashMap::new(),
+            post_fbo: None,
+            post_process: PostProcessConfig::default(),
+            batch_vertices: Vec::with_capacity(9 * 6 * 1024),
+            batch_vao: None,
+            batch_vbo: None,
         };
 
         renderer.compile_programs()?;
@@ -167,6 +280,10 @@ impl Renderer {
     pub fn rebuild_resources(&mut self) -> Result<(), String> {
         self.programs.clear();
         self.meshes.clear();
+        self.atlases.clear();
+        self.palettes.clear();
+        // Post-process FBO is GPU-side only; invalidated by context loss.
+        self.post_fbo = None;
         self.compile_programs()?;
         self.generate_meshes();
         Ok(())
@@ -260,9 +377,28 @@ impl Renderer {
 
         self.resize();
 
-        let gl = &self.gl;
-        gl.clear_color(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
-        gl.clear(GL::COLOR_BUFFER_BIT | GL::DEPTH_BUFFER_BIT);
+        // If any post-processing effects are enabled, render to FBO
+        let use_postfx = self.post_process.scanline_intensity > 0.01
+            || self.post_process.bloom_intensity > 0.01
+            || self.post_process.vignette_intensity > 0.01
+            || self.post_process.crt_curvature > 0.01
+            || self.post_process.chromatic_aberration > 0.01
+            || self.post_process.film_grain > 0.01
+            || (self.post_process.grade_contrast - 1.0).abs() > 0.01
+            || (self.post_process.saturation - 1.0).abs() > 0.01;
+
+        if use_postfx {
+            self.ensure_post_fbo();
+            if let Some(fbo) = &self.post_fbo {
+                self.gl
+                    .bind_framebuffer(GL::FRAMEBUFFER, Some(&fbo.framebuffer));
+                self.gl.viewport(0, 0, fbo.width as i32, fbo.height as i32);
+            }
+        }
+
+        self.gl
+            .clear_color(clear_color.x, clear_color.y, clear_color.z, clear_color.w);
+        self.gl.clear(GL::COLOR_BUFFER_BIT | GL::DEPTH_BUFFER_BIT);
 
         let vp = camera.view_projection();
 
@@ -286,8 +422,30 @@ impl Renderer {
             .collect();
         sorted.sort_by_key(|obj| material_sort_key(&obj.material));
 
+        // --- Sprite batching: draw simple sprites (no outline, no dissolve) in bulk ---
+        // Partition sprites by blend mode for batched drawing.
+        let has_batch_program = self.programs.contains_key("sprite_batch");
+        if has_batch_program {
+            self.ensure_batch_vao();
+            self.draw_sprite_batches(&sorted, &vp, scene, fog_density, camera);
+        }
+
+        let gl = &self.gl;
         let mut active_program: &str = "";
+        // Track whether lighting uniforms have been set for the current sprite program.
+        // These are scene-global (same for all sprites), so we set them once per program switch.
+        let mut sprite_lighting_set = false;
         for obj in &sorted {
+            // Skip sprites that were drawn in the batch pass
+            if has_batch_program
+                && matches!(
+                    &obj.material,
+                    MaterialType::Sprite { outline, dissolve, .. }
+                        if *outline == 0.0 && *dissolve == 0.0
+                )
+            {
+                continue;
+            }
             let model = obj.transform.matrix();
             let mvp = vp * model;
 
@@ -297,6 +455,15 @@ impl Renderer {
                 MaterialType::Ripple { .. } => "ripple",
                 MaterialType::Glow { .. } => "glow",
                 MaterialType::TronWall { .. } => "tronwall",
+                MaterialType::Sprite { .. } => "sprite",
+                MaterialType::Parallax { .. } => "parallax",
+                MaterialType::Water { .. } => "water",
+                MaterialType::WhipTrail { .. } => "whip",
+                MaterialType::SlashArc { .. } => "slash_arc",
+                MaterialType::MagicCircle { .. } => "magic_circle",
+                MaterialType::GodRays { .. } => "godrays",
+                MaterialType::FogLayer { .. } => "fog_layer",
+                MaterialType::HealthBar { .. } => "health_bar",
             };
 
             let Some(prog) = self.programs.get(program_name) else {
@@ -306,6 +473,7 @@ impl Renderer {
             if program_name != active_program {
                 gl.use_program(Some(&prog.program));
                 active_program = program_name;
+                sprite_lighting_set = false;
             }
 
             // Common uniforms
@@ -347,6 +515,188 @@ impl Renderer {
                     let tiles = width / s.y.max(0.01);
                     set_vec2(gl, &prog.u_resolution, tiles, 3.0);
                 },
+                MaterialType::Sprite {
+                    atlas_id,
+                    sprite_rect,
+                    tint,
+                    flip_x,
+                    dissolve,
+                    outline,
+                    blend_mode,
+                } => {
+                    // Bind atlas texture
+                    gl.active_texture(GL::TEXTURE0);
+                    if let Some(tex) = self.atlases.get(atlas_id) {
+                        gl.bind_texture(GL::TEXTURE_2D, Some(tex));
+                    }
+                    if let Some(loc) = &prog.u_texture {
+                        gl.uniform1i(Some(loc), 0);
+                    }
+                    set_vec4(gl, &prog.u_sprite_rect, sprite_rect);
+                    set_vec4(gl, &prog.u_tint, tint);
+                    set_f32(gl, &prog.u_flip_x, if *flip_x { 1.0 } else { 0.0 });
+                    set_f32(gl, &prog.u_outline_width, *outline);
+                    set_f32(gl, &prog.u_dissolve, *dissolve);
+                    set_f32(gl, &prog.u_use_palette, 0.0);
+                    // Blend mode
+                    match blend_mode {
+                        crate::scene::BlendMode::Normal => {
+                            gl.blend_func(GL::SRC_ALPHA, GL::ONE_MINUS_SRC_ALPHA);
+                            gl.blend_equation(GL::FUNC_ADD);
+                        },
+                        crate::scene::BlendMode::Additive => {
+                            gl.blend_func(GL::SRC_ALPHA, GL::ONE);
+                            gl.blend_equation(GL::FUNC_ADD);
+                        },
+                        crate::scene::BlendMode::Subtractive => {
+                            gl.blend_func(GL::SRC_ALPHA, GL::ONE);
+                            gl.blend_equation(GL::FUNC_REVERSE_SUBTRACT);
+                        },
+                    }
+                    // Set lighting uniforms ONCE per sprite program switch
+                    // (lights/ambient/ramp are scene-global, same for all sprites)
+                    if !sprite_lighting_set {
+                        sprite_lighting_set = true;
+                        let light_count = scene.lighting.lights.len().min(32) as i32;
+                        if let Some(loc) = &prog.u_light_count {
+                            gl.uniform1i(Some(loc), light_count);
+                        }
+                        set_f32(gl, &prog.u_ambient, scene.lighting.ambient);
+                        if let Some(loc) = &prog.u_ambient_color {
+                            let ac = &scene.lighting.ambient_color;
+                            gl.uniform3f(Some(loc), ac[0], ac[1], ac[2]);
+                        }
+                        if let Some(loc) = &prog.u_ramp_shadow {
+                            let rs = &scene.lighting.ramp_shadow;
+                            gl.uniform3f(Some(loc), rs[0], rs[1], rs[2]);
+                        }
+                        if let Some(loc) = &prog.u_ramp_mid {
+                            let rm = &scene.lighting.ramp_mid;
+                            gl.uniform3f(Some(loc), rm[0], rm[1], rm[2]);
+                        }
+                        if let Some(loc) = &prog.u_ramp_highlight {
+                            let rh = &scene.lighting.ramp_highlight;
+                            gl.uniform3f(Some(loc), rh[0], rh[1], rh[2]);
+                        }
+                        set_f32(gl, &prog.u_posterize, scene.lighting.posterize);
+                        if let Some(loc) = &prog.u_fog_color {
+                            let fc = &scene.lighting.fog_color;
+                            gl.uniform3f(Some(loc), fc[0], fc[1], fc[2]);
+                        }
+                        for (i, light) in scene.lighting.lights.iter().take(32).enumerate() {
+                            if let Some(loc) = prog.u_lights.get(i).and_then(|l| l.as_ref()) {
+                                gl.uniform4f(Some(loc), light[0], light[1], light[2], light[3]);
+                            }
+                            if let Some(loc) = prog.u_light_color.get(i).and_then(|l| l.as_ref()) {
+                                let c = scene
+                                    .lighting
+                                    .light_colors
+                                    .get(i)
+                                    .copied()
+                                    .unwrap_or([1.0, 1.0, 1.0, 0.0]);
+                                gl.uniform4f(Some(loc), c[0], c[1], c[2], c[3]);
+                            }
+                        }
+                    }
+                    // Disable backface culling for sprites
+                    gl.disable(GL::CULL_FACE);
+                },
+                MaterialType::Parallax {
+                    atlas_id,
+                    layer_rect,
+                    scroll_factor,
+                    tint,
+                } => {
+                    gl.active_texture(GL::TEXTURE0);
+                    if let Some(tex) = self.atlases.get(atlas_id) {
+                        gl.bind_texture(GL::TEXTURE_2D, Some(tex));
+                    }
+                    if let Some(loc) = &prog.u_texture {
+                        gl.uniform1i(Some(loc), 0);
+                    }
+                    // UV offset: scroll based on camera X position
+                    let scroll_x = camera.position.x * scroll_factor * 0.05;
+                    set_vec2(gl, &prog.u_uv_offset, scroll_x, layer_rect.y);
+                    // UV scale: full width, layer height portion
+                    set_vec2(gl, &prog.u_uv_scale, 1.0, layer_rect.w - layer_rect.y);
+                    set_vec4(gl, &prog.u_tint, tint);
+                    set_f32(gl, &prog.u_time, self.time);
+                    set_f32(gl, &prog.u_intensity, 0.0); // sway amplitude
+                    set_f32(gl, &prog.u_speed, 1.0); // crossfade alpha (fully visible)
+                    // Disable backface culling + depth write for background
+                    gl.disable(GL::CULL_FACE);
+                    gl.depth_mask(false);
+                },
+                MaterialType::Water {
+                    color,
+                    depth,
+                    wave_speed,
+                } => {
+                    set_vec4(gl, &prog.u_color, color);
+                    set_f32(gl, &prog.u_depth, *depth);
+                    set_f32(gl, &prog.u_wave_speed, *wave_speed);
+                    set_f32(gl, &prog.u_time, self.time);
+                    // Transparent water: disable culling, keep depth writes
+                    gl.disable(GL::CULL_FACE);
+                },
+                MaterialType::WhipTrail { progress, color } => {
+                    set_vec4(gl, &prog.u_color, color);
+                    set_f32(gl, &prog.u_arc_progress, *progress);
+                    set_f32(gl, &prog.u_time, self.time);
+                    // Additive blending for bright whip effect
+                    gl.blend_func(GL::SRC_ALPHA, GL::ONE);
+                    gl.disable(GL::CULL_FACE);
+                    gl.disable(GL::DEPTH_TEST);
+                },
+                MaterialType::SlashArc {
+                    progress,
+                    angle,
+                    color,
+                } => {
+                    set_vec4(gl, &prog.u_color, color);
+                    set_f32(gl, &prog.u_arc_progress, *progress);
+                    set_f32(gl, &prog.u_intensity, *angle); // reuse u_intensity for arc_angle
+                    set_f32(gl, &prog.u_time, self.time);
+                    gl.blend_func(GL::SRC_ALPHA, GL::ONE);
+                    gl.disable(GL::CULL_FACE);
+                    gl.disable(GL::DEPTH_TEST);
+                },
+                MaterialType::MagicCircle {
+                    rotation,
+                    pulse,
+                    color,
+                } => {
+                    set_vec4(gl, &prog.u_color, color);
+                    set_f32(gl, &prog.u_time, self.time);
+                    set_f32(gl, &prog.u_speed, *rotation); // reuse u_speed for rotation
+                    set_f32(gl, &prog.u_intensity, *pulse); // reuse u_intensity for pulse
+                    gl.blend_func(GL::SRC_ALPHA, GL::ONE);
+                    gl.disable(GL::CULL_FACE);
+                    gl.disable(GL::DEPTH_TEST);
+                },
+                MaterialType::GodRays { intensity, color } => {
+                    set_vec4(gl, &prog.u_color, color);
+                    set_f32(gl, &prog.u_intensity, *intensity);
+                    set_f32(gl, &prog.u_time, self.time);
+                    set_f32(gl, &prog.u_speed, 0.5);
+                    gl.blend_func(GL::SRC_ALPHA, GL::ONE);
+                    gl.disable(GL::CULL_FACE);
+                    gl.disable(GL::DEPTH_TEST);
+                },
+                MaterialType::FogLayer { density, color } => {
+                    set_vec4(gl, &prog.u_color, color);
+                    set_f32(gl, &prog.u_intensity, *density);
+                    set_f32(gl, &prog.u_time, self.time);
+                    gl.disable(GL::CULL_FACE);
+                    gl.depth_mask(false);
+                },
+                MaterialType::HealthBar { fill, color } => {
+                    set_vec4(gl, &prog.u_color, color);
+                    set_f32(gl, &prog.u_intensity, *fill);
+                    set_f32(gl, &prog.u_time, self.time);
+                    gl.disable(GL::CULL_FACE);
+                    gl.disable(GL::DEPTH_TEST);
+                },
             }
 
             // Bind mesh and draw
@@ -355,25 +705,143 @@ impl Renderer {
                 gl.bind_vertex_array(Some(&mesh.vao));
                 gl.draw_arrays(GL::TRIANGLES, 0, mesh.vertex_count);
             }
+
+            // Restore GL state modified by material-specific setup
+            match &obj.material {
+                MaterialType::Parallax { .. } | MaterialType::FogLayer { .. } => {
+                    gl.depth_mask(true);
+                    gl.enable(GL::CULL_FACE);
+                },
+                MaterialType::Sprite { blend_mode, .. } => {
+                    if !matches!(blend_mode, crate::scene::BlendMode::Normal) {
+                        gl.blend_func(GL::SRC_ALPHA, GL::ONE_MINUS_SRC_ALPHA);
+                        gl.blend_equation(GL::FUNC_ADD);
+                    }
+                    gl.enable(GL::CULL_FACE);
+                },
+                MaterialType::Water { .. } => {
+                    gl.enable(GL::CULL_FACE);
+                },
+                MaterialType::WhipTrail { .. }
+                | MaterialType::SlashArc { .. }
+                | MaterialType::MagicCircle { .. }
+                | MaterialType::GodRays { .. } => {
+                    gl.blend_func(GL::SRC_ALPHA, GL::ONE_MINUS_SRC_ALPHA);
+                    gl.enable(GL::CULL_FACE);
+                    gl.enable(GL::DEPTH_TEST);
+                },
+                MaterialType::HealthBar { .. } => {
+                    gl.enable(GL::CULL_FACE);
+                    gl.enable(GL::DEPTH_TEST);
+                },
+                _ => {},
+            }
         }
 
+        // Re-enable state that may have been disabled by material batches
+        gl.enable(GL::CULL_FACE);
+        gl.enable(GL::DEPTH_TEST);
+        gl.depth_mask(true);
+        gl.blend_func(GL::SRC_ALPHA, GL::ONE_MINUS_SRC_ALPHA);
         self.gl.bind_vertex_array(None);
+
+        // Post-processing pass: read FBO, draw fullscreen quad with effects
+        if use_postfx {
+            self.draw_postprocess_pass();
+        }
     }
 
     /// Compile all shader programs.
     fn compile_programs(&mut self) -> Result<(), String> {
         let vert_src = include_str!("shaders_gl/unlit.vert");
 
-        let configs: Vec<(&str, &str)> = vec![
-            ("unlit", include_str!("shaders_gl/unlit.frag")),
-            ("gradient", include_str!("shaders_gl/gradient.frag")),
-            ("ripple", include_str!("shaders_gl/ripple.frag")),
-            ("glow", include_str!("shaders_gl/glow.frag")),
-            ("tronwall", include_str!("shaders_gl/tronwall.frag")),
+        let configs: Vec<(&str, &str, &str)> = vec![
+            ("unlit", vert_src, include_str!("shaders_gl/unlit.frag")),
+            (
+                "gradient",
+                vert_src,
+                include_str!("shaders_gl/gradient.frag"),
+            ),
+            ("ripple", vert_src, include_str!("shaders_gl/ripple.frag")),
+            ("glow", vert_src, include_str!("shaders_gl/glow.frag")),
+            (
+                "tronwall",
+                vert_src,
+                include_str!("shaders_gl/tronwall.frag"),
+            ),
+            (
+                "sprite",
+                include_str!("shaders_gl/sprite.vert"),
+                include_str!("shaders_gl/sprite.frag"),
+            ),
+            (
+                "sprite_batch",
+                include_str!("shaders_gl/sprite_batch.vert"),
+                include_str!("shaders_gl/sprite_batch.frag"),
+            ),
+            (
+                "parallax",
+                include_str!("shaders_gl/parallax.vert"),
+                include_str!("shaders_gl/parallax.frag"),
+            ),
+            (
+                "water",
+                include_str!("shaders_gl/water.vert"),
+                include_str!("shaders_gl/water.frag"),
+            ),
+            (
+                "whip",
+                include_str!("shaders_gl/whip.vert"),
+                include_str!("shaders_gl/whip.frag"),
+            ),
+            (
+                "postprocess",
+                include_str!("shaders_gl/postprocess.vert"),
+                include_str!("shaders_gl/postprocess.frag"),
+            ),
+            (
+                "slash_arc",
+                include_str!("shaders_gl/slash_arc.vert"),
+                include_str!("shaders_gl/slash_arc.frag"),
+            ),
+            (
+                "magic_circle",
+                include_str!("shaders_gl/magic_circle.vert"),
+                include_str!("shaders_gl/magic_circle.frag"),
+            ),
+            (
+                "godrays",
+                include_str!("shaders_gl/godrays.vert"),
+                include_str!("shaders_gl/godrays.frag"),
+            ),
+            (
+                "fog_layer",
+                include_str!("shaders_gl/fog_layer.vert"),
+                include_str!("shaders_gl/fog_layer.frag"),
+            ),
+            (
+                "health_bar",
+                include_str!("shaders_gl/health_bar.vert"),
+                include_str!("shaders_gl/health_bar.frag"),
+            ),
         ];
 
-        for (name, frag_src) in configs {
-            let program = link_program(&self.gl, vert_src, frag_src)?;
+        for (name, vs, frag_src) in configs {
+            let program = link_program(&self.gl, vs, frag_src)?;
+
+            // Cache light uniform locations (u_lights[0] .. u_lights[31])
+            let u_lights: Vec<Option<WebGlUniformLocation>> = (0..32)
+                .map(|i| {
+                    self.gl
+                        .get_uniform_location(&program, &format!("u_lights[{i}]"))
+                })
+                .collect();
+            let u_light_color: Vec<Option<WebGlUniformLocation>> = (0..32)
+                .map(|i| {
+                    self.gl
+                        .get_uniform_location(&program, &format!("u_light_color[{i}]"))
+                })
+                .collect();
 
             let sp = ShaderProgram {
                 u_mvp: self.gl.get_uniform_location(&program, "u_mvp"),
@@ -387,12 +855,309 @@ impl Renderer {
                 u_intensity: self.gl.get_uniform_location(&program, "u_intensity"),
                 u_camera_pos: self.gl.get_uniform_location(&program, "u_camera_pos"),
                 u_fog_density: self.gl.get_uniform_location(&program, "u_fog_density"),
+                u_fog_color: self.gl.get_uniform_location(&program, "u_fog_color"),
                 u_resolution: self.gl.get_uniform_location(&program, "u_resolution"),
+                u_sprite_rect: self.gl.get_uniform_location(&program, "u_sprite_rect"),
+                u_tint: self.gl.get_uniform_location(&program, "u_tint"),
+                u_flip_x: self.gl.get_uniform_location(&program, "u_flip_x"),
+                u_texture: self.gl.get_uniform_location(&program, "u_texture"),
+                u_outline_width: self.gl.get_uniform_location(&program, "u_outline_width"),
+                u_dissolve: self.gl.get_uniform_location(&program, "u_dissolve"),
+                u_palette: self.gl.get_uniform_location(&program, "u_palette"),
+                u_use_palette: self.gl.get_uniform_location(&program, "u_use_palette"),
+                u_uv_offset: self.gl.get_uniform_location(&program, "u_uv_offset"),
+                u_uv_scale: self.gl.get_uniform_location(&program, "u_uv_scale"),
+                u_depth: self.gl.get_uniform_location(&program, "u_depth"),
+                u_wave_speed: self.gl.get_uniform_location(&program, "u_wave_speed"),
+                u_lights,
+                u_light_color,
+                u_light_count: self.gl.get_uniform_location(&program, "u_light_count"),
+                u_ambient: self.gl.get_uniform_location(&program, "u_ambient"),
+                u_ambient_color: self.gl.get_uniform_location(&program, "u_ambient_color"),
+                u_ramp_shadow: self.gl.get_uniform_location(&program, "u_ramp_shadow"),
+                u_ramp_mid: self.gl.get_uniform_location(&program, "u_ramp_mid"),
+                u_ramp_highlight: self.gl.get_uniform_location(&program, "u_ramp_highlight"),
+                u_posterize: self.gl.get_uniform_location(&program, "u_posterize"),
+                u_arc_progress: self.gl.get_uniform_location(&program, "u_arc_progress"),
+                u_scene_texture: self.gl.get_uniform_location(&program, "u_scene"),
+                u_scanline_intensity: self
+                    .gl
+                    .get_uniform_location(&program, "u_scanline_intensity"),
+                u_bloom_intensity: self.gl.get_uniform_location(&program, "u_bloom_intensity"),
+                u_vignette_intensity: self
+                    .gl
+                    .get_uniform_location(&program, "u_vignette_intensity"),
+                u_crt_curvature: self.gl.get_uniform_location(&program, "u_crt_curvature"),
+                u_grade_shadows: self.gl.get_uniform_location(&program, "u_grade_shadows"),
+                u_grade_highlights: self.gl.get_uniform_location(&program, "u_grade_highlights"),
+                u_grade_contrast: self.gl.get_uniform_location(&program, "u_grade_contrast"),
+                u_saturation: self.gl.get_uniform_location(&program, "u_saturation"),
+                u_chromatic_aberration: self
+                    .gl
+                    .get_uniform_location(&program, "u_chromatic_aberration"),
+                u_film_grain: self.gl.get_uniform_location(&program, "u_film_grain"),
                 program,
             };
             self.programs.insert(name, sp);
         }
         Ok(())
+    }
+
+    /// Load a texture atlas from an HtmlImageElement with NEAREST filtering.
+    #[cfg(target_family = "wasm")]
+    pub fn load_texture(&mut self, id: u8, img: &web_sys::HtmlImageElement) {
+        self.load_texture_with_wrap(id, img, false);
+    }
+
+    /// Load a texture with NEAREST filtering and configurable wrapping.
+    /// When `wrap_repeat` is true, uses GL::REPEAT for seamless tiling;
+    /// otherwise uses CLAMP_TO_EDGE.
+    #[cfg(target_family = "wasm")]
+    pub fn load_texture_with_wrap(
+        &mut self,
+        id: u8,
+        img: &web_sys::HtmlImageElement,
+        wrap_repeat: bool,
+    ) {
+        let gl = &self.gl;
+        let Some(texture) = gl.create_texture() else {
+            return;
+        };
+        gl.bind_texture(GL::TEXTURE_2D, Some(&texture));
+        let _ = gl.tex_image_2d_with_u32_and_u32_and_html_image_element(
+            GL::TEXTURE_2D,
+            0,
+            GL::RGBA as i32,
+            GL::RGBA,
+            GL::UNSIGNED_BYTE,
+            img,
+        );
+        // Pixel-art filtering: NEAREST (no blurring)
+        gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_MIN_FILTER, GL::NEAREST as i32);
+        gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_MAG_FILTER, GL::NEAREST as i32);
+        let wrap = if wrap_repeat {
+            GL::REPEAT as i32
+        } else {
+            GL::CLAMP_TO_EDGE as i32
+        };
+        gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_WRAP_S, wrap);
+        gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_WRAP_T, wrap);
+        gl.bind_texture(GL::TEXTURE_2D, None);
+        self.atlases.insert(id, texture);
+    }
+
+    /// Get the accumulated renderer time (for animations).
+    pub fn time(&self) -> f32 {
+        self.time
+    }
+
+    /// Ensure the post-processing FBO exists and matches the canvas size.
+    fn ensure_post_fbo(&mut self) {
+        let w = self.canvas_width;
+        let h = self.canvas_height;
+
+        // If FBO exists and matches size, nothing to do
+        if let Some(fbo) = &self.post_fbo {
+            if fbo.width == w && fbo.height == h {
+                return;
+            }
+            // Size changed — delete old resources
+            self.gl.delete_framebuffer(Some(&fbo.framebuffer));
+            self.gl.delete_texture(Some(&fbo.color_texture));
+            self.gl.delete_renderbuffer(Some(&fbo.depth_renderbuffer));
+            self.post_fbo = None;
+        }
+
+        let gl = &self.gl;
+        let Some(fb) = gl.create_framebuffer() else {
+            return;
+        };
+        let Some(tex) = gl.create_texture() else {
+            return;
+        };
+        let Some(rb) = gl.create_renderbuffer() else {
+            return;
+        };
+
+        // Color texture
+        gl.bind_texture(GL::TEXTURE_2D, Some(&tex));
+        gl.tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_u8_array(
+            GL::TEXTURE_2D,
+            0,
+            GL::RGBA as i32,
+            w as i32,
+            h as i32,
+            0,
+            GL::RGBA,
+            GL::UNSIGNED_BYTE,
+            None,
+        )
+        .ok();
+        gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_MIN_FILTER, GL::LINEAR as i32);
+        gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_MAG_FILTER, GL::LINEAR as i32);
+        gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_WRAP_S, GL::CLAMP_TO_EDGE as i32);
+        gl.tex_parameteri(GL::TEXTURE_2D, GL::TEXTURE_WRAP_T, GL::CLAMP_TO_EDGE as i32);
+
+        // Depth renderbuffer
+        gl.bind_renderbuffer(GL::RENDERBUFFER, Some(&rb));
+        gl.renderbuffer_storage(GL::RENDERBUFFER, GL::DEPTH_COMPONENT16, w as i32, h as i32);
+
+        // Assemble FBO
+        gl.bind_framebuffer(GL::FRAMEBUFFER, Some(&fb));
+        gl.framebuffer_texture_2d(
+            GL::FRAMEBUFFER,
+            GL::COLOR_ATTACHMENT0,
+            GL::TEXTURE_2D,
+            Some(&tex),
+            0,
+        );
+        gl.framebuffer_renderbuffer(
+            GL::FRAMEBUFFER,
+            GL::DEPTH_ATTACHMENT,
+            GL::RENDERBUFFER,
+            Some(&rb),
+        );
+
+        // Unbind
+        gl.bind_framebuffer(GL::FRAMEBUFFER, None);
+        gl.bind_texture(GL::TEXTURE_2D, None);
+        gl.bind_renderbuffer(GL::RENDERBUFFER, None);
+
+        self.post_fbo = Some(PostProcessFBO {
+            framebuffer: fb,
+            color_texture: tex,
+            depth_renderbuffer: rb,
+            width: w,
+            height: h,
+        });
+    }
+
+    /// Draw the post-processing fullscreen pass.
+    fn draw_postprocess_pass(&self) {
+        let gl = &self.gl;
+        let Some(fbo) = &self.post_fbo else { return };
+        let Some(prog) = self.programs.get("postprocess") else {
+            return;
+        };
+        let Some(mesh) = self.meshes.get(&MeshKey::Quad) else {
+            return;
+        };
+
+        // Bind default framebuffer
+        gl.bind_framebuffer(GL::FRAMEBUFFER, None);
+        gl.viewport(0, 0, self.canvas_width as i32, self.canvas_height as i32);
+        gl.clear_color(0.0, 0.0, 0.0, 1.0);
+        gl.clear(GL::COLOR_BUFFER_BIT);
+
+        gl.use_program(Some(&prog.program));
+
+        // Bind FBO color texture as input
+        gl.active_texture(GL::TEXTURE0);
+        gl.bind_texture(GL::TEXTURE_2D, Some(&fbo.color_texture));
+        if let Some(loc) = &prog.u_scene_texture {
+            gl.uniform1i(Some(loc), 0);
+        }
+        // Also bind via u_texture if postprocess shader uses that name
+        if let Some(loc) = &prog.u_texture {
+            gl.uniform1i(Some(loc), 0);
+        }
+
+        // Set uniforms
+        set_vec2(
+            gl,
+            &prog.u_resolution,
+            self.canvas_width as f32,
+            self.canvas_height as f32,
+        );
+        set_f32(gl, &prog.u_time, self.time);
+        if let Some(loc) = &prog.u_scanline_intensity {
+            gl.uniform1f(Some(loc), self.post_process.scanline_intensity);
+        }
+        if let Some(loc) = &prog.u_bloom_intensity {
+            gl.uniform1f(Some(loc), self.post_process.bloom_intensity);
+        }
+        if let Some(loc) = &prog.u_vignette_intensity {
+            gl.uniform1f(Some(loc), self.post_process.vignette_intensity);
+        }
+        if let Some(loc) = &prog.u_crt_curvature {
+            gl.uniform1f(Some(loc), self.post_process.crt_curvature);
+        }
+        if let Some(loc) = &prog.u_grade_shadows {
+            let s = &self.post_process.grade_shadows;
+            gl.uniform3f(Some(loc), s[0], s[1], s[2]);
+        }
+        if let Some(loc) = &prog.u_grade_highlights {
+            let h = &self.post_process.grade_highlights;
+            gl.uniform3f(Some(loc), h[0], h[1], h[2]);
+        }
+        if let Some(loc) = &prog.u_grade_contrast {
+            gl.uniform1f(Some(loc), self.post_process.grade_contrast);
+        }
+        if let Some(loc) = &prog.u_saturation {
+            gl.uniform1f(Some(loc), self.post_process.saturation);
+        }
+        if let Some(loc) = &prog.u_chromatic_aberration {
+            gl.uniform1f(Some(loc), self.post_process.chromatic_aberration);
+        }
+        if let Some(loc) = &prog.u_film_grain {
+            gl.uniform1f(Some(loc), self.post_process.film_grain);
+        }
+
+        // Draw fullscreen quad
+        gl.disable(GL::DEPTH_TEST);
+        gl.disable(GL::CULL_FACE);
+
+        gl.bind_vertex_array(Some(&mesh.vao));
+        gl.draw_arrays(GL::TRIANGLES, 0, mesh.vertex_count);
+        gl.bind_vertex_array(None);
+
+        // Restore
+        gl.enable(GL::DEPTH_TEST);
+        gl.enable(GL::CULL_FACE);
+        gl.bind_texture(GL::TEXTURE_2D, None);
+    }
+
+    /// Draw a full-screen color overlay (for damage/pickup flashes).
+    /// Uses additive blending for a bright flash effect.
+    pub fn draw_screen_flash(&self, color: Vec4, alpha: f32) {
+        if alpha <= 0.001 {
+            return;
+        }
+        let gl = &self.gl;
+        let Some(prog) = self.programs.get("unlit") else {
+            return;
+        };
+        let Some(mesh) = self.meshes.get(&MeshKey::Quad) else {
+            return;
+        };
+
+        gl.use_program(Some(&prog.program));
+
+        // Full-screen NDC quad: identity MVP places quad at [-0.5, 0.5] in clip space
+        // Scale to fill screen: 2x2 in NDC
+        let mvp = glam::Mat4::from_scale(Vec3::new(2.0, 2.0, 1.0));
+        set_mat4(gl, &prog.u_mvp, &mvp);
+        set_mat4(gl, &prog.u_model, &glam::Mat4::IDENTITY);
+        set_vec4(
+            gl,
+            &prog.u_color,
+            &Vec4::new(color.x, color.y, color.z, alpha),
+        );
+        set_f32(gl, &prog.u_fog_density, 0.0);
+
+        // Additive blending for flash
+        gl.blend_func(GL::SRC_ALPHA, GL::ONE);
+        gl.disable(GL::DEPTH_TEST);
+        gl.disable(GL::CULL_FACE);
+
+        gl.bind_vertex_array(Some(&mesh.vao));
+        gl.draw_arrays(GL::TRIANGLES, 0, mesh.vertex_count);
+        gl.bind_vertex_array(None);
+
+        // Restore standard blending and depth
+        gl.blend_func(GL::SRC_ALPHA, GL::ONE_MINUS_SRC_ALPHA);
+        gl.enable(GL::DEPTH_TEST);
+        gl.enable(GL::CULL_FACE);
     }
 
     /// Generate mesh VBOs/VAOs for each primitive type.
@@ -402,6 +1167,7 @@ impl Renderer {
             (MeshKey::Plane, generate_plane()),
             (MeshKey::Sphere { segments: 16 }, generate_sphere(16)),
             (MeshKey::Cylinder { segments: 16 }, generate_cylinder(16)),
+            (MeshKey::Quad, generate_quad()),
         ];
 
         for (key, vertices) in configs {
@@ -442,6 +1208,277 @@ impl Renderer {
         let vertex_count = data.len() as i32 / 8;
         Some(MeshBuffers { vao, vertex_count })
     }
+
+    /// Draw all batchable sprites grouped by blend mode.
+    /// A sprite is batchable if outline == 0.0 and dissolve == 0.0.
+    fn draw_sprite_batches(
+        &mut self,
+        sorted: &[&crate::scene::RenderObject],
+        vp: &Mat4,
+        scene: &Scene,
+        fog_density: f32,
+        camera: &Camera,
+    ) {
+        use crate::scene::BlendMode;
+
+        // Collect batchable sprites per blend mode
+        let mut normal_sprites: Vec<&crate::scene::RenderObject> = Vec::new();
+        let mut additive_sprites: Vec<&crate::scene::RenderObject> = Vec::new();
+        let mut subtractive_sprites: Vec<&crate::scene::RenderObject> = Vec::new();
+
+        for obj in sorted {
+            if let MaterialType::Sprite {
+                outline,
+                dissolve,
+                blend_mode,
+                ..
+            } = &obj.material
+                && *outline == 0.0
+                && *dissolve == 0.0
+            {
+                match blend_mode {
+                    BlendMode::Normal => normal_sprites.push(obj),
+                    BlendMode::Additive => additive_sprites.push(obj),
+                    BlendMode::Subtractive => subtractive_sprites.push(obj),
+                }
+            }
+        }
+
+        if normal_sprites.is_empty()
+            && additive_sprites.is_empty()
+            && subtractive_sprites.is_empty()
+        {
+            return;
+        }
+
+        // Build all batch vertex data first (needs &mut self)
+        // We'll store them in temporary Vecs to avoid borrow issues.
+        let mut normal_verts: Vec<f32> = Vec::new();
+        let mut additive_verts: Vec<f32> = Vec::new();
+        let mut subtractive_verts: Vec<f32> = Vec::new();
+        if !normal_sprites.is_empty() {
+            self.build_sprite_batch(&normal_sprites);
+            std::mem::swap(&mut normal_verts, &mut self.batch_vertices);
+        }
+        if !additive_sprites.is_empty() {
+            self.build_sprite_batch(&additive_sprites);
+            std::mem::swap(&mut additive_verts, &mut self.batch_vertices);
+        }
+        if !subtractive_sprites.is_empty() {
+            self.build_sprite_batch(&subtractive_sprites);
+            std::mem::swap(&mut subtractive_verts, &mut self.batch_vertices);
+        }
+
+        let gl = &self.gl;
+        let Some(prog) = self.programs.get("sprite_batch") else {
+            return;
+        };
+        gl.use_program(Some(&prog.program));
+
+        // Set view-projection matrix (u_vp)
+        if let Some(loc) = &prog.u_mvp {
+            gl.uniform_matrix4fv_with_f32_array(Some(loc), false, vp.as_ref());
+        }
+        set_f32(gl, &prog.u_fog_density, fog_density);
+        set_vec3(gl, &prog.u_camera_pos, &camera.position);
+
+        // Bind atlas texture (all sprites use atlas 0)
+        gl.active_texture(GL::TEXTURE0);
+        if let Some(tex) = self.atlases.get(&0) {
+            gl.bind_texture(GL::TEXTURE_2D, Some(tex));
+        }
+        if let Some(loc) = &prog.u_texture {
+            gl.uniform1i(Some(loc), 0);
+        }
+
+        // Set lighting uniforms (scene-global)
+        let light_count = scene.lighting.lights.len().min(32) as i32;
+        if let Some(loc) = &prog.u_light_count {
+            gl.uniform1i(Some(loc), light_count);
+        }
+        set_f32(gl, &prog.u_ambient, scene.lighting.ambient);
+        if let Some(loc) = &prog.u_ambient_color {
+            let ac = &scene.lighting.ambient_color;
+            gl.uniform3f(Some(loc), ac[0], ac[1], ac[2]);
+        }
+        if let Some(loc) = &prog.u_ramp_shadow {
+            let rs = &scene.lighting.ramp_shadow;
+            gl.uniform3f(Some(loc), rs[0], rs[1], rs[2]);
+        }
+        if let Some(loc) = &prog.u_ramp_mid {
+            let rm = &scene.lighting.ramp_mid;
+            gl.uniform3f(Some(loc), rm[0], rm[1], rm[2]);
+        }
+        if let Some(loc) = &prog.u_ramp_highlight {
+            let rh = &scene.lighting.ramp_highlight;
+            gl.uniform3f(Some(loc), rh[0], rh[1], rh[2]);
+        }
+        set_f32(gl, &prog.u_posterize, scene.lighting.posterize);
+        if let Some(loc) = &prog.u_fog_color {
+            let fc = &scene.lighting.fog_color;
+            gl.uniform3f(Some(loc), fc[0], fc[1], fc[2]);
+        }
+        for (i, light) in scene.lighting.lights.iter().take(32).enumerate() {
+            if let Some(loc) = prog.u_lights.get(i).and_then(|l| l.as_ref()) {
+                gl.uniform4f(Some(loc), light[0], light[1], light[2], light[3]);
+            }
+            if let Some(loc) = prog.u_light_color.get(i).and_then(|l| l.as_ref()) {
+                let c = scene
+                    .lighting
+                    .light_colors
+                    .get(i)
+                    .copied()
+                    .unwrap_or([1.0, 1.0, 1.0, 0.0]);
+                gl.uniform4f(Some(loc), c[0], c[1], c[2], c[3]);
+            }
+        }
+
+        gl.disable(GL::CULL_FACE);
+
+        // Draw Normal blend batch
+        if !normal_verts.is_empty() {
+            gl.blend_func(GL::SRC_ALPHA, GL::ONE_MINUS_SRC_ALPHA);
+            gl.blend_equation(GL::FUNC_ADD);
+            self.upload_and_draw_batch_data(&normal_verts);
+        }
+
+        // Draw Additive blend batch
+        if !additive_verts.is_empty() {
+            gl.blend_func(GL::SRC_ALPHA, GL::ONE);
+            gl.blend_equation(GL::FUNC_ADD);
+            self.upload_and_draw_batch_data(&additive_verts);
+        }
+
+        // Draw Subtractive blend batch
+        if !subtractive_verts.is_empty() {
+            gl.blend_func(GL::SRC_ALPHA, GL::ONE);
+            gl.blend_equation(GL::FUNC_REVERSE_SUBTRACT);
+            self.upload_and_draw_batch_data(&subtractive_verts);
+        }
+
+        // Restore default blend state
+        gl.blend_func(GL::SRC_ALPHA, GL::ONE_MINUS_SRC_ALPHA);
+        gl.blend_equation(GL::FUNC_ADD);
+        gl.enable(GL::CULL_FACE);
+    }
+
+    /// Ensure the batch VAO/VBO is created (lazy init).
+    fn ensure_batch_vao(&mut self) {
+        if self.batch_vao.is_some() {
+            return;
+        }
+        let gl = &self.gl;
+        let vao = match gl.create_vertex_array() {
+            Some(v) => v,
+            None => return,
+        };
+        let vbo = match gl.create_buffer() {
+            Some(b) => b,
+            None => return,
+        };
+        gl.bind_vertex_array(Some(&vao));
+        gl.bind_buffer(GL::ARRAY_BUFFER, Some(&vbo));
+
+        // Batch vertex layout: pos(3) + uv(2) + tint(4) = 9 floats = 36 bytes
+        let stride = 9 * 4;
+        // location 0: position (vec3)
+        gl.enable_vertex_attrib_array(0);
+        gl.vertex_attrib_pointer_with_i32(0, 3, GL::FLOAT, false, stride, 0);
+        // location 1: uv (vec2)
+        gl.enable_vertex_attrib_array(1);
+        gl.vertex_attrib_pointer_with_i32(1, 2, GL::FLOAT, false, stride, 12);
+        // location 2: tint (vec4)
+        gl.enable_vertex_attrib_array(2);
+        gl.vertex_attrib_pointer_with_i32(2, 4, GL::FLOAT, false, stride, 20);
+
+        gl.bind_vertex_array(None);
+        self.batch_vao = Some(vao);
+        self.batch_vbo = Some(vbo);
+    }
+
+    /// Build batch vertex data for a set of batchable sprites.
+    /// Each sprite becomes 6 vertices (2 triangles), with pre-computed
+    /// world-space positions and atlas UVs.
+    fn build_sprite_batch(&mut self, sprites: &[&crate::scene::RenderObject]) {
+        self.batch_vertices.clear();
+        for obj in sprites {
+            let MaterialType::Sprite {
+                sprite_rect,
+                tint,
+                flip_x,
+                ..
+            } = &obj.material
+            else {
+                continue;
+            };
+            // Pre-compute world-space quad corners from transform
+            let t = &obj.transform;
+            let half_x = t.scale.x * 0.5;
+            let half_y = t.scale.y * 0.5;
+            let cx = t.translation.x;
+            let cy = t.translation.y;
+            let z = t.translation.z;
+
+            // Quad corners (no rotation for 2D sprites)
+            let x0 = cx - half_x;
+            let x1 = cx + half_x;
+            let y0 = cy - half_y;
+            let y1 = cy + half_y;
+
+            // Pre-compute atlas UVs from sprite_rect + flip
+            let (u0, u1) = if *flip_x {
+                (sprite_rect.z, sprite_rect.x) // reversed
+            } else {
+                (sprite_rect.x, sprite_rect.z)
+            };
+            // V is inverted: sprite_rect.w = v_bottom, sprite_rect.y = v_top
+            let v0 = sprite_rect.w; // bottom
+            let v1 = sprite_rect.y; // top
+
+            let tr = tint.x;
+            let tg = tint.y;
+            let tb = tint.z;
+            let ta = tint.w;
+
+            // Triangle 1: bottom-left, top-right, bottom-right
+            self.batch_vertices
+                .extend_from_slice(&[x0, y0, z, u0, v0, tr, tg, tb, ta]);
+            self.batch_vertices
+                .extend_from_slice(&[x1, y1, z, u1, v1, tr, tg, tb, ta]);
+            self.batch_vertices
+                .extend_from_slice(&[x1, y0, z, u1, v0, tr, tg, tb, ta]);
+            // Triangle 2: bottom-left, top-left, top-right
+            self.batch_vertices
+                .extend_from_slice(&[x0, y0, z, u0, v0, tr, tg, tb, ta]);
+            self.batch_vertices
+                .extend_from_slice(&[x0, y1, z, u0, v1, tr, tg, tb, ta]);
+            self.batch_vertices
+                .extend_from_slice(&[x1, y1, z, u1, v1, tr, tg, tb, ta]);
+        }
+    }
+
+    /// Upload batch vertex data and draw. Uses GL handle directly to avoid self borrow issues.
+    fn upload_and_draw_batch_data(&self, data: &[f32]) {
+        if data.is_empty() {
+            return;
+        }
+        let gl = &self.gl;
+        let Some(vao) = &self.batch_vao else { return };
+        let Some(vbo) = &self.batch_vbo else { return };
+
+        gl.bind_vertex_array(Some(vao));
+        gl.bind_buffer(GL::ARRAY_BUFFER, Some(vbo));
+
+        // Always use buffer_data (simpler than tracking capacity for immutable self)
+        unsafe {
+            let view = js_sys::Float32Array::view(data);
+            gl.buffer_data_with_array_buffer_view(GL::ARRAY_BUFFER, &view, GL::DYNAMIC_DRAW);
+        }
+
+        let vertex_count = (data.len() / 9) as i32;
+        gl.draw_arrays(GL::TRIANGLES, 0, vertex_count);
+        gl.bind_vertex_array(None);
+    }
 }
 
 // --- Uniform helpers ---
@@ -453,13 +1490,24 @@ fn set_mat4(gl: &GL, loc: &Option<WebGlUniformLocation>, m: &Mat4) {
 }
 
 /// Sort key for grouping objects by shader program (minimizes program switches).
+/// Parallax renders first (background), then world geometry, sprites, VFX, fog, HUD.
+/// Wide gaps allow future layer insertion without renumbering.
 fn material_sort_key(m: &MaterialType) -> u8 {
     match m {
-        MaterialType::Unlit { .. } => 0,
-        MaterialType::Gradient { .. } => 1,
-        MaterialType::Glow { .. } => 2,
-        MaterialType::Ripple { .. } => 3,
-        MaterialType::TronWall { .. } => 4,
+        MaterialType::Parallax { .. } => 0,
+        MaterialType::Unlit { .. } => 10,
+        MaterialType::Gradient { .. } => 15,
+        MaterialType::Water { .. } => 20,
+        MaterialType::Sprite { .. } => 30,
+        MaterialType::Glow { .. } => 35,
+        MaterialType::Ripple { .. } => 40,
+        MaterialType::TronWall { .. } => 45,
+        MaterialType::WhipTrail { .. } => 50,
+        MaterialType::SlashArc { .. } => 52,
+        MaterialType::MagicCircle { .. } => 54,
+        MaterialType::GodRays { .. } => 56,
+        MaterialType::FogLayer { .. } => 60,
+        MaterialType::HealthBar { .. } => 70,
     }
 }
 
@@ -715,5 +1763,24 @@ fn generate_cylinder(segments: u16) -> Vec<f32> {
         push_vertex(&mut buf, p1_bot, -Vec3::Y, u1, 0.0);
         push_vertex(&mut buf, p0_bot, -Vec3::Y, u0, 0.0);
     }
+    buf
+}
+
+/// Unit quad on the XY plane at Z=0, facing +Z (toward the side-view camera at Z<0).
+fn generate_quad() -> Vec<f32> {
+    let mut buf = Vec::with_capacity(6 * 8);
+    let normal = Vec3::Z;
+    let h = 0.5;
+    // Quad corners on XY plane — wound CCW when viewed from +Z
+    let v00 = Vec3::new(-h, -h, 0.0);
+    let v10 = Vec3::new(h, -h, 0.0);
+    let v11 = Vec3::new(h, h, 0.0);
+    let v01 = Vec3::new(-h, h, 0.0);
+    push_vertex(&mut buf, v00, normal, 0.0, 0.0);
+    push_vertex(&mut buf, v11, normal, 1.0, 1.0);
+    push_vertex(&mut buf, v10, normal, 1.0, 0.0);
+    push_vertex(&mut buf, v00, normal, 0.0, 0.0);
+    push_vertex(&mut buf, v01, normal, 0.0, 1.0);
+    push_vertex(&mut buf, v11, normal, 1.0, 1.0);
     buf
 }

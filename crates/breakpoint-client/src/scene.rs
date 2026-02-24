@@ -55,10 +55,25 @@ impl Transform {
 /// Mesh primitive types.
 #[derive(Debug, Clone, Copy)]
 pub enum MeshType {
-    Sphere { segments: u16 },
-    Cylinder { segments: u16 },
+    Sphere {
+        segments: u16,
+    },
+    Cylinder {
+        segments: u16,
+    },
     Cuboid,
     Plane,
+    /// XY-plane billboard quad (faces +Z, toward camera at Z<0).
+    Quad,
+}
+
+/// Blend mode for sprite rendering (MBAACC-style).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BlendMode {
+    #[default]
+    Normal,
+    Additive,
+    Subtractive,
 }
 
 /// Material types matching the GLSL shader programs.
@@ -84,6 +99,96 @@ pub enum MaterialType {
         color: Vec4,
         intensity: f32,
     },
+    /// Textured sprite from a texture atlas.
+    Sprite {
+        atlas_id: u8,
+        sprite_rect: Vec4,
+        tint: Vec4,
+        flip_x: bool,
+        /// Dissolve amount: 0.0 = solid, 1.0 = fully dissolved. Used for death effects.
+        dissolve: f32,
+        /// Outline width: >0.0 enables dark pixel outline (MBAACC-style).
+        outline: f32,
+        /// Blend mode: Normal, Additive, or Subtractive.
+        blend_mode: BlendMode,
+    },
+    /// Parallax background layer (scrolling textured quad).
+    Parallax {
+        atlas_id: u8,
+        /// UV rect for the layer in the background texture (v0..v1 row).
+        layer_rect: Vec4,
+        /// Scroll speed multiplier (0.0 = static, 1.0 = camera speed).
+        scroll_factor: f32,
+        tint: Vec4,
+    },
+    /// Animated water with waves, caustics, and transparency.
+    Water {
+        color: Vec4,
+        depth: f32,
+        wave_speed: f32,
+    },
+    /// Whip attack trail arc effect.
+    WhipTrail {
+        progress: f32,
+        color: Vec4,
+    },
+    /// Anime-style slash arc VFX.
+    SlashArc {
+        progress: f32,
+        angle: f32,
+        color: Vec4,
+    },
+    /// Rotating magic circle VFX (power-up activation).
+    MagicCircle {
+        rotation: f32,
+        pulse: f32,
+        color: Vec4,
+    },
+    /// Volumetric god rays from stained glass or bright light sources.
+    GodRays {
+        intensity: f32,
+        color: Vec4,
+    },
+    /// Ground fog layer with scrolling noise.
+    FogLayer {
+        density: f32,
+        color: Vec4,
+    },
+    /// Procedural health bar (fill amount = intensity).
+    HealthBar {
+        fill: f32,
+        color: Vec4,
+    },
+}
+
+/// Lighting information for the scene (torch lights, ambient).
+pub struct SceneLighting {
+    /// Up to 32 lights: (x, y, intensity, radius).
+    pub lights: Vec<[f32; 4]>,
+    /// Per-light color: (r, g, b, type). Type 0=point, 1=directional.
+    pub light_colors: Vec<[f32; 4]>,
+    /// Ambient light level (0.0 = pitch black, 1.0 = fully lit).
+    pub ambient: f32,
+    /// Per-room ambient color (RGB). Defaults to neutral white.
+    pub ambient_color: [f32; 3],
+    /// Per-room color grading: shadow tint (RGB, 1.0=neutral).
+    pub grade_shadows: [f32; 3],
+    /// Per-room color grading: highlight tint (RGB, 1.0=neutral).
+    pub grade_highlights: [f32; 3],
+    /// Per-room contrast (1.0=neutral).
+    pub grade_contrast: f32,
+    /// Per-room saturation (1.0=neutral).
+    pub saturation: f32,
+    /// GBA-style color ramp: shadow color (RGB). Zero = disabled.
+    pub ramp_shadow: [f32; 3],
+    /// GBA-style color ramp: midtone color (RGB).
+    pub ramp_mid: [f32; 3],
+    /// GBA-style color ramp: highlight color (RGB).
+    pub ramp_highlight: [f32; 3],
+    /// GBA-style posterization bit depth (0.0=off, 31.0=5-bit GBA).
+    pub posterize: f32,
+    /// Per-room fog color (RGB). Used by sprite shader ground fog.
+    pub fog_color: [f32; 3],
 }
 
 /// A renderable object in the scene.
@@ -99,13 +204,30 @@ pub struct RenderObject {
 pub struct Scene {
     objects: Vec<RenderObject>,
     next_id: ObjectId,
+    /// Scene lighting (set by game-specific render code, read by renderer).
+    pub lighting: SceneLighting,
 }
 
 impl Scene {
     pub fn new() -> Self {
         Self {
-            objects: Vec::with_capacity(512),
+            objects: Vec::with_capacity(2048),
             next_id: 1,
+            lighting: SceneLighting {
+                lights: Vec::new(),
+                light_colors: Vec::new(),
+                ambient: 1.0,
+                ambient_color: [1.0, 1.0, 1.0],
+                grade_shadows: [1.0, 1.0, 1.0],
+                grade_highlights: [1.0, 1.0, 1.0],
+                grade_contrast: 1.0,
+                saturation: 1.0,
+                ramp_shadow: [0.0, 0.0, 0.0],
+                ramp_mid: [0.0, 0.0, 0.0],
+                ramp_highlight: [0.0, 0.0, 0.0],
+                posterize: 0.0,
+                fog_color: [0.12, 0.10, 0.18],
+            },
         }
     }
 
@@ -146,8 +268,9 @@ impl Scene {
     /// Clear all objects, preserving allocated capacity for reuse.
     pub fn clear(&mut self) {
         self.objects.clear();
-        // Don't reset next_id to 1 — preserving monotonic IDs avoids
-        // accidental reuse if any code holds a stale ObjectId.
+        // Reset to 1: IDs only need frame-local uniqueness since the scene
+        // is rebuilt each frame. Prevents u32 overflow at 800 objs * 60fps.
+        self.next_id = 1;
     }
 
     /// Iterate over all visible objects.
@@ -210,13 +333,13 @@ mod tests {
         assert_eq!(scene.object_count(), 10);
         scene.clear();
         assert_eq!(scene.object_count(), 0);
-        // IDs keep incrementing after clear (monotonic to avoid stale ID reuse)
+        // IDs reset after clear (frame-local uniqueness, prevents u32 overflow)
         let id = scene.add(
             MeshType::Cuboid,
             MaterialType::Unlit { color: Vec4::ONE },
             Transform::default(),
         );
-        assert!(id > 10);
+        assert_eq!(id, 1);
     }
 
     #[test]

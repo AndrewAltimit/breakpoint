@@ -697,6 +697,135 @@ input[type="text"]:focus-visible {
     font-size: 0.8rem;
 }
 
+.platformer-hp {
+    margin-bottom: 4px;
+}
+.platformer-hp .heart {
+    font-size: 1rem;
+    margin-right: 2px;
+}
+.platformer-hp .heart.full {
+    color: #cc2020;
+}
+.platformer-hp .heart.empty {
+    color: #403030;
+}
+.platformer-status {
+    font-size: 0.7rem;
+    color: #aab;
+    margin-bottom: 6px;
+}
+
+/* ── Platformer powerup timer bar ──────────────────── */
+
+.platformer-powerup-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+}
+
+.platformer-powerup-name {
+    font-size: 0.65rem;
+    color: #fd6;
+    white-space: nowrap;
+    min-width: 60px;
+}
+
+.platformer-powerup-track {
+    flex: 1;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.platformer-powerup-fill {
+    height: 100%;
+    background: #fd6;
+    border-radius: 2px;
+    transition: width 0.15s linear;
+    box-shadow: 0 0 4px rgba(255, 221, 102, 0.5);
+}
+
+/* ── Platformer minimap ───────────────────────────── */
+
+#platformer-minimap {
+    position: absolute;
+    bottom: 40px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 300px;
+    height: 40px;
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 4px;
+    pointer-events: none;
+    display: none;
+}
+
+#platformer-minimap.visible {
+    display: block;
+}
+
+/* ── Platformer checkpoint toast ──────────────────── */
+
+.platformer-checkpoint-toast {
+    position: absolute;
+    top: 30%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0.5);
+    font-size: 2rem;
+    font-weight: 800;
+    color: #fd6;
+    text-shadow: 0 0 20px rgba(255, 221, 102, 0.6), 0 2px 8px rgba(0, 0, 0, 0.5);
+    letter-spacing: 0.15em;
+    pointer-events: none;
+    opacity: 0;
+    z-index: 5;
+}
+
+.platformer-checkpoint-toast.show {
+    animation: checkpoint-pop 1.2s ease-out forwards;
+}
+
+@keyframes checkpoint-pop {
+    0% { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+    15% { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
+    30% { transform: translate(-50%, -50%) scale(1.0); }
+    70% { opacity: 1; }
+    100% { opacity: 0; transform: translate(-50%, -60%) scale(1.0); }
+}
+
+/* ── Platformer room name reveal ──────────────────── */
+
+.platformer-room-toast {
+    position: absolute;
+    top: 18%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0.8);
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: #e8dcc8;
+    text-shadow: 0 0 16px rgba(200, 180, 140, 0.5), 0 2px 6px rgba(0, 0, 0, 0.6);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    pointer-events: none;
+    opacity: 0;
+    z-index: 5;
+}
+
+.platformer-room-toast.show {
+    animation: room-reveal 2.5s ease-out forwards;
+}
+
+@keyframes room-reveal {
+    0% { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
+    10% { opacity: 1; transform: translate(-50%, -50%) scale(1.0); }
+    60% { opacity: 1; }
+    100% { opacity: 0; transform: translate(-50%, -55%) scale(1.0); }
+}
+
 .hud-player-row {
     display: flex;
     justify-content: space-between;

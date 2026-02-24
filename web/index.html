@@ -63,7 +63,6 @@
                             <span>Mode</span>
                             <select id="setting-platformer-mode" data-testid="setting-platformer-mode">
                                 <option value="race">Race</option>
-                                <option value="survival">Survival</option>
                             </select>
                         </div>
                     </div>
@@ -131,10 +130,24 @@
             <div id="platformer-hud" class="game-specific-hud hidden">
                 <div class="platformer-info">
                     <span id="platformer-mode"></span>
-                    <span id="platformer-hazard"></span>
+                    <span id="platformer-race-pos"></span>
                 </div>
+                <div id="platformer-hp" class="platformer-hp"></div>
+                <div id="platformer-powerup-bar" class="platformer-powerup-bar hidden">
+                    <span id="platformer-powerup-name" class="platformer-powerup-name"></span>
+                    <div class="platformer-powerup-track">
+                        <div id="platformer-powerup-fill" class="platformer-powerup-fill"></div>
+                    </div>
+                </div>
+                <div id="platformer-status" class="platformer-status"></div>
                 <div id="platformer-rankings" class="platformer-rankings"></div>
             </div>
+            <!-- Platformer minimap -->
+            <canvas id="platformer-minimap" width="300" height="40"></canvas>
+            <!-- Platformer checkpoint toast -->
+            <div id="platformer-checkpoint-toast" class="platformer-checkpoint-toast hidden">CHECKPOINT</div>
+            <!-- Room name reveal toast -->
+            <div id="platformer-room-toast" class="platformer-room-toast hidden"></div>
             <!-- LaserTag HUD -->
             <div id="lasertag-hud" class="game-specific-hud hidden">
                 <div class="lasertag-info">

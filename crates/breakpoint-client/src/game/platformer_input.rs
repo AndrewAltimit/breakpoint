@@ -24,10 +24,13 @@ pub fn process_platformer_input(
         input.is_key_down("Space") || input.is_key_down("ArrowUp") || input.is_key_down("KeyW");
     let use_powerup = input.is_key_just_pressed("KeyE");
 
+    let attack = input.is_key_just_pressed("KeyF") || input.is_key_just_pressed("KeyX");
+
     let plat_input = PlatformerInput {
         move_dir,
         jump,
         use_powerup,
+        attack,
     };
     send_player_input(&plat_input, active, role, ws);
 }
