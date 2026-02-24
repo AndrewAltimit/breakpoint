@@ -43,7 +43,7 @@ docker compose up -d
 | Game | Players | Description |
 |------|---------|-------------|
 | Simultaneous Mini-Golf | 2-8 | All players putt simultaneously. First to sink earns bonus points. |
-| Platform Racer | 2-6 | Race through procedural obstacle courses. |
+| Platform Racer | 2-6 | Castlevania-style castle labyrinth with enemies, power-ups, and procedural courses. |
 | Laser Tag Arena | 2-8 | Top-down arena with reflective walls and power-ups. |
 | Tron Light Cycles | 2-8 | Drive fast, leave walls, don't crash! Grind walls for speed boosts. |
 
@@ -113,7 +113,8 @@ breakpoint/
 │   │   └── breakpoint-tron/          # Tron Light Cycles
 │   └── adapters/
 │       └── breakpoint-github/        # GitHub Actions polling + agent detection
-├── web/                              # Static assets (HTML, CSS, sprites, sounds)
+├── web/                              # Static assets (HTML, CSS, sprites, sounds, profiler)
+├── tests/browser/                    # Playwright browser integration tests (16 spec files)
 ├── docker/                           # Dockerfiles (CI + production)
 ├── docs/                             # Architecture, integration, deployment guides
 ├── examples/                         # Docker Compose, adapter scripts, workflow templates
@@ -128,9 +129,13 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full system design.
 cargo check                                                    # Compile check
 cargo fmt --all                                                # Format
 cargo clippy --workspace --all-targets -- -D warnings          # Lint
-cargo test --workspace                                         # Test
+cargo test --workspace                                         # Test (699 tests)
 cargo build --workspace --release                              # Build
 wasm-pack build crates/breakpoint-client --target web          # WASM
+
+# Build with profiling (feature-gated, zero overhead when disabled)
+cargo build -p breakpoint-server --features profiling
+wasm-pack build crates/breakpoint-client --target web --out-dir ../../web/pkg --features profiling
 
 # Containerized CI (matches GitHub Actions)
 docker compose --profile ci run --rm rust-ci cargo test --workspace
@@ -141,7 +146,7 @@ docker compose --profile ci run --rm rust-ci cargo test --workspace
 | Layer | Technology |
 |-------|-----------|
 | Language | Rust (Edition 2024) |
-| Client | WebAssembly (wasm-bindgen, web-sys, custom WebGL2 renderer) |
+| Client | WebAssembly (wasm-bindgen, web-sys, custom WebGL2 renderer with sprite batching) |
 | Server | Axum 0.8, Tokio |
 | Serialization | MessagePack (game state), JSON (API/events) |
 | CI/CD | GitHub Actions (self-hosted runner, Docker containers) |

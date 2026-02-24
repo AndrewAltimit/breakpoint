@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[features]
+default = []
+profiling = ["breakpoint-core/profiling"]
+
 [dependencies]
 breakpoint-core = { path = "../../breakpoint-core" }
 serde = { workspace = true }

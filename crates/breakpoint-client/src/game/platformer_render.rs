@@ -3,8 +3,6 @@ use std::sync::{Mutex, OnceLock};
 
 use glam::{Vec3, Vec4};
 
-use crate::app::ActiveGame;
-use crate::game::read_game_state;
 use crate::scene::{MaterialType, MeshType, Scene, SceneLighting, Transform};
 use crate::sprite_atlas::{
     SpriteAnimation, SpriteRegion, SpriteSheet, bitmask_tile_for_group,
@@ -197,7 +195,7 @@ fn squash_stretch_scale(
 }
 
 /// Cached sprite sheet — built once on first call.
-fn atlas() -> &'static SpriteSheet {
+pub fn atlas() -> &'static SpriteSheet {
     static SHEET: OnceLock<SpriteSheet> = OnceLock::new();
     SHEET.get_or_init(build_platformer_atlas)
 }
@@ -227,26 +225,43 @@ fn add_sprite_region(scene: &mut Scene, region: &SpriteRegion, params: &SpritePa
 }
 
 /// Helper: add a sprite quad with dissolve effect.
+/// Non-dissolve sprites are written directly to the scene batch buffer,
+/// bypassing RenderObject creation (avoids frustum cull + sort overhead).
 fn add_sprite_region_with_dissolve(
     scene: &mut Scene,
     region: &SpriteRegion,
     params: &SpriteParams,
     dissolve: f32,
 ) {
-    scene.add(
-        MeshType::Quad,
-        MaterialType::Sprite {
-            atlas_id: ATLAS_ID,
-            sprite_rect: region.to_vec4(),
-            tint: params.tint,
-            flip_x: params.flip_x,
-            dissolve,
-            outline: params.outline,
-            blend_mode: params.blend_mode,
-        },
-        Transform::from_xyz(params.x, params.y, params.z)
-            .with_scale(Vec3::new(params.w, params.h, 1.0)),
-    );
+    if dissolve == 0.0 {
+        scene.add_batch_sprite(
+            params.x,
+            params.y,
+            params.z,
+            params.w,
+            params.h,
+            region.to_vec4(),
+            params.tint,
+            params.flip_x,
+            params.outline,
+            params.blend_mode,
+        );
+    } else {
+        scene.add(
+            MeshType::Quad,
+            MaterialType::Sprite {
+                atlas_id: ATLAS_ID,
+                sprite_rect: region.to_vec4(),
+                tint: params.tint,
+                flip_x: params.flip_x,
+                dissolve,
+                outline: params.outline,
+                blend_mode: params.blend_mode,
+            },
+            Transform::from_xyz(params.x, params.y, params.z)
+                .with_scale(Vec3::new(params.w, params.h, 1.0)),
+        );
+    }
 }
 
 /// Helper: add a sprite quad by name (defaults: z=Z_BG_TILES, no outline, normal blend).
@@ -469,18 +484,13 @@ fn powerup_sprite_name(kind: &breakpoint_platformer::powerups::PowerUpKind) -> &
 /// Sync the scene with the current platformer game state using flat sprites.
 pub fn sync_platformer_scene(
     scene: &mut Scene,
-    active: &ActiveGame,
+    state: &breakpoint_platformer::PlatformerState,
     theme: &Theme,
     dt: f32,
     camera_x: f32,
     camera_y: f32,
     time: f32,
 ) {
-    let state: Option<breakpoint_platformer::PlatformerState> = read_game_state(active);
-    let Some(state) = state else {
-        return;
-    };
-
     // Hit freeze: detect enemy kills and pause rendering for impact weight.
     {
         let mut freeze = hit_freeze().lock().unwrap_or_else(|e| e.into_inner());
@@ -526,8 +536,6 @@ pub fn sync_platformer_scene(
         .course
         .room_theme_at_tile((camera_x / tile_size) as i32, (camera_y / tile_size) as i32);
 
-    // Parallax background layers disabled — no dedicated background content in sprite atlas.
-    // add_parallax_layers(scene, camera_x, camera_y, camera_theme);
     let white = Vec4::ONE;
 
     // Tile culling: only render visible columns and rows.
@@ -546,7 +554,7 @@ pub fn sync_platformer_scene(
 
     // Collect torch lights for dynamic lighting
     scene.lighting = collect_torch_lights(
-        &state,
+        state,
         tile_size,
         min_col,
         max_col,
@@ -561,7 +569,7 @@ pub fn sync_platformer_scene(
     let water_color = Vec4::new(wc[0], wc[1], wc[2], wc[3]);
     render_tiles(
         scene,
-        &state,
+        state,
         tile_size,
         min_col,
         max_col,
@@ -572,19 +580,19 @@ pub fn sync_platformer_scene(
     );
 
     // God rays for Chapel rooms (from stained glass light sources)
-    render_godrays(scene, &state, tile_size, camera_x, camera_y);
+    render_godrays(scene, state, tile_size, camera_x, camera_y);
 
     // Render enemies
-    render_enemies(scene, &state, tile_size, theme, time);
+    render_enemies(scene, state, tile_size, theme, time);
 
     // Render enemy projectiles
-    render_projectiles(scene, &state, tile_size, time);
+    render_projectiles(scene, state, tile_size, time);
 
     // Render players
-    render_players(scene, &state, tile_size, white, time, dt);
+    render_players(scene, state, tile_size, white, time, dt);
 
     // Render uncollected powerups
-    render_powerups(scene, &state, tile_size, white);
+    render_powerups(scene, state, tile_size, white);
 }
 
 /// Per-room tile tint for atmospheric coloring of stone/brick surfaces.

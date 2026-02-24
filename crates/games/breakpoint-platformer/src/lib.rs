@@ -13,7 +13,6 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 use serde::{Deserialize, Serialize};
 
-use breakpoint_core::breakpoint_game_boilerplate;
 use breakpoint_core::game_trait::{
     BreakpointGame, GameConfig, GameEvent, GameMetadata, PlayerId, PlayerInputs, PlayerScore,
 };
@@ -29,6 +28,10 @@ use powerups::{ActivePowerUp, PowerUpKind, SpawnedPowerUp, select_powerup_for_po
 use rubber_band::{RubberBandFactor, compute_rubber_band};
 
 /// Serializable game state for network broadcast.
+///
+/// The `course` field is excluded from per-tick network serialization (sent
+/// separately via `CourseUpdate` messages) because it contains 23,000+ tiles
+/// that rarely change. The wire format uses [`PlatformerNetState`] internally.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlatformerState {
     pub players: HashMap<PlayerId, PlatformerPlayerState>,
@@ -41,6 +44,26 @@ pub struct PlatformerState {
     pub enemies: Vec<Enemy>,
     pub projectiles: Vec<EnemyProjectile>,
     pub rubber_band: HashMap<PlayerId, RubberBandFactor>,
+    /// Monotonic counter incremented when breakable walls are destroyed.
+    /// Clients compare this to detect course changes.
+    #[serde(default)]
+    pub course_version: u32,
+}
+
+/// Compact wire-format state that excludes the course grid.
+/// Used by `serialize_state_into()` for per-tick network broadcast.
+#[derive(Serialize, Deserialize)]
+struct PlatformerNetState {
+    players: HashMap<PlayerId, PlatformerPlayerState>,
+    powerups: Vec<SpawnedPowerUp>,
+    active_powerups: HashMap<PlayerId, Vec<ActivePowerUp>>,
+    finish_order: Vec<PlayerId>,
+    round_timer: f32,
+    round_complete: bool,
+    enemies: Vec<Enemy>,
+    projectiles: Vec<EnemyProjectile>,
+    rubber_band: HashMap<PlayerId, RubberBandFactor>,
+    course_version: u32,
 }
 
 /// The Platform Racer game (Castlevania Rush).
@@ -53,6 +76,10 @@ pub struct PlatformRacer {
     round_duration: f32,
     /// O(1) lookup companion for `state.finish_order`.
     finished_set: HashSet<PlayerId>,
+    /// True when the course grid has changed (breakable wall destroyed).
+    course_dirty: bool,
+    /// Monotonic counter for course changes.
+    course_version: u32,
     /// Data-driven game configuration (physics, timing).
     game_config: PlatformerConfig,
     /// Tick counter for periodic rubber-band recalculation.
@@ -82,6 +109,7 @@ impl PlatformRacer {
                 enemies: Vec::new(),
                 projectiles: Vec::new(),
                 rubber_band: HashMap::new(),
+                course_version: 0,
             },
             course: initial_course,
             player_ids: Vec::new(),
@@ -92,6 +120,8 @@ impl PlatformRacer {
             game_config,
             tick_counter: 0,
             rng: StdRng::seed_from_u64(42),
+            course_dirty: true,
+            course_version: 0,
         }
     }
 
@@ -169,12 +199,17 @@ impl PlatformRacer {
                 let tx = (player_snapshot.x / physics::TILE_SIZE).floor() as i32 + whip_dir;
                 let ty = (player_snapshot.y / physics::TILE_SIZE).floor() as i32;
                 // Check the tile the whip is pointing at (and one above/below)
-                try_break_wall(&mut self.course, tx, ty);
-                try_break_wall(&mut self.course, tx, ty + 1);
-                try_break_wall(&mut self.course, tx, ty - 1);
+                let broke = try_break_wall(&mut self.course, tx, ty)
+                    | try_break_wall(&mut self.course, tx, ty + 1)
+                    | try_break_wall(&mut self.course, tx, ty - 1);
 
-                // Sync course changes to state
-                self.state.course = self.course.clone();
+                // Only sync course when a wall was actually destroyed
+                if broke {
+                    self.state.course = self.course.clone();
+                    self.course_version += 1;
+                    self.state.course_version = self.course_version;
+                    self.course_dirty = true;
+                }
             }
         }
 
@@ -429,6 +464,8 @@ impl BreakpointGame for PlatformRacer {
             .map(|(i, spawn)| Enemy::from_spawn(i as u16, spawn))
             .collect();
 
+        self.course_version = 0;
+        self.course_dirty = true;
         self.state = PlatformerState {
             players: HashMap::new(),
             powerups: Vec::new(),
@@ -440,6 +477,7 @@ impl BreakpointGame for PlatformRacer {
             enemies,
             projectiles: Vec::new(),
             rubber_band: HashMap::new(),
+            course_version: 0,
         };
         self.player_ids.clear();
         self.pending_inputs.clear();
@@ -488,10 +526,16 @@ impl BreakpointGame for PlatformRacer {
         let mut events = Vec::new();
 
         // 1. Player movement and physics
-        self.process_player_movement(dt);
+        {
+            breakpoint_core::profile!("plat_physics");
+            self.process_player_movement(dt);
+        }
 
         // 2. Player attacks vs enemies
-        let combat_events = self.process_combat();
+        let combat_events = {
+            breakpoint_core::profile!("plat_combat");
+            self.process_combat()
+        };
         // Convert combat events to game events if needed
         for ce in &combat_events {
             if let CombatEvent::PlayerDied { player_id } = ce {
@@ -503,10 +547,16 @@ impl BreakpointGame for PlatformRacer {
         }
 
         // 3. Enemy AI ticks
-        self.process_enemies(dt);
+        {
+            breakpoint_core::profile!("plat_enemies");
+            self.process_enemies(dt);
+        }
 
         // 4. Enemy/projectile vs player damage
-        let damage_events = self.process_damage();
+        let damage_events = {
+            breakpoint_core::profile!("plat_damage");
+            self.process_damage()
+        };
         for ce in &damage_events {
             if let CombatEvent::PlayerDied { player_id } = ce {
                 events.push(GameEvent::ScoreUpdate {
@@ -516,23 +566,106 @@ impl BreakpointGame for PlatformRacer {
             }
         }
 
-        // 5. Power-up collection
-        self.process_powerups();
+        // 5. Power-up collection + tick active power-ups
+        {
+            breakpoint_core::profile!("plat_powerups");
+            self.process_powerups();
+            self.tick_active_powerups(dt);
+        }
 
-        // 6. Tick active power-ups
-        self.tick_active_powerups(dt);
+        // 6. Rubber banding
+        {
+            breakpoint_core::profile!("plat_rubber_band");
+            self.update_rubber_banding();
+        }
 
-        // 7. Rubber banding
-        self.update_rubber_banding();
-
-        // 8. Check finish / round completion
-        let finish_events = self.check_finish();
-        events.extend(finish_events);
+        // 7. Check finish / round completion
+        {
+            breakpoint_core::profile!("plat_finish");
+            let finish_events = self.check_finish();
+            events.extend(finish_events);
+        }
 
         events
     }
 
-    breakpoint_game_boilerplate!(state_type: PlatformerState);
+    fn serialize_state(&self) -> Vec<u8> {
+        // Full state including course — used for client-side cached reads.
+        rmp_serde::to_vec(&self.state).expect("game state serialization must succeed")
+    }
+
+    fn serialize_state_into(&self, buf: &mut Vec<u8>) {
+        // Compact wire format — excludes course for bandwidth savings.
+        buf.clear();
+        let net = PlatformerNetState {
+            players: self.state.players.clone(),
+            powerups: self.state.powerups.clone(),
+            active_powerups: self.state.active_powerups.clone(),
+            finish_order: self.state.finish_order.clone(),
+            round_timer: self.state.round_timer,
+            round_complete: self.state.round_complete,
+            enemies: self.state.enemies.clone(),
+            projectiles: self.state.projectiles.clone(),
+            rubber_band: self.state.rubber_band.clone(),
+            course_version: self.state.course_version,
+        };
+        rmp_serde::encode::write(buf, &net).expect("game state serialization must succeed");
+    }
+
+    fn apply_state(&mut self, state: &[u8]) {
+        // Try compact wire format first (from server broadcast).
+        if let Ok(net) = rmp_serde::from_slice::<PlatformerNetState>(state) {
+            self.state.players = net.players;
+            self.state.powerups = net.powerups;
+            self.state.active_powerups = net.active_powerups;
+            self.state.finish_order = net.finish_order;
+            self.state.round_timer = net.round_timer;
+            self.state.round_complete = net.round_complete;
+            self.state.enemies = net.enemies;
+            self.state.projectiles = net.projectiles;
+            self.state.rubber_band = net.rubber_band;
+            self.state.course_version = net.course_version;
+            // course is preserved from previous state / CourseUpdate
+            return;
+        }
+        // Fall back to full state format (includes course).
+        if let Ok(s) = rmp_serde::from_slice::<PlatformerState>(state) {
+            self.state = s;
+        }
+    }
+
+    fn pause(&mut self) {
+        self.paused = true;
+    }
+
+    fn resume(&mut self) {
+        self.paused = false;
+    }
+
+    fn is_round_complete(&self) -> bool {
+        self.state.round_complete
+    }
+
+    fn course_data(&mut self) -> Option<Vec<u8>> {
+        if self.course_dirty {
+            self.course_dirty = false;
+            let data = rmp_serde::to_vec(&self.course).expect("course serialization must succeed");
+            Some(data)
+        } else {
+            None
+        }
+    }
+
+    fn apply_course_data(&mut self, data: &[u8]) {
+        if let Ok(course) = rmp_serde::from_slice::<Course>(data) {
+            self.course = course.clone();
+            self.state.course = course;
+        }
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 
     fn apply_input(&mut self, player_id: PlayerId, input: &[u8]) {
         match rmp_serde::from_slice::<PlatformerInput>(input) {

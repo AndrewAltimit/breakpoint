@@ -5,7 +5,16 @@ pub mod net;
 pub mod overlay;
 pub mod player;
 pub mod powerup;
+#[cfg(feature = "profiling")]
+pub mod profiling;
 pub mod room;
+
+/// No-op profiling macro when the `profiling` feature is disabled.
+#[cfg(not(feature = "profiling"))]
+#[macro_export]
+macro_rules! profile {
+    ($name:expr) => {};
+}
 pub mod time;
 
 #[cfg(any(test, feature = "test-helpers"))]

@@ -4,9 +4,9 @@ use crate::overlay::config::OverlayConfigMsg;
 
 use super::messages::{
     AddBotMsg, AlertClaimedMsg, AlertDismissedMsg, AlertEventMsg, ChatMessageMsg, ClaimAlertMsg,
-    ClientMessage, GameEndMsg, GameStartMsg, GameStateMsg, JoinRoomMsg, JoinRoomResponseMsg,
-    LeaveRoomMsg, MessageType, PlayerInputMsg, PlayerListMsg, RemoveBotMsg, RequestGameStartMsg,
-    RoomConfigPayload, RoundEndMsg, ServerMessage,
+    ClientMessage, CourseUpdateMsg, GameEndMsg, GameStartMsg, GameStateMsg, JoinRoomMsg,
+    JoinRoomResponseMsg, LeaveRoomMsg, MessageType, PlayerInputMsg, PlayerListMsg, RemoveBotMsg,
+    RequestGameStartMsg, RoomConfigPayload, RoundEndMsg, ServerMessage,
 };
 
 /// Current protocol version.
@@ -84,7 +84,7 @@ pub fn encode_server_message(msg: &ServerMessage) -> Result<Vec<u8>, ProtocolErr
         ServerMessage::JoinRoomResponse(m) => encode_message(MessageType::JoinRoomResponse, m),
         ServerMessage::PlayerList(m) => encode_message(MessageType::PlayerList, m),
         ServerMessage::RoomConfig(m) => encode_message(MessageType::RoomConfigMsg, m),
-        ServerMessage::GameState(m) => encode_message(MessageType::GameState, m),
+        ServerMessage::GameState(m) => encode_game_state_fast(m.tick, &m.state_data),
         ServerMessage::GameStart(m) => encode_message(MessageType::GameStart, m),
         ServerMessage::RoundEnd(m) => encode_message(MessageType::RoundEnd, m),
         ServerMessage::GameEnd(m) => encode_message(MessageType::GameEnd, m),
@@ -92,7 +92,33 @@ pub fn encode_server_message(msg: &ServerMessage) -> Result<Vec<u8>, ProtocolErr
         ServerMessage::AlertClaimed(m) => encode_message(MessageType::AlertClaimed, m),
         ServerMessage::AlertDismissed(m) => encode_message(MessageType::AlertDismissed, m),
         ServerMessage::OverlayConfig(m) => encode_message(MessageType::OverlayConfig, m),
+        ServerMessage::CourseUpdate(m) => encode_message(MessageType::CourseUpdate, m),
     }
+}
+
+/// Encode a game state directly: `[type_byte | tick_le32 | raw_state_data]`.
+/// Avoids the `GameStateMsg` wrapper and its extra MessagePack pass.
+pub fn encode_game_state_fast(tick: u32, state_data: &[u8]) -> Result<Vec<u8>, ProtocolError> {
+    let total = 1 + 4 + state_data.len();
+    if total > MAX_MESSAGE_SIZE {
+        return Err(ProtocolError::PayloadTooLarge(total));
+    }
+    let mut buf = Vec::with_capacity(total);
+    buf.push(MessageType::GameState as u8);
+    buf.extend_from_slice(&tick.to_le_bytes());
+    buf.extend_from_slice(state_data);
+    Ok(buf)
+}
+
+/// Decode the fast game state format: returns `(tick, state_data_slice)`.
+/// The caller should check that `data[0] == MessageType::GameState as u8` first.
+pub fn decode_game_state_fast(data: &[u8]) -> Result<(u32, &[u8]), ProtocolError> {
+    // Minimum: 1 type byte + 4 tick bytes
+    if data.len() < 5 {
+        return Err(ProtocolError::EmptyMessage);
+    }
+    let tick = u32::from_le_bytes([data[1], data[2], data[3], data[4]]);
+    Ok((tick, &data[5..]))
 }
 
 /// Extract the message type byte from raw wire data.
@@ -157,9 +183,14 @@ pub fn decode_server_message(data: &[u8]) -> Result<ServerMessage, ProtocolError
         MessageType::RoomConfigMsg => Ok(ServerMessage::RoomConfig(decode_payload::<
             RoomConfigPayload,
         >(data)?)),
-        MessageType::GameState => Ok(ServerMessage::GameState(decode_payload::<GameStateMsg>(
-            data,
-        )?)),
+        MessageType::GameState => {
+            // Fast format: [type_byte | tick_le32 | raw_state_data]
+            let (tick, state_data) = decode_game_state_fast(data)?;
+            Ok(ServerMessage::GameState(GameStateMsg {
+                tick,
+                state_data: state_data.to_vec(),
+            }))
+        },
         MessageType::GameStart => Ok(ServerMessage::GameStart(decode_payload::<GameStartMsg>(
             data,
         )?)),
@@ -178,6 +209,9 @@ pub fn decode_server_message(data: &[u8]) -> Result<ServerMessage, ProtocolError
         >(data)?)),
         MessageType::OverlayConfig => Ok(ServerMessage::OverlayConfig(decode_payload::<
             OverlayConfigMsg,
+        >(data)?)),
+        MessageType::CourseUpdate => Ok(ServerMessage::CourseUpdate(decode_payload::<
+            CourseUpdateMsg,
         >(data)?)),
         _ => Err(ProtocolError::UnknownMessageType(data[0])),
     }
@@ -549,6 +583,7 @@ mod tests {
             (0x13, MessageType::GameStart),
             (0x14, MessageType::RoundEnd),
             (0x15, MessageType::GameEnd),
+            (0x16, MessageType::CourseUpdate),
             (0x20, MessageType::AlertEvent),
             (0x21, MessageType::AlertClaimed),
             (0x22, MessageType::AlertDismissed),

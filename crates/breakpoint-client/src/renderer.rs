@@ -142,8 +142,10 @@ pub struct Renderer {
     post_fbo: Option<PostProcessFBO>,
     /// Post-processing settings.
     pub post_process: PostProcessConfig,
-    /// Sprite batch: reusable CPU-side vertex buffer (cleared each frame).
-    batch_vertices: Vec<f32>,
+    /// Sprite batch: per-blend-mode vertex buffers, reused across frames.
+    normal_verts: Vec<f32>,
+    additive_verts: Vec<f32>,
+    subtractive_verts: Vec<f32>,
     /// Sprite batch: VAO + VBO for dynamic upload (created lazily).
     batch_vao: Option<WebGlVertexArrayObject>,
     batch_vbo: Option<web_sys::WebGlBuffer>,
@@ -259,7 +261,9 @@ impl Renderer {
             palettes: HashMap::new(),
             post_fbo: None,
             post_process: PostProcessConfig::default(),
-            batch_vertices: Vec::with_capacity(9 * 6 * 1024),
+            normal_verts: Vec::with_capacity(10 * 6 * 1024),
+            additive_verts: Vec::with_capacity(10 * 6 * 256),
+            subtractive_verts: Vec::with_capacity(10 * 6 * 256),
             batch_vao: None,
             batch_vbo: None,
         };
@@ -405,6 +409,7 @@ impl Renderer {
         // Frustum culling: extract frustum planes from the VP matrix and skip
         // objects whose bounding sphere is entirely outside any plane. This avoids
         // draw calls for off-screen objects (significant for Tron with 500+ walls).
+        breakpoint_core::profile!("render_cull");
         let frustum = extract_frustum_planes(&vp);
 
         // Sort by shader program to minimize expensive gl.use_program() switches.
@@ -424,24 +429,25 @@ impl Renderer {
 
         // --- Sprite batching: draw simple sprites (no outline, no dissolve) in bulk ---
         // Partition sprites by blend mode for batched drawing.
+        breakpoint_core::profile!("render_batch");
         let has_batch_program = self.programs.contains_key("sprite_batch");
         if has_batch_program {
             self.ensure_batch_vao();
             self.draw_sprite_batches(&sorted, &vp, scene, fog_density, camera);
         }
 
+        breakpoint_core::profile!("render_draw");
         let gl = &self.gl;
         let mut active_program: &str = "";
         // Track whether lighting uniforms have been set for the current sprite program.
         // These are scene-global (same for all sprites), so we set them once per program switch.
         let mut sprite_lighting_set = false;
         for obj in &sorted {
-            // Skip sprites that were drawn in the batch pass
+            // Skip sprites that were drawn in the batch pass (all non-dissolve sprites)
             if has_batch_program
                 && matches!(
                     &obj.material,
-                    MaterialType::Sprite { outline, dissolve, .. }
-                        if *outline == 0.0 && *dissolve == 0.0
+                    MaterialType::Sprite { dissolve, .. } if *dissolve == 0.0
                 )
             {
                 continue;
@@ -747,6 +753,7 @@ impl Renderer {
 
         // Post-processing pass: read FBO, draw fullscreen quad with effects
         if use_postfx {
+            breakpoint_core::profile!("render_postfx");
             self.draw_postprocess_pass();
         }
     }
@@ -1221,56 +1228,54 @@ impl Renderer {
     ) {
         use crate::scene::BlendMode;
 
-        // Collect batchable sprites per blend mode
-        let mut normal_sprites: Vec<&crate::scene::RenderObject> = Vec::new();
-        let mut additive_sprites: Vec<&crate::scene::RenderObject> = Vec::new();
-        let mut subtractive_sprites: Vec<&crate::scene::RenderObject> = Vec::new();
+        // Start with pre-built scene batch data (tiles, enemies, players).
+        self.normal_verts.clear();
+        self.normal_verts.extend_from_slice(&scene.batch_normal);
+        self.additive_verts.clear();
+        self.additive_verts.extend_from_slice(&scene.batch_additive);
+        self.subtractive_verts.clear();
+        self.subtractive_verts
+            .extend_from_slice(&scene.batch_subtractive);
 
+        // Append batchable sprites from sorted RenderObjects (other games, edge cases).
         for obj in sorted {
             if let MaterialType::Sprite {
-                outline,
                 dissolve,
                 blend_mode,
                 ..
             } = &obj.material
-                && *outline == 0.0
                 && *dissolve == 0.0
             {
-                match blend_mode {
-                    BlendMode::Normal => normal_sprites.push(obj),
-                    BlendMode::Additive => additive_sprites.push(obj),
-                    BlendMode::Subtractive => subtractive_sprites.push(obj),
-                }
+                let target = match blend_mode {
+                    BlendMode::Normal => &mut self.normal_verts,
+                    BlendMode::Additive => &mut self.additive_verts,
+                    BlendMode::Subtractive => &mut self.subtractive_verts,
+                };
+                append_sprite_to_batch(target, obj);
             }
         }
 
-        if normal_sprites.is_empty()
-            && additive_sprites.is_empty()
-            && subtractive_sprites.is_empty()
+        if self.normal_verts.is_empty()
+            && self.additive_verts.is_empty()
+            && self.subtractive_verts.is_empty()
         {
             return;
         }
 
-        // Build all batch vertex data first (needs &mut self)
-        // We'll store them in temporary Vecs to avoid borrow issues.
-        let mut normal_verts: Vec<f32> = Vec::new();
-        let mut additive_verts: Vec<f32> = Vec::new();
-        let mut subtractive_verts: Vec<f32> = Vec::new();
-        if !normal_sprites.is_empty() {
-            self.build_sprite_batch(&normal_sprites);
-            std::mem::swap(&mut normal_verts, &mut self.batch_vertices);
-        }
-        if !additive_sprites.is_empty() {
-            self.build_sprite_batch(&additive_sprites);
-            std::mem::swap(&mut additive_verts, &mut self.batch_vertices);
-        }
-        if !subtractive_sprites.is_empty() {
-            self.build_sprite_batch(&subtractive_sprites);
-            std::mem::swap(&mut subtractive_verts, &mut self.batch_vertices);
-        }
+        // Swap out to locals for the draw phase (&self needed for GL calls).
+        let mut nv = Vec::new();
+        let mut av = Vec::new();
+        let mut sv = Vec::new();
+        std::mem::swap(&mut nv, &mut self.normal_verts);
+        std::mem::swap(&mut av, &mut self.additive_verts);
+        std::mem::swap(&mut sv, &mut self.subtractive_verts);
 
         let gl = &self.gl;
         let Some(prog) = self.programs.get("sprite_batch") else {
+            // Swap back before returning to preserve capacity.
+            std::mem::swap(&mut nv, &mut self.normal_verts);
+            std::mem::swap(&mut av, &mut self.additive_verts);
+            std::mem::swap(&mut sv, &mut self.subtractive_verts);
             return;
         };
         gl.use_program(Some(&prog.program));
@@ -1336,30 +1341,35 @@ impl Renderer {
         gl.disable(GL::CULL_FACE);
 
         // Draw Normal blend batch
-        if !normal_verts.is_empty() {
+        if !nv.is_empty() {
             gl.blend_func(GL::SRC_ALPHA, GL::ONE_MINUS_SRC_ALPHA);
             gl.blend_equation(GL::FUNC_ADD);
-            self.upload_and_draw_batch_data(&normal_verts);
+            self.upload_and_draw_batch_data(&nv);
         }
 
         // Draw Additive blend batch
-        if !additive_verts.is_empty() {
+        if !av.is_empty() {
             gl.blend_func(GL::SRC_ALPHA, GL::ONE);
             gl.blend_equation(GL::FUNC_ADD);
-            self.upload_and_draw_batch_data(&additive_verts);
+            self.upload_and_draw_batch_data(&av);
         }
 
         // Draw Subtractive blend batch
-        if !subtractive_verts.is_empty() {
+        if !sv.is_empty() {
             gl.blend_func(GL::SRC_ALPHA, GL::ONE);
             gl.blend_equation(GL::FUNC_REVERSE_SUBTRACT);
-            self.upload_and_draw_batch_data(&subtractive_verts);
+            self.upload_and_draw_batch_data(&sv);
         }
 
         // Restore default blend state
         gl.blend_func(GL::SRC_ALPHA, GL::ONE_MINUS_SRC_ALPHA);
         gl.blend_equation(GL::FUNC_ADD);
         gl.enable(GL::CULL_FACE);
+
+        // Swap back to preserve capacity for next frame.
+        std::mem::swap(&mut nv, &mut self.normal_verts);
+        std::mem::swap(&mut av, &mut self.additive_verts);
+        std::mem::swap(&mut sv, &mut self.subtractive_verts);
     }
 
     /// Ensure the batch VAO/VBO is created (lazy init).
@@ -1379,8 +1389,8 @@ impl Renderer {
         gl.bind_vertex_array(Some(&vao));
         gl.bind_buffer(GL::ARRAY_BUFFER, Some(&vbo));
 
-        // Batch vertex layout: pos(3) + uv(2) + tint(4) = 9 floats = 36 bytes
-        let stride = 9 * 4;
+        // Batch vertex layout: pos(3) + uv(2) + tint(4) + outline(1) = 10 floats = 40 bytes
+        let stride = 10 * 4;
         // location 0: position (vec3)
         gl.enable_vertex_attrib_array(0);
         gl.vertex_attrib_pointer_with_i32(0, 3, GL::FLOAT, false, stride, 0);
@@ -1390,71 +1400,13 @@ impl Renderer {
         // location 2: tint (vec4)
         gl.enable_vertex_attrib_array(2);
         gl.vertex_attrib_pointer_with_i32(2, 4, GL::FLOAT, false, stride, 20);
+        // location 3: outline (float)
+        gl.enable_vertex_attrib_array(3);
+        gl.vertex_attrib_pointer_with_i32(3, 1, GL::FLOAT, false, stride, 36);
 
         gl.bind_vertex_array(None);
         self.batch_vao = Some(vao);
         self.batch_vbo = Some(vbo);
-    }
-
-    /// Build batch vertex data for a set of batchable sprites.
-    /// Each sprite becomes 6 vertices (2 triangles), with pre-computed
-    /// world-space positions and atlas UVs.
-    fn build_sprite_batch(&mut self, sprites: &[&crate::scene::RenderObject]) {
-        self.batch_vertices.clear();
-        for obj in sprites {
-            let MaterialType::Sprite {
-                sprite_rect,
-                tint,
-                flip_x,
-                ..
-            } = &obj.material
-            else {
-                continue;
-            };
-            // Pre-compute world-space quad corners from transform
-            let t = &obj.transform;
-            let half_x = t.scale.x * 0.5;
-            let half_y = t.scale.y * 0.5;
-            let cx = t.translation.x;
-            let cy = t.translation.y;
-            let z = t.translation.z;
-
-            // Quad corners (no rotation for 2D sprites)
-            let x0 = cx - half_x;
-            let x1 = cx + half_x;
-            let y0 = cy - half_y;
-            let y1 = cy + half_y;
-
-            // Pre-compute atlas UVs from sprite_rect + flip
-            let (u0, u1) = if *flip_x {
-                (sprite_rect.z, sprite_rect.x) // reversed
-            } else {
-                (sprite_rect.x, sprite_rect.z)
-            };
-            // V is inverted: sprite_rect.w = v_bottom, sprite_rect.y = v_top
-            let v0 = sprite_rect.w; // bottom
-            let v1 = sprite_rect.y; // top
-
-            let tr = tint.x;
-            let tg = tint.y;
-            let tb = tint.z;
-            let ta = tint.w;
-
-            // Triangle 1: bottom-left, top-right, bottom-right
-            self.batch_vertices
-                .extend_from_slice(&[x0, y0, z, u0, v0, tr, tg, tb, ta]);
-            self.batch_vertices
-                .extend_from_slice(&[x1, y1, z, u1, v1, tr, tg, tb, ta]);
-            self.batch_vertices
-                .extend_from_slice(&[x1, y0, z, u1, v0, tr, tg, tb, ta]);
-            // Triangle 2: bottom-left, top-left, top-right
-            self.batch_vertices
-                .extend_from_slice(&[x0, y0, z, u0, v0, tr, tg, tb, ta]);
-            self.batch_vertices
-                .extend_from_slice(&[x0, y1, z, u0, v1, tr, tg, tb, ta]);
-            self.batch_vertices
-                .extend_from_slice(&[x1, y1, z, u1, v1, tr, tg, tb, ta]);
-        }
     }
 
     /// Upload batch vertex data and draw. Uses GL handle directly to avoid self borrow issues.
@@ -1475,10 +1427,59 @@ impl Renderer {
             gl.buffer_data_with_array_buffer_view(GL::ARRAY_BUFFER, &view, GL::DYNAMIC_DRAW);
         }
 
-        let vertex_count = (data.len() / 9) as i32;
+        let vertex_count = (data.len() / 10) as i32;
         gl.draw_arrays(GL::TRIANGLES, 0, vertex_count);
         gl.bind_vertex_array(None);
     }
+}
+
+/// Append a single RenderObject sprite to a batch vertex buffer.
+/// 10 floats per vertex: pos(3) + uv(2) + tint(4) + outline(1).
+fn append_sprite_to_batch(target: &mut Vec<f32>, obj: &crate::scene::RenderObject) {
+    let MaterialType::Sprite {
+        sprite_rect,
+        tint,
+        flip_x,
+        outline,
+        ..
+    } = &obj.material
+    else {
+        return;
+    };
+    let t = &obj.transform;
+    let half_x = t.scale.x * 0.5;
+    let half_y = t.scale.y * 0.5;
+    let cx = t.translation.x;
+    let cy = t.translation.y;
+    let z = t.translation.z;
+
+    let x0 = cx - half_x;
+    let x1 = cx + half_x;
+    let y0 = cy - half_y;
+    let y1 = cy + half_y;
+
+    let (u0, u1) = if *flip_x {
+        (sprite_rect.z, sprite_rect.x)
+    } else {
+        (sprite_rect.x, sprite_rect.z)
+    };
+    let v0 = sprite_rect.w;
+    let v1 = sprite_rect.y;
+
+    let tr = tint.x;
+    let tg = tint.y;
+    let tb = tint.z;
+    let ta = tint.w;
+    let ol = *outline;
+
+    // Triangle 1: bottom-left, top-right, bottom-right
+    target.extend_from_slice(&[x0, y0, z, u0, v0, tr, tg, tb, ta, ol]);
+    target.extend_from_slice(&[x1, y1, z, u1, v1, tr, tg, tb, ta, ol]);
+    target.extend_from_slice(&[x1, y0, z, u1, v0, tr, tg, tb, ta, ol]);
+    // Triangle 2: bottom-left, top-left, top-right
+    target.extend_from_slice(&[x0, y0, z, u0, v0, tr, tg, tb, ta, ol]);
+    target.extend_from_slice(&[x0, y1, z, u0, v1, tr, tg, tb, ta, ol]);
+    target.extend_from_slice(&[x1, y1, z, u1, v1, tr, tg, tb, ta, ol]);
 }
 
 // --- Uniform helpers ---

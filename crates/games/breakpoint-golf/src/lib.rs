@@ -166,6 +166,7 @@ impl BreakpointGame for MiniGolf {
     }
 
     fn update(&mut self, dt: f32, _inputs: &PlayerInputs) -> Vec<GameEvent> {
+        breakpoint_core::profile!("golf_update");
         if self.paused || self.state.round_complete {
             return Vec::new();
         }

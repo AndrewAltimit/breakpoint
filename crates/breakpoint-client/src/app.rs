@@ -59,9 +59,6 @@ pub struct ActiveGame {
     pub game_id: GameId,
     pub tick: u32,
     pub tick_accumulator: f32,
-    pub prev_state: Option<Vec<u8>>,
-    pub interp_alpha: f32,
-    pub cached_state_bytes: Option<Vec<u8>>,
 }
 
 /// Network role for this client.
@@ -165,6 +162,10 @@ pub struct App {
     prev_local_alive: bool,
     /// Frame counter for throttling continuous audio (e.g. Tron grind).
     audio_frame_counter: u32,
+    /// Timestamp (ms) of the last JS bridge push. Throttled to 10 Hz.
+    last_bridge_push: f64,
+    /// Previous AppState for detecting transitions that force a bridge push.
+    prev_bridge_state: AppState,
 }
 
 impl App {
@@ -271,11 +272,18 @@ impl App {
             prev_timestamp: 0.0,
             prev_local_alive: true,
             audio_frame_counter: 0,
+            last_bridge_push: 0.0,
+            prev_bridge_state: AppState::Lobby,
         }
     }
 
     /// Main frame update, called each requestAnimationFrame.
     pub fn frame(&mut self, timestamp: f64) {
+        #[cfg(feature = "profiling")]
+        breakpoint_core::profiling::ProfileFrame::reset();
+        #[cfg(feature = "profiling")]
+        breakpoint_core::profile!("frame");
+
         let dt = if self.prev_timestamp > 0.0 {
             ((timestamp - self.prev_timestamp) / 1000.0) as f32
         } else {
@@ -292,37 +300,49 @@ impl App {
         }
 
         // Process network messages
-        self.process_network(timestamp);
+        {
+            breakpoint_core::profile!("network");
+            self.process_network(timestamp);
+        }
 
         // Process overlay events
-        self.overlay
-            .process_events(&mut self.overlay_queue, &mut self.audio_events);
+        {
+            breakpoint_core::profile!("overlay");
+            self.overlay
+                .process_events(&mut self.overlay_queue, &mut self.audio_events);
+        }
 
         // State-specific update
-        match self.state {
-            AppState::Lobby => {},
-            AppState::InGame => {
-                self.update_game(dt);
-            },
-            AppState::BetweenRounds => {},
-            AppState::GameOver => {
-                // Auto-return to lobby after 30s
-                if let Some(start) = self.game_over_timestamp {
-                    let elapsed = (timestamp - start) / 1000.0;
-                    if elapsed >= 30.0 {
-                        self.transition_to(AppState::Lobby);
+        {
+            breakpoint_core::profile!("game_update");
+            match self.state {
+                AppState::Lobby => {},
+                AppState::InGame => {
+                    self.update_game(dt);
+                },
+                AppState::BetweenRounds => {},
+                AppState::GameOver => {
+                    // Auto-return to lobby after 30s
+                    if let Some(start) = self.game_over_timestamp {
+                        let elapsed = (timestamp - start) / 1000.0;
+                        if elapsed >= 30.0 {
+                            self.transition_to(AppState::Lobby);
+                        }
                     }
-                }
-            },
+                },
+            }
         }
 
         // Update camera
-        self.camera.update(dt);
+        {
+            breakpoint_core::profile!("camera");
+            self.camera.update(dt);
 
-        // Screen shake
-        if self.screen_shake.timer > 0.0 {
-            self.screen_shake.tick(dt);
-            self.camera.apply_shake(self.screen_shake.offset);
+            // Screen shake
+            if self.screen_shake.timer > 0.0 {
+                self.screen_shake.tick(dt);
+                self.camera.apply_shake(self.screen_shake.offset);
+            }
         }
 
         // Screen flash
@@ -337,14 +357,20 @@ impl App {
         }
 
         // Update and render particles into the scene
-        self.particle_system.tick(dt);
-        self.particle_system.render(&mut self.scene);
+        {
+            breakpoint_core::profile!("particles");
+            self.particle_system.tick(dt);
+            self.particle_system.render(&mut self.scene);
+        }
 
         // Update and render weather
-        self.weather
-            .set_camera(self.camera.position.x, self.camera.position.y);
-        self.weather.tick(dt);
-        self.weather.render(&mut self.scene);
+        {
+            breakpoint_core::profile!("weather");
+            self.weather
+                .set_camera(self.camera.position.x, self.camera.position.y);
+            self.weather.tick(dt);
+            self.weather.render(&mut self.scene);
+        }
 
         // Lightning flash overlay
         if self.weather.lightning_intensity > 0.01 && !self.screen_flash.active {
@@ -397,17 +423,33 @@ impl App {
         } else {
             self.renderer.post_process = crate::renderer::PostProcessConfig::default();
         }
-        self.renderer
-            .draw(&self.scene, &self.camera, dt, clear_color, fog_density);
+        {
+            breakpoint_core::profile!("render");
+            self.renderer
+                .draw(&self.scene, &self.camera, dt, clear_color, fog_density);
+        }
 
         // Draw screen flash overlay after scene (additive blend)
         if self.screen_flash.active {
+            breakpoint_core::profile!("postfx");
             self.renderer
                 .draw_screen_flash(self.screen_flash.color, self.screen_flash.alpha());
         }
 
-        // Push UI state to JS
-        bridge::push_ui_state(self);
+        // Push UI state to JS (throttled to 10 Hz unless state changed)
+        {
+            breakpoint_core::profile!("bridge");
+            let state_changed = self.state != self.prev_bridge_state;
+            if state_changed || timestamp - self.last_bridge_push >= 100.0 {
+                bridge::push_ui_state(self);
+                self.last_bridge_push = timestamp;
+                self.prev_bridge_state = self.state;
+            }
+        }
+
+        // Push profiling data to JS overlay
+        #[cfg(feature = "profiling")]
+        bridge::push_profile_data();
 
         // End frame
         self.input.end_frame();
@@ -656,23 +698,22 @@ impl App {
         use breakpoint_core::net::messages::ServerMessage;
 
         match msg_type {
-            MessageType::GameState => match decode_server_message(data) {
-                Ok(ServerMessage::GameState(gs)) => {
-                    if let Some(ref mut active) = self.game {
-                        active.prev_state = Some(active.game.serialize_state());
-                        active.game.apply_state(&gs.state_data);
-                        active.cached_state_bytes = Some(gs.state_data);
-                        active.tick = gs.tick;
-                        active.interp_alpha = 0.0;
-                    }
-                },
-                Err(e) => {
-                    crate::diag::console_warn!(
-                        "Failed to decode GameState ({} bytes): {e}",
-                        data.len()
-                    );
-                },
-                _ => {},
+            MessageType::GameState => {
+                // Fast decode: [type_byte | tick_le32 | raw_state_data]
+                match breakpoint_core::net::protocol::decode_game_state_fast(data) {
+                    Ok((tick, state_data)) => {
+                        if let Some(ref mut active) = self.game {
+                            active.game.apply_state(state_data);
+                            active.tick = tick;
+                        }
+                    },
+                    Err(e) => {
+                        crate::diag::console_warn!(
+                            "Failed to decode GameState ({} bytes): {e}",
+                            data.len()
+                        );
+                    },
+                }
             },
             MessageType::RoundEnd => match decode_server_message(data) {
                 Ok(ServerMessage::RoundEnd(re)) => {
@@ -722,6 +763,20 @@ impl App {
                 Err(e) => {
                     crate::diag::console_warn!(
                         "Failed to decode GameEnd ({} bytes): {e}",
+                        data.len()
+                    );
+                },
+                _ => {},
+            },
+            MessageType::CourseUpdate => match decode_server_message(data) {
+                Ok(ServerMessage::CourseUpdate(cu)) => {
+                    if let Some(ref mut active) = self.game {
+                        active.game.apply_course_data(&cu.data);
+                    }
+                },
+                Err(e) => {
+                    crate::diag::console_warn!(
+                        "Failed to decode CourseUpdate ({} bytes): {e}",
                         data.len()
                     );
                 },
@@ -869,9 +924,11 @@ impl App {
             #[cfg(feature = "platformer")]
             GameId::Platformer => {
                 if let Some(ref role) = self.network_role
-                    && let Some(s) =
-                        read_game_state::<breakpoint_platformer::PlatformerState>(active)
-                    && let Some(p) = s.players.get(&role.local_player_id)
+                    && let Some(racer) = active
+                        .game
+                        .as_any()
+                        .downcast_ref::<breakpoint_platformer::PlatformRacer>()
+                    && let Some(p) = racer.state().players.get(&role.local_player_id)
                 {
                     self.camera.set_mode(CameraMode::PlatformerFollow {
                         player_pos: Vec2::new(p.x, p.y),
@@ -942,18 +999,31 @@ impl App {
     /// Detect HP changes and enemy kills in the platformer for particle/audio effects.
     #[cfg(feature = "platformer")]
     fn detect_platformer_events(&mut self) {
-        let Some(ref active) = self.game else {
-            return;
+        // Obtain a pointer to the platformer state, then drop the immutable
+        // borrow of self.game so the detect_* methods can take &mut self.
+        let state_ptr: *const breakpoint_platformer::PlatformerState = {
+            let Some(ref active) = self.game else {
+                return;
+            };
+            let Some(racer) = active
+                .game
+                .as_any()
+                .downcast_ref::<breakpoint_platformer::PlatformRacer>()
+            else {
+                return;
+            };
+            racer.state()
         };
-        let Some(state) = read_game_state::<breakpoint_platformer::PlatformerState>(active) else {
-            return;
-        };
-        let sheet = crate::sprite_atlas::build_platformer_atlas();
+        // SAFETY: self.game is not modified by any code below; the detect_*
+        // methods only mutate disjoint fields (particles, audio_events,
+        // prev_hp_map, prev_enemy_alive, prev_powerups).
+        let state = unsafe { &*state_ptr };
+        let sheet = crate::game::platformer_render::atlas();
 
-        self.detect_player_hp_changes(&state, &sheet);
-        self.detect_enemy_kills(&state, &sheet);
-        self.detect_powerup_collections(&state, &sheet);
-        self.emit_torch_embers(&state, &sheet);
+        self.detect_player_hp_changes(state, sheet);
+        self.detect_enemy_kills(state, sheet);
+        self.detect_powerup_collections(state, sheet);
+        self.emit_torch_embers(state, sheet);
     }
 
     /// Configure weather system based on the current room theme under the camera.
@@ -962,9 +1032,14 @@ impl App {
         let Some(ref active) = self.game else {
             return;
         };
-        let Some(state) = read_game_state::<breakpoint_platformer::PlatformerState>(active) else {
+        let Some(racer) = active
+            .game
+            .as_any()
+            .downcast_ref::<breakpoint_platformer::PlatformRacer>()
+        else {
             return;
         };
+        let state = racer.state();
         let tile_size = breakpoint_platformer::physics::TILE_SIZE;
         let theme = state.course.room_theme_at_tile(
             (self.camera.position.x / tile_size) as i32,
@@ -1220,15 +1295,21 @@ impl App {
             },
             #[cfg(feature = "platformer")]
             GameId::Platformer => {
-                crate::game::platformer_render::sync_platformer_scene(
-                    &mut self.scene,
-                    active,
-                    &self.theme,
-                    dt,
-                    self.camera.position.x,
-                    self.camera.position.y,
-                    self.renderer.time(),
-                );
+                if let Some(racer) = active
+                    .game
+                    .as_any()
+                    .downcast_ref::<breakpoint_platformer::PlatformRacer>()
+                {
+                    crate::game::platformer_render::sync_platformer_scene(
+                        &mut self.scene,
+                        racer.state(),
+                        &self.theme,
+                        dt,
+                        self.camera.position.x,
+                        self.camera.position.y,
+                        self.renderer.time(),
+                    );
+                }
             },
             #[cfg(feature = "lasertag")]
             GameId::LaserTag => {
@@ -1313,9 +1394,6 @@ impl App {
             game_id,
             tick: 0,
             tick_accumulator: 0.0,
-            prev_state: None,
-            interp_alpha: 0.0,
-            cached_state_bytes: None,
         });
         self.network_role = Some(NetworkRole {
             is_leader: self.lobby.is_leader,

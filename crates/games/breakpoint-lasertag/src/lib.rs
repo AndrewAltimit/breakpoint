@@ -335,6 +335,7 @@ impl BreakpointGame for LaserTagArena {
     }
 
     fn update(&mut self, dt: f32, _inputs: &PlayerInputs) -> Vec<GameEvent> {
+        breakpoint_core::profile!("lasertag_update");
         if self.paused || self.state.round_complete {
             return Vec::new();
         }
