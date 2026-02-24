@@ -10,7 +10,7 @@ authors.workspace = true
 [features]
 default = []
 test-helpers = []
-profiling = []
+profiling = ["dep:web-sys"]
 
 [dependencies]
 serde.workspace = true
@@ -20,6 +20,7 @@ toml.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 rand.workspace = true
+web-sys = { version = "0.3", features = ["Performance", "Window"], optional = true }
 
 [lints]
 workspace = true
