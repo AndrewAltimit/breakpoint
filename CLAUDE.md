@@ -8,7 +8,7 @@ Breakpoint is a browser-based multiplayer gaming platform (Rust + WASM) designed
 
 All code is authored by AI agents under human direction. No external contributions are accepted.
 
-**Status:** Feature-complete (Phases 1–4). 484 tests pass across 8 workspace crates. Production-hardened with input validation, state machine enforcement, idle room cleanup, and event batch limits. Browser integration tests via Playwright (12 spec files, Chromium + Firefox).
+**Status:** Feature-complete (Phases 1–4). 699 tests pass across 9 workspace crates. Production-hardened with input validation, state machine enforcement, idle room cleanup, and event batch limits. Browser integration tests via Playwright (16 spec files, Chromium + Firefox). Performance-optimized with feature-gated profiling system and fast binary game state protocol.
 
 ## Build Commands
 
@@ -74,21 +74,22 @@ docker build -f docker/server.Dockerfile -t breakpoint .
 
 - **breakpoint-core** — Shared types with no runtime dependencies. Event schema (`events.rs`), `BreakpointGame` trait (`game_trait.rs`), player/room types, network message types (`net/`), overlay data models (`overlay/` including config, ticker, toast, dashboard).
 - **breakpoint-server** — Axum binary. Server-authoritative game simulation (`game_loop.rs`), WSS game state broadcast, REST event ingestion (`/api/v1/events`), SSE streaming, GitHub webhook adapter, room management, TOML config loading, static file serving. Optional `github-poller` feature flag spawns the GitHub Actions polling monitor.
-- **breakpoint-client** — WASM library (`crate-type = ["cdylib", "rlib"]`), custom WebGL2 renderer via web-sys. HTML/CSS/JS UI layer (lobby, HUD, overlay). Game rendering (golf/platformer/lasertag) via flat scene graph rebuilt each frame. JS bridge for Rust↔UI communication. Audio, theming, localStorage persistence.
+- **breakpoint-client** — WASM library (`crate-type = ["cdylib", "rlib"]`), custom WebGL2 renderer via web-sys. HTML/CSS/JS UI layer (lobby, HUD, overlay). Game rendering (golf/platformer/lasertag/tron) via flat scene graph rebuilt each frame with sprite batching (pre-built batch buffers bypass frustum cull/sort). JS bridge for Rust↔UI communication. Audio, theming, localStorage persistence. Optional `profiling` feature for browser performance overlay.
 - **breakpoint-relay** — Stateless WebSocket relay for NAT traversal. Protocol-agnostic message forwarding, room code generation, auto-cleanup.
 - **breakpoint-golf** — Simultaneous mini-golf (2-8 players, 10 Hz). Physics, obstacles, scoring.
-- **breakpoint-platformer** — Platform racer (2-6 players, 15 Hz). Procedural courses, race/survival modes, power-ups.
+- **breakpoint-platformer** — Castlevania-style platform racer (2-6 players, 15 Hz). Procedural castle labyrinth courses, race/survival modes, power-ups, enemy AI, bitmask tiling. Course data sent via `CourseUpdate` message (separate from per-tick state).
 - **breakpoint-lasertag** — Laser tag arena (2-8 players, 20 Hz). Reflective walls, FFA/team modes, power-ups.
 - **breakpoint-tron** — Tron Light Cycles (2-8 players, 20 Hz). Wall trails, grinding, win zones, server-side bots.
 - **breakpoint-github** — GitHub Actions polling adapter with agent/bot detection. Configurable glob-style patterns.
 
 **Key design patterns:**
 - Server-authoritative: the Axum server runs the game simulation (`game_loop.rs`), all clients are equal renderers that send inputs and receive state
-- Dual-channel communication: game state over WSS (MessagePack, tick-aligned), alerts over SSE/WSS (JSON, event-driven)
+- Dual-channel communication: game state over WSS (fast binary: `[type][LE tick][raw state]`), alerts over SSE/WSS (JSON, event-driven). Large static data (courses) sent via separate `CourseUpdate` messages
 - Games are pluggable via the `BreakpointGame` trait — networking, overlay, and lobby code don't change when adding games
 - Alert overlay operates independently of game lifecycle (works in lobby, between rounds, during gameplay)
 - Game crates behind feature flags for optional compilation (reduce WASM bundle)
 - Server config via TOML file (`breakpoint.toml`) with env var overrides
+- Feature-gated profiling (`--features profiling`): zero-overhead when disabled, browser overlay when enabled
 
 **Static assets** live in `web/` (HTML shell, CSS, JS UI layer, sprites, sounds, theme config). The server serves these and the WASM bundle.
 
@@ -100,7 +101,7 @@ docker build -f docker/server.Dockerfile -t breakpoint .
 - Formatting: 100 char max width, 4-space indent, Unix newlines, tall fn params
 - Shared dependencies declared in `[workspace.dependencies]` and referenced with `.workspace = true`
 - Dual license: Unlicense OR MIT
-- Release profile: `opt-level = "z"`, LTO, `codegen-units = 1`, strip
+- Release profile: `opt-level = 3` (server), `opt-level = "z"` (WASM client), LTO, `codegen-units = 1`, strip
 
 ## CI/CD Pipeline
 
@@ -151,3 +152,7 @@ Two GitHub Actions workflows, all on a self-hosted runner using Docker container
 | Tron config | `crates/games/breakpoint-tron/src/config.rs` |
 | Agent detection | `crates/adapters/breakpoint-github/src/agent_detect.rs` |
 | Relay server | `crates/breakpoint-relay/src/relay.rs` |
+| Profiling system | `crates/breakpoint-core/src/profiling.rs` |
+| Fast game state codec | `crates/breakpoint-core/src/net/protocol.rs` |
+| Browser profiler overlay | `web/profiler.js` |
+| Playwright test helpers | `tests/browser/helpers/shared.js`, `tests/browser/helpers/protocol.js` |

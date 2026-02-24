@@ -23,11 +23,16 @@ export const MSG = {
   GAME_START:        0x13,
   ROUND_END:         0x14,
   GAME_END:          0x15,
+  COURSE_UPDATE:     0x16,
   // Alert
   ALERT_EVENT:       0x20,
   ALERT_CLAIMED:     0x21,
   ALERT_DISMISSED:   0x22,
   OVERLAY_CONFIG:    0x23,
+  // Client -> Server (lobby actions)
+  REQUEST_GAME_START:0x30,
+  ADD_BOT:           0x31,
+  REMOVE_BOT:        0x32,
 };
 
 /**
@@ -46,12 +51,22 @@ export function encode(type, payload) {
 
 /**
  * Decode a wire message.
+ *
+ * GameState uses a fast binary format: [0x10][4-byte LE tick][raw state_data]
+ * All other messages use standard msgpack: [type][msgpack payload]
+ *
  * @param {Buffer|Uint8Array} data - Raw wire data
  * @returns {{ type: number, payload: any }}
  */
 export function decode(data) {
   const buf = Buffer.from(data);
   const type = buf[0];
+  // Fast binary format for GameState (not msgpack)
+  if (type === MSG.GAME_STATE && buf.length >= 5) {
+    const tick = buf.readUInt32LE(1);
+    const stateData = buf.subarray(5);
+    return { type, payload: [tick, stateData] };
+  }
   const payload = unpack(buf.subarray(1));
   return { type, payload };
 }
