@@ -86,6 +86,34 @@ jobs:
             fi
           done
 
+  # ── GitHub Pages ────────────────────────────────────────────────────
+  deploy-pages:
+    name: Deploy GitHub Pages
+    needs: ci
+    if: github.ref == 'refs/heads/main'
+    runs-on: self-hosted
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
+
   # ── Docker Image ──────────────────────────────────────────────────
   docker:
     name: Docker Image
@@ -366,7 +394,7 @@ jobs:
   # ── CI Summary ─────────────────────────────────────────────────
   notify:
     name: CI Summary
-    needs: [ci, build-release, docker, create-release]
+    needs: [ci, deploy-pages, build-release, docker, create-release]
     if: always()
     runs-on: self-hosted
     steps:
@@ -380,6 +408,7 @@ jobs:
           echo "| Stage | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| CI | ${{ needs.ci.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| GitHub Pages | ${{ needs.deploy-pages.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Build Release | ${{ needs.build-release.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Docker Image | ${{ needs.docker.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| GitHub Release | ${{ needs.create-release.result }} |" >> $GITHUB_STEP_SUMMARY
