@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Documentation — Breakpoint</title>
+  <meta name="description" content="Architecture guides, integration reference, and deployment docs for Breakpoint.">
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ── Navigation ─────────────────────────────────────────────────── -->
+<nav class="site-nav" aria-label="Main navigation">
+  <a href="index.html" class="nav-brand">BREAKPOINT</a>
+  <div class="nav-links">
+    <a href="index.html#games">Games</a>
+    <a href="index.html#alerts">Alerts</a>
+    <a href="index.html#architecture">Architecture</a>
+    <a href="docs.html" aria-current="page">Docs</a>
+    <a href="https://github.com/AndrewAltimit/breakpoint" target="_blank" rel="noopener">GitHub</a>
+  </div>
+</nav>
+
+<!-- ── Hero ────────────────────────────────────────────────────────── -->
+<div class="docs-hero">
+  <div class="container">
+    <h1 class="section-title" style="font-size: 2.25rem;">Documentation</h1>
+    <p class="section-subtitle" style="margin: 0.5rem auto 0;">Guides, references, and the full design specification.</p>
+  </div>
+</div>
+
+<!-- ── Doc Cards ───────────────────────────────────────────────────── -->
+<div class="container">
+  <div class="docs-grid">
+
+    <article class="doc-card">
+      <h2>Architecture Overview</h2>
+      <p>Server-authoritative game simulation, dual-channel communication (binary WebSocket for game state, SSE for alerts), the pluggable <code>BreakpointGame</code> trait, custom WebGL2 renderer with sprite batching, and the 9-crate workspace layout.</p>
+      <a class="doc-link" href="https://github.com/AndrewAltimit/breakpoint/blob/main/BREAKPOINT-DESIGN-DOC.md#architecture" target="_blank" rel="noopener">Read architecture details &rarr;</a>
+    </article>
+
+    <article class="doc-card">
+      <h2>Alert &amp; Event Integration</h2>
+      <p>Send events to the REST API (<code>/api/v1/events</code>), configure GitHub webhooks, set up the GitHub Actions polling adapter, and customize alert priority tiers. 24 event types with claimable alert support.</p>
+      <a class="doc-link" href="https://github.com/AndrewAltimit/breakpoint/blob/main/BREAKPOINT-DESIGN-DOC.md#alert-overlay-system" target="_blank" rel="noopener">Read integration guide &rarr;</a>
+    </article>
+
+    <article class="doc-card">
+      <h2>Game Development</h2>
+      <p>How the <code>BreakpointGame</code> trait works: implement <code>tick()</code>, <code>handle_input()</code>, and <code>state()</code> to create a new game. Feature-gated compilation keeps the WASM bundle lean. Games currently ship at 10&ndash;20 Hz tick rates.</p>
+      <a class="doc-link" href="https://github.com/AndrewAltimit/breakpoint/blob/main/crates/breakpoint-core/src/game_trait.rs" target="_blank" rel="noopener">View game trait source &rarr;</a>
+    </article>
+
+    <article class="doc-card">
+      <h2>Deployment</h2>
+      <p>Docker single-command and Compose production deployments. Server binary with TOML config and environment variable overrides. WebSocket relay for NAT traversal. TLS termination guidance for corporate networks on port 443.</p>
+      <a class="doc-link" href="https://github.com/AndrewAltimit/breakpoint/blob/main/BREAKPOINT-DESIGN-DOC.md#deployment" target="_blank" rel="noopener">Read deployment guide &rarr;</a>
+    </article>
+
+    <article class="doc-card">
+      <h2>Full Design Document</h2>
+      <p>The complete specification covering the product vision, all game designs, network protocol details, overlay system, CI/CD pipeline, and production hardening. The authoritative reference for the project.</p>
+      <a class="doc-link" href="https://github.com/AndrewAltimit/breakpoint/blob/main/BREAKPOINT-DESIGN-DOC.md" target="_blank" rel="noopener">Read full design doc &rarr;</a>
+    </article>
+
+    <article class="doc-card">
+      <h2>Server Configuration</h2>
+      <p>TOML-based configuration (<code>breakpoint.toml</code>) with environment variable overrides. Room limits, tick rates, auth tokens, HMAC secrets, GitHub poller settings, and idle cleanup thresholds.</p>
+      <a class="doc-link" href="https://github.com/AndrewAltimit/breakpoint/blob/main/crates/breakpoint-server/src/config.rs" target="_blank" rel="noopener">View config source &rarr;</a>
+    </article>
+
+  </div>
+</div>
+
+<!-- ── Footer ─────────────────────────────────────────────────────── -->
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-links">
+      <a href="https://github.com/AndrewAltimit/breakpoint" target="_blank" rel="noopener">GitHub</a>
+      <a href="index.html">Home</a>
+      <a href="https://github.com/AndrewAltimit/breakpoint/blob/main/LICENSE-MIT" target="_blank" rel="noopener">License (Unlicense / MIT)</a>
+    </div>
+    <p class="footer-note">All code authored by AI agents under human direction.</p>
+  </div>
+</footer>
+
+</body>
+</html>

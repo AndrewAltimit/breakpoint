@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Breakpoint — Browser-Based Multiplayer Gaming for Agentic Office Hours</title>
+  <meta name="description" content="A Rust + WebAssembly multiplayer gaming platform with real-time agent monitoring overlay. Zero installs. Server-authoritative. Corporate-firewall friendly.">
+  <meta property="og:title" content="Breakpoint">
+  <meta property="og:description" content="Browser-based multiplayer gaming for agentic office hours. Built in Rust, compiled to WebAssembly.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://andrewaltimit.github.io/breakpoint/">
+  <meta property="og:image" content="https://andrewaltimit.github.io/breakpoint/assets/og-preview.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ── Navigation ─────────────────────────────────────────────────── -->
+<nav class="site-nav" aria-label="Main navigation">
+  <a href="index.html" class="nav-brand">BREAKPOINT</a>
+  <div class="nav-links">
+    <a href="#games">Games</a>
+    <a href="#alerts">Alerts</a>
+    <a href="#architecture">Architecture</a>
+    <a href="docs.html">Docs</a>
+    <a href="https://github.com/AndrewAltimit/breakpoint" target="_blank" rel="noopener">GitHub</a>
+  </div>
+</nav>
+
+<!-- ── Hero ────────────────────────────────────────────────────────── -->
+<section class="hero" id="top">
+  <div class="hero-bg" aria-hidden="true"></div>
+  <div class="hero-content">
+    <h1 class="wordmark">BREAKPOINT</h1>
+    <p class="hero-tagline">Browser-based multiplayer gaming for agentic office hours</p>
+    <p class="hero-sub">Built in Rust. Compiled to WebAssembly. Zero installs.</p>
+    <div class="hero-cta">
+      <a href="https://github.com/AndrewAltimit/breakpoint" class="btn btn-primary" target="_blank" rel="noopener">View on GitHub</a>
+      <a href="docs.html" class="btn btn-secondary">Read the Docs</a>
+    </div>
+  </div>
+</section>
+
+<!-- ── Elevator Pitch ─────────────────────────────────────────────── -->
+<section id="about">
+  <div class="container">
+    <h2 class="section-title">What is this?</h2>
+    <p class="section-subtitle">A mission control room where operators play cards between launches.</p>
+    <div class="pitch-card">
+      <p><strong>Agentic office hours</strong> are synchronous team sessions where humans stay socially connected while AI agents handle development tasks in the background. Think of it as pair-programming culture without the constant screen-sharing &mdash; a lightweight way to stay in the loop while agents do the heavy lifting.</p>
+      <p>Breakpoint fills this niche with <strong>real-time multiplayer games</strong> running alongside a <strong>live agent monitoring overlay</strong>. Your team plays a quick round of mini-golf or laser tag while CI pipelines run, PRs get reviewed, and agents push commits &mdash; all visible as prioritized alerts layered over the game.</p>
+      <p>No installs, no plugins. Open a browser tab, join a room, and play. The server handles all game simulation &mdash; every client is an equal renderer connected over WebSocket on port 443, friendly to corporate firewalls.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ── Games Showcase ─────────────────────────────────────────────── -->
+<section id="games">
+  <div class="container">
+    <h2 class="section-title">Four games, one platform</h2>
+    <p class="section-subtitle">Each game is a pluggable crate implementing the BreakpointGame trait. Networking, lobby, and overlay code never change when adding games.</p>
+
+    <div class="games-grid">
+
+      <!-- Golf -->
+      <div class="game-card">
+        <div class="game-visual illustration-golf" aria-label="Mini-golf illustration">
+          <div class="golf-scene">
+            <div class="golf-green">
+              <div class="golf-hole"></div>
+              <div class="golf-flag"></div>
+            </div>
+            <div class="golf-ball"></div>
+            <div class="golf-aim"></div>
+          </div>
+        </div>
+        <div class="game-info">
+          <div class="game-header">
+            <span class="game-name">Simultaneous Mini-Golf</span>
+            <span class="badge badge-players">2-8 players</span>
+            <span class="badge badge-hz">10 Hz</span>
+          </div>
+          <p class="game-desc">Everyone putts at the same time. No waiting for turns &mdash; aim, shoot, and race to sink it first for the bonus.</p>
+          <p class="game-mechanic">Key mechanic: simultaneous play with first-to-sink scoring</p>
+        </div>
+      </div>
+
+      <!-- Platformer -->
+      <div class="game-card">
+        <div class="game-visual" aria-label="Castle labyrinth screenshot">
+          <img src="assets/screenshots/platformer-01.png" alt="Castlevania-style castle labyrinth racer with CRT post-processing" loading="lazy">
+        </div>
+        <div class="game-info">
+          <div class="game-header">
+            <span class="game-name">Castle Labyrinth Racer</span>
+            <span class="badge badge-players">2-6 players</span>
+            <span class="badge badge-hz">15 Hz</span>
+          </div>
+          <p class="game-desc">Castlevania-style procedural castle courses. Race or survive through a labyrinth of platforms, enemies, and traps.</p>
+          <p class="game-mechanic">Key mechanic: whip combat, procedural courses, CRT post-processing</p>
+        </div>
+      </div>
+
+      <!-- Laser Tag -->
+      <div class="game-card">
+        <div class="game-visual illustration-laser" aria-label="Laser tag illustration">
+          <div class="laser-scene">
+            <div class="laser-wall laser-wall-1"></div>
+            <div class="laser-wall laser-wall-2"></div>
+            <div class="laser-beam"></div>
+            <div class="laser-player laser-player-1"></div>
+            <div class="laser-player laser-player-2"></div>
+            <div class="laser-smoke"></div>
+          </div>
+        </div>
+        <div class="game-info">
+          <div class="game-header">
+            <span class="game-name">Laser Tag Arena</span>
+            <span class="badge badge-players">2-8 players</span>
+            <span class="badge badge-hz">20 Hz</span>
+          </div>
+          <p class="game-desc">Top-down arena with reflective walls. Lasers bounce off surfaces &mdash; line up the perfect ricochet shot through smoke zones.</p>
+          <p class="game-mechanic">Key mechanic: reflective wall bounces, FFA &amp; team modes</p>
+        </div>
+      </div>
+
+      <!-- Tron -->
+      <div class="game-card">
+        <div class="game-visual illustration-tron" aria-label="Tron light cycles illustration">
+          <div class="tron-scene">
+            <div class="tron-trail tron-trail-cyan tron-trail-cyan-1"></div>
+            <div class="tron-trail tron-trail-cyan tron-trail-cyan-2"></div>
+            <div class="tron-trail tron-trail-orange tron-trail-orange-h"></div>
+            <div class="tron-trail tron-trail-orange tron-trail-orange-v"></div>
+            <div class="tron-head tron-head-cyan"></div>
+            <div class="tron-head tron-head-orange"></div>
+          </div>
+        </div>
+        <div class="game-info">
+          <div class="game-header">
+            <span class="game-name">Tron Light Cycles</span>
+            <span class="badge badge-players">2-8 players</span>
+            <span class="badge badge-hz">20 Hz</span>
+          </div>
+          <p class="game-desc">Leave a wall trail behind your cycle. Grind close to opponents' walls for a speed boost &mdash; or trap them in a shrinking arena.</p>
+          <p class="game-mechanic">Key mechanic: wall trails, grinding boost, server-side bots</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ── Alert Overlay System ───────────────────────────────────────── -->
+<section id="alerts">
+  <div class="container">
+    <h2 class="section-title">Real-time alert overlay</h2>
+    <p class="section-subtitle">Games and alerts run on independent channels. Agent activity surfaces through four priority tiers &mdash; from ambient tickers to game-pausing modals.</p>
+
+    <div class="alert-tiers" role="list">
+      <div class="alert-tier tier-ambient" role="listitem">
+        <span class="alert-tier-label">Ambient</span>
+        <span class="alert-tier-desc">Scrolling ticker at the screen edge. CI builds starting, routine commits, background chatter. Never interrupts gameplay.</span>
+      </div>
+      <div class="alert-tier tier-notice" role="listitem">
+        <span class="alert-tier-label">Notice</span>
+        <span class="alert-tier-desc">Slide-in toast notification. PR merged, deploy completed, review requested. Visible for a few seconds, then fades.</span>
+      </div>
+      <div class="alert-tier tier-urgent" role="listitem">
+        <span class="alert-tier-label">Urgent</span>
+        <span class="alert-tier-desc">Persistent banner with pulsing border. Pipeline failure, security alert, agent error. Stays visible until acknowledged.</span>
+      </div>
+      <div class="alert-tier tier-critical" role="listitem">
+        <span class="alert-tier-label">Critical</span>
+        <span class="alert-tier-desc">Game-pausing modal. Production incident, system down, immediate action required. Dims the game, demands attention.</span>
+      </div>
+    </div>
+
+    <div class="alert-details">
+      <div class="alert-stat">
+        <div class="alert-stat-number">24</div>
+        <div class="alert-stat-label">Event types</div>
+      </div>
+      <div class="alert-stat">
+        <div class="alert-stat-number">4</div>
+        <div class="alert-stat-label">Priority tiers</div>
+      </div>
+      <div class="alert-stat">
+        <div class="alert-stat-number">REST</div>
+        <div class="alert-stat-label">Ingestion API</div>
+      </div>
+      <div class="alert-stat">
+        <div class="alert-stat-number">SSE</div>
+        <div class="alert-stat-label">Streaming</div>
+      </div>
+    </div>
+
+    <div class="curl-example">
+      <span class="code-label">Send an event</span>
+      <pre><code><span class="tok-cmd">curl</span> <span class="tok-flag">-X</span> POST <span class="tok-url">https://your-server/api/v1/events</span> \
+  <span class="tok-flag">-H</span> <span class="tok-str">"Content-Type: application/json"</span> \
+  <span class="tok-flag">-d</span> <span class="tok-str">'{
+    "event_type": "ci_complete",
+    "priority": "notice",
+    "title": "Deploy succeeded",
+    "body": "v2.1.0 is live on production",
+    "source": "github-actions"
+  }'</span></code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ── Architecture ───────────────────────────────────────────────── -->
+<section id="architecture">
+  <div class="container">
+    <h2 class="section-title">Architecture</h2>
+    <p class="section-subtitle">Server-authoritative simulation with dual-channel communication &mdash; game state over binary WebSocket, alerts over SSE.</p>
+
+    <div class="arch-grid">
+      <div class="arch-card">
+        <div class="arch-card-title">Client</div>
+        <ul>
+          <li>Rust compiled to WASM</li>
+          <li>Custom WebGL2 renderer</li>
+          <li>14 GLSL shader programs</li>
+          <li>Sprite batching engine</li>
+        </ul>
+      </div>
+      <div class="arch-card">
+        <div class="arch-card-title">Server</div>
+        <ul>
+          <li>Axum async runtime</li>
+          <li>Server-authoritative simulation</li>
+          <li>Fast binary protocol</li>
+          <li>Room management &amp; cleanup</li>
+        </ul>
+      </div>
+      <div class="arch-card">
+        <div class="arch-card-title">Transport</div>
+        <ul>
+          <li>WSS on port 443</li>
+          <li>Corporate-firewall friendly</li>
+          <li>Dual-channel: game + alerts</li>
+          <li>NAT traversal relay</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="stat-row">
+      <div class="stat-item">
+        <div class="stat-number">9</div>
+        <div class="stat-label">Crates</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-number">699</div>
+        <div class="stat-label">Tests</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-number">14</div>
+        <div class="stat-label">Shaders</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-number">4</div>
+        <div class="stat-label">Games</div>
+      </div>
+    </div>
+
+    <div class="arch-diagram" aria-label="Architecture diagram">
+      <div class="arch-box">
+        <div class="arch-box-label">Browser</div>
+        <div class="arch-box-name">WASM Client</div>
+      </div>
+      <span class="arch-arrow" aria-hidden="true">&larr; WSS &rarr;</span>
+      <div class="arch-box">
+        <div class="arch-box-label">Axum</div>
+        <div class="arch-box-name">Game Server</div>
+      </div>
+      <span class="arch-arrow" aria-hidden="true">&larr; REST &rarr;</span>
+      <div class="arch-box">
+        <div class="arch-box-label">Adapters</div>
+        <div class="arch-box-name">GitHub / CI</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Quick Start ────────────────────────────────────────────────── -->
+<section id="quickstart">
+  <div class="container">
+    <h2 class="section-title">Quick start</h2>
+    <p class="section-subtitle">Three ways to get running.</p>
+
+    <div class="deploy-options">
+
+      <div class="deploy-option">
+        <h3><span class="deploy-number">1</span> Docker (one command)</h3>
+        <pre><code><span class="tok-cmd">docker</span> run <span class="tok-flag">-p</span> 8080:8080 ghcr.io/andrewaltimit/breakpoint:latest</code></pre>
+      </div>
+
+      <div class="deploy-option">
+        <h3><span class="deploy-number">2</span> Docker Compose (production)</h3>
+        <pre><code><span class="tok-comment"># Clone and run with compose</span>
+<span class="tok-cmd">git</span> clone <span class="tok-url">https://github.com/AndrewAltimit/breakpoint.git</span>
+<span class="tok-cmd">cd</span> breakpoint
+<span class="tok-cmd">docker</span> compose <span class="tok-flag">-f</span> examples/docker-compose.yml up</code></pre>
+      </div>
+
+      <div class="deploy-option">
+        <h3><span class="deploy-number">3</span> From source</h3>
+        <pre><code><span class="tok-comment"># Build server + WASM client</span>
+<span class="tok-cmd">cargo</span> build <span class="tok-flag">-p</span> breakpoint-server <span class="tok-flag">--release</span>
+<span class="tok-cmd">wasm-pack</span> build crates/breakpoint-client <span class="tok-flag">--target</span> web <span class="tok-flag">--out-dir</span> ../../web/pkg
+
+<span class="tok-comment"># Run the server</span>
+<span class="tok-cmd">./target/release/breakpoint-server</span></code></pre>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ── Footer ─────────────────────────────────────────────────────── -->
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-links">
+      <a href="https://github.com/AndrewAltimit/breakpoint" target="_blank" rel="noopener">GitHub</a>
+      <a href="docs.html">Documentation</a>
+      <a href="https://github.com/AndrewAltimit/breakpoint/blob/main/LICENSE-MIT" target="_blank" rel="noopener">License (Unlicense / MIT)</a>
+    </div>
+    <p class="footer-note">All code authored by AI agents under human direction.</p>
+    <div class="footer-badges">
+      <a href="https://github.com/AndrewAltimit/breakpoint/actions/workflows/main-ci.yml" target="_blank" rel="noopener">
+        <img src="https://github.com/AndrewAltimit/breakpoint/actions/workflows/main-ci.yml/badge.svg" alt="Main CI status" loading="lazy">
+      </a>
+      <a href="https://github.com/AndrewAltimit/breakpoint/actions/workflows/pr-validation.yml" target="_blank" rel="noopener">
+        <img src="https://github.com/AndrewAltimit/breakpoint/actions/workflows/pr-validation.yml/badge.svg" alt="PR Validation status" loading="lazy">
+      </a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
