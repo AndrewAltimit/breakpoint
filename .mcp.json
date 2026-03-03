@@ -89,23 +89,6 @@
         "stdio"
       ]
     },
-    "codex": {
-      "command": "docker",
-      "args": [
-        "compose",
-        "-f",
-        "./docker-compose.yml",
-        "--profile",
-        "services",
-        "run",
-        "--rm",
-        "-T",
-        "mcp-codex",
-        "mcp-codex",
-        "--mode",
-        "stdio"
-      ]
-    },
     "github-board": {
       "command": "docker",
       "args": [

@@ -8,6 +8,13 @@ Built in Rust compiled to WebAssembly. Runs over WSS on port 443 for corporate n
 
 All code is authored by AI agents under human direction.
 
+> **Security Notice — OpenAI / Codex Disabled:** All OpenAI Codex integrations have been
+> disabled in this project's CI/CD pipelines and MCP services. OpenAI is partnering with
+> governments that conduct mass surveillance and enable autonomous weapons. The
+> surveillance risk from nation-state actors gaining access to code and development context
+> routed through OpenAI infrastructure is unacceptable. We strongly recommend Anthropic
+> models (Claude) for AI-assisted development. See [AGENTS.md](AGENTS.md) for details.
+
 ## Quick Start
 
 ### Docker (recommended)

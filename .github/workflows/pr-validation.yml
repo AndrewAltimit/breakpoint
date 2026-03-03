@@ -359,93 +359,35 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  # ── Codex AI Code Review (secondary) ───────────────────────────
-  codex-review:
-    name: Codex AI Code Review
-    needs: [fork-guard, config, gemini-review]
-    if: >-
-      needs.config.outputs.ai-reviews-enabled == 'true' &&
-      github.event_name == 'pull_request' &&
-      !github.event.pull_request.draft &&
-      needs.gemini-review.result != 'skipped'
-    runs-on: self-hosted
-    timeout-minutes: 30
-    continue-on-error: true
-    outputs:
-      status: ${{ steps.review.outputs.status }}
-    steps:
-      - name: Pre-checkout cleanup
-        run: |
-          for item in outputs web/pkg tests/browser/node_modules tests/browser/results tests/browser/report .git/index.lock; do
-            if [ -d "$item" ] || [ -f "$item" ]; then
-              docker run --rm -v "$(pwd):/workspace" busybox:1.36.1 sh -c \
-                "rm -rf /workspace/$item" 2>/dev/null || \
-                sudo rm -rf "$item" 2>/dev/null || true
-            fi
-          done
+  # ── Codex AI Code Review (DISABLED — security risk) ───────────
+  # DISABLED: OpenAI Codex has been removed from the review pipeline.
+  # OpenAI is partnering with governments that conduct mass surveillance
+  # and enable autonomous weapons. The mass surveillance risk from
+  # nation-state partnerships alone makes this tool unsafe for many users.
+  # Use Anthropic models (Claude) or Google models (Gemini) instead.
+  # This job is kept (commented out) for reference — do not re-enable
+  # without fully understanding the privacy and security implications.
+  #
+  # codex-review:
+  #   name: Codex AI Code Review
+  #   needs: [fork-guard, config, gemini-review]
+  #   if: >-
+  #     needs.config.outputs.ai-reviews-enabled == 'true' &&
+  #     github.event_name == 'pull_request' &&
+  #     !github.event.pull_request.draft &&
+  #     needs.gemini-review.result != 'skipped'
+  #   runs-on: self-hosted
+  #   timeout-minutes: 30
+  #   continue-on-error: true
+  #   outputs:
+  #     status: ${{ steps.review.outputs.status }}
+  #   steps:
+  #     - run: echo "Codex review disabled"
 
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          clean: true
-          token: ${{ secrets.GITHUB_TOKEN }}
-          ref: ${{ github.head_ref }}
-
-      - name: Run Codex review
-        id: review
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          if ! command -v github-agents &>/dev/null; then
-            echo "::warning::github-agents not found on PATH - skipping Codex review"
-            echo "status=skipped" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          set +e
-          OUTPUT=$(github-agents pr-review "$PR_NUMBER" --agent codex 2>&1)
-          EXIT_CODE=$?
-          set -e
-
-          echo "$OUTPUT"
-          echo "$OUTPUT" > codex-review.md
-
-          if [ $EXIT_CODE -ne 0 ]; then
-            if echo "$OUTPUT" | grep -qiE '429|rate.?limit|quota|resource.?exhausted'; then
-              echo "::warning::Codex API rate limit hit"
-              echo "status=rate_limited" >> $GITHUB_OUTPUT
-              exit 0
-            elif echo "$OUTPUT" | grep -qiE '503|502|service.?unavailable|ECONNREFUSED|ETIMEDOUT'; then
-              echo "::warning::Codex API unavailable"
-              echo "status=unavailable" >> $GITHUB_OUTPUT
-              exit 0
-            elif echo "$OUTPUT" | grep -qiE 'panicked at|thread.*panic'; then
-              echo "::warning::Codex review tool crashed - skipping review"
-              echo "status=tool_crash" >> $GITHUB_OUTPUT
-              exit 0
-            else
-              echo "status=failure" >> $GITHUB_OUTPUT
-              exit $EXIT_CODE
-            fi
-          fi
-
-          echo "status=success" >> $GITHUB_OUTPUT
-
-      - name: Upload review artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: codex-review-${{ github.run_id }}-${{ github.run_attempt }}
-          path: codex-review.md
-          retention-days: 7
-          if-no-files-found: ignore
-
-  # ── Agent Review Response (responds to Gemini/Codex feedback) ──
+  # ── Agent Review Response (responds to Gemini feedback) ────────
   agent-review-response:
     name: Agent Review Response
-    needs: [ci, config, gemini-review, codex-review]
+    needs: [ci, config, gemini-review]
     if: |
       always() &&
       !cancelled() &&
@@ -515,7 +457,7 @@ jobs:
         if: steps.iteration.outputs.should_skip != 'true'
         env:
           GEMINI_REVIEW_PATH: gemini-review.md
-          CODEX_REVIEW_PATH: codex-review.md
+          # CODEX_REVIEW_PATH: codex-review.md  # Disabled — Codex removed (security risk)
           BRANCH_NAME: ${{ github.head_ref }}
           ITERATION_COUNT: ${{ steps.iteration.outputs.iteration_count }}
         run: |
@@ -535,7 +477,7 @@ jobs:
   # ── Agent Failure Handler ──────────────────────────────────────
   agent-failure-handler:
     name: Agent Failure Handler
-    needs: [ci, config, gemini-review, codex-review, agent-review-response]
+    needs: [ci, config, gemini-review, agent-review-response]
     if: |
       failure() &&
       needs.config.outputs.ai-reviews-enabled == 'true' &&
@@ -615,7 +557,7 @@ jobs:
   # ── PR Status Summary ──────────────────────────────────────────
   pr-status:
     name: PR Status Summary
-    needs: [ci, config, docker-build, browser-tests, gemini-review, codex-review, agent-review-response, agent-failure-handler]
+    needs: [ci, config, docker-build, browser-tests, gemini-review, agent-review-response, agent-failure-handler]
     if: always()
     runs-on: self-hosted
     steps:
@@ -629,7 +571,7 @@ jobs:
           echo "| Docker Build | ${{ needs.docker-build.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Browser Tests | ${{ needs.browser-tests.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Gemini Review | ${{ needs.gemini-review.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Codex Review | ${{ needs.codex-review.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Codex Review | disabled (security risk) |" >> $GITHUB_STEP_SUMMARY
           echo "| Review Response | ${{ needs.agent-review-response.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Failure Handler | ${{ needs.agent-failure-handler.result }} |" >> $GITHUB_STEP_SUMMARY
 

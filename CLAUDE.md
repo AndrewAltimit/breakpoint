@@ -108,13 +108,13 @@ docker build -f docker/server.Dockerfile -t breakpoint .
 Two GitHub Actions workflows, all on a self-hosted runner using Docker containers:
 
 - **main-ci.yml** — push to main + `v*` tags: CI (fmt, clippy, test, build, cargo-deny, WASM check) + matrix release builds (Linux x86_64 + aarch64) + Docker image push to GHCR + GitHub Release creation. Release/Docker stages only run on version tags or manual trigger.
-- **pr-validation.yml** — PRs: same CI + browser tests (Playwright) + Gemini/Codex AI reviews + agent auto-fix (up to 5 iterations). Agent infrastructure uses `github-agents` and `automation-cli` binaries from template-repo (degrades gracefully if missing).
+- **pr-validation.yml** — PRs: same CI + browser tests (Playwright) + Gemini AI review + agent auto-fix (up to 5 iterations). Codex review is disabled (OpenAI security risk). Agent infrastructure uses `github-agents` and `automation-cli` binaries from template-repo (degrades gracefully if missing).
 
 ## Docker
 
 - `docker/rust-ci.Dockerfile` — Rust stable + wasm-pack + cargo-deny. Used by `docker compose --profile ci`.
 - `docker/server.Dockerfile` — Multi-stage production image. Builder compiles server binary + WASM client. Runtime is `debian:bookworm-slim` with just the binary, web assets, and WASM bundle. Exposes port 8080.
-- `docker-compose.yml` — `rust-ci` service for CI, plus 9 MCP services (code-quality, gemini, codex, etc.) under `--profile services` for interactive agent sessions. MCP images are pre-built from template-repo, not buildable from this repo.
+- `docker-compose.yml` — `rust-ci` service for CI, plus 8 MCP services (code-quality, gemini, etc.) under `--profile services` for interactive agent sessions. Codex service is disabled (OpenAI security risk). MCP images are pre-built from template-repo, not buildable from this repo.
 - `examples/docker-compose.yml` — Production deployment compose file.
 
 ## Key File Paths
