@@ -14,8 +14,11 @@ enabled_agents:
   - claude      # Anthropic's Claude Code (host-only, primary agent)
   - gemini      # Google's Gemini CLI (host-only, for reviews)
   # Containerized agents (automatically run in Docker when invoked)
-  - opencode    # Open-source alternative (runs in container)
-  - crush       # Charm Bracelet's multi-provider tool (runs in container)
+  - opencode    # Open-source alternative (runs in container, uses OpenRouter)
+  - crush       # Charm Bracelet's multi-provider tool (runs in container, uses OpenRouter)
+  # DISABLED — OpenAI Codex removed due to security risk (mass surveillance partnerships).
+  # See AGENTS.md for full rationale. Do not re-enable without understanding the implications.
+  # - codex     # OpenAI Codex (DISABLED)
 
 # Agent priorities for different task types
 agent_priorities:
@@ -85,9 +88,9 @@ model_overrides:
   # Using explicit model specification with API key authentication
   # Model names verified from gemini-config.json
   gemini:
-    pro_model: gemini-3-pro-preview  # Latest preview model (NOT 3.0!)
-    flash_model: gemini-3-flash-preview  # Fast fallback model (Gemini 3 Flash)
-    default_model: gemini-3-flash-preview  # Primary model for PR reviews (faster, lower rate limits)
+    pro_model: gemini-3.1-pro-preview  # Primary model for investigation and reviews
+    flash_model: gemini-3-flash-preview  # Only for summarization and editing tasks (no 3.1 flash yet)
+    default_model: gemini-3.1-pro-preview  # Primary model for PR reviews (pro for deep analysis)
 
   # OpenRouter agents configuration
   opencode:

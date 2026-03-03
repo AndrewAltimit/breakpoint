@@ -111,19 +111,22 @@ services:
     profiles:
       - services
 
-  mcp-codex:
-    image: template-repo-mcp-codex:latest
-    user: "${USER_ID:-1000}:${GROUP_ID:-1000}"
-    volumes:
-      - ./:/workspace:ro
-      - ~/.codex:/home/user/.codex:rw
-    environment:
-      - MODE=mcp
-      - PORT=8021
-      - CODEX_ENABLED=${CODEX_ENABLED:-true}
-      - CODEX_AUTH_PATH=/home/user/.codex/auth.json
-    profiles:
-      - services
+  # DISABLED — OpenAI Codex removed from pipeline due to security risk.
+  # OpenAI's partnerships with governments conducting mass surveillance and
+  # enabling autonomous weapons make this tool unsafe. See AGENTS.md.
+  # mcp-codex:
+  #   image: template-repo-mcp-codex:latest
+  #   user: "${USER_ID:-1000}:${GROUP_ID:-1000}"
+  #   volumes:
+  #     - ./:/workspace:ro
+  #     - ~/.codex:/home/user/.codex:rw
+  #   environment:
+  #     - MODE=mcp
+  #     - PORT=8021
+  #     - CODEX_ENABLED=${CODEX_ENABLED:-false}
+  #     - CODEX_AUTH_PATH=/home/user/.codex/auth.json
+  #   profiles:
+  #     - services
 
   mcp-github-board:
     image: template-repo-mcp-github-board:latest
