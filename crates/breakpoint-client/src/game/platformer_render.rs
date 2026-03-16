@@ -532,9 +532,12 @@ pub fn sync_platformer_scene(
     }
 
     // Determine camera room theme for background and lighting
-    let _camera_theme = state
+    let camera_theme = state
         .course
         .room_theme_at_tile((camera_x / tile_size) as i32, (camera_y / tile_size) as i32);
+
+    // Parallax background layers (rendered first, behind all gameplay)
+    add_parallax_layers(scene, camera_x, camera_y, camera_theme);
 
     let white = Vec4::ONE;
 
@@ -1332,44 +1335,47 @@ fn collect_torch_lights(
     }
 }
 
-/// 6-layer parallax configuration: (scroll_factor, z_depth, v_start, v_height, alpha).
-#[allow(dead_code)]
-const PARALLAX_LAYERS: [(f32, f32, f32, f32, f32); 6] = [
-    (0.05, -6.0, 0.0, 1.0 / 6.0, 0.45),       // Layer 0: far sky/void
-    (0.15, -5.0, 1.0 / 6.0, 1.0 / 6.0, 0.55), // Layer 1: distant architecture
-    (0.3, -3.5, 2.0 / 6.0, 1.0 / 6.0, 0.65),  // Layer 2: mid architecture
-    (0.6, -1.5, 3.0 / 6.0, 1.0 / 6.0, 0.75),  // Layer 3: near architecture
-    (1.2, 0.4, 4.0 / 6.0, 1.0 / 6.0, 0.12),   // Layer 4: foreground pillars
-    (1.5, 0.5, 5.0 / 6.0, 1.0 / 6.0, 0.08),   // Layer 5: close dust/mist
+/// 7-layer parallax configuration: (scroll_factor, z_depth, v_start, v_height, alpha, sway).
+/// Sonic-style multi-speed scrolling with animated water layer.
+/// sway > 1.0 signals the shader to use water wave animation mode.
+const PARALLAX_LAYERS: [(f32, f32, f32, f32, f32, f32); 7] = [
+    (0.02, -7.0, 0.0, 1.0 / 6.0, 0.50, 0.0), // Layer 0: deep sky + stars (near-static)
+    (0.08, -6.0, 1.0 / 6.0, 1.0 / 6.0, 0.55, 0.0), // Layer 1: distant mountains
+    (0.20, -4.5, 2.0 / 6.0, 1.0 / 6.0, 0.65, 0.0), // Layer 2: mid castle walls
+    (0.40, -3.0, 3.0 / 6.0, 1.0 / 6.0, 0.75, 0.3), // Layer 3: near architecture (sway)
+    (0.30, -3.2, 4.0 / 6.0, 1.0 / 6.0, 0.40, 2.0), // Layer 4: water/moat (animated)
+    (1.15, 0.4, 3.0 / 6.0, 1.0 / 6.0, 0.10, 0.0), // Layer 5: foreground pillars
+    (1.4, 0.5, 5.0 / 6.0, 1.0 / 6.0, 0.06, 0.0), // Layer 6: close mist
 ];
 
-/// Add parallax background layers (6 layers) to the scene.
-/// Scrolls in both X and Y directions for 2D exploration.
-#[allow(dead_code)]
+/// Add parallax background layers (7 layers, Sonic-style) to the scene.
+/// Each layer scrolls at a different speed relative to camera movement,
+/// creating depth illusion. Layer 4 is animated water with wave distortion.
 fn add_parallax_layers(
     scene: &mut Scene,
     camera_x: f32,
     camera_y: f32,
     camera_theme: breakpoint_platformer::course_gen::RoomTheme,
 ) {
-    // Use the main sprite atlas (ID 0) — background content is there
-    let atlas = ATLAS_ID;
+    // Background texture is atlas ID 1 (loaded with repeat wrapping)
+    let bg_atlas: u8 = 1;
 
     // Pull parallax tint from the room's atmospheric theme
     let ambient = room_ambient_color(camera_theme);
 
-    for &(scroll_factor, z, v_start, v_height, alpha) in &PARALLAX_LAYERS {
+    for &(scroll_factor, z, v_start, v_height, alpha, sway) in &PARALLAX_LAYERS {
+        // Y parallax: layers closer to camera follow more, distant layers lag
         let layer_y = camera_y * scroll_factor + 5.0 * (1.0 - scroll_factor);
         let tint = Vec4::new(ambient[0], ambient[1], ambient[2], alpha);
         scene.add(
             MeshType::Quad,
             MaterialType::Parallax {
-                atlas_id: atlas,
-                layer_rect: Vec4::new(0.0, v_start, 1.0, v_start + v_height),
+                atlas_id: bg_atlas,
+                layer_rect: Vec4::new(sway, v_start, 1.0, v_start + v_height),
                 scroll_factor,
                 tint,
             },
-            Transform::from_xyz(camera_x, layer_y, z).with_scale(Vec3::new(50.0, 40.0, 1.0)),
+            Transform::from_xyz(camera_x, layer_y, z).with_scale(Vec3::new(55.0, 42.0, 1.0)),
         );
     }
 }

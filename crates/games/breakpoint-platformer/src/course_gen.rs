@@ -101,18 +101,17 @@ impl<'de> Deserialize<'de> for Tile {
 pub const ROOM_W: u32 = 32;
 /// Room height in tiles.
 pub const ROOM_H: u32 = 24;
-/// Grid columns (rooms wide).
-pub const GRID_COLS: u32 = 6;
+/// Grid columns (rooms wide). Wide for Sonic-style horizontal scrolling with parallax.
+pub const GRID_COLS: u32 = 10;
 /// Grid rows (rooms tall).
 pub const GRID_ROWS: u32 = 5;
 /// Total course width in tiles.
-pub const COURSE_WIDTH: u32 = ROOM_W * GRID_COLS; // 192
+pub const COURSE_WIDTH: u32 = ROOM_W * GRID_COLS; // 320
 /// Total course height in tiles.
 pub const COURSE_HEIGHT: u32 = ROOM_H * GRID_ROWS; // 120
 
-// Legacy aliases for compatibility
-/// Number of rooms targeted during generation.
-pub const NUM_ROOMS: u32 = 22;
+/// Number of rooms targeted during generation (scaled for wider grid).
+pub const NUM_ROOMS: u32 = 35;
 
 // ================================================================
 // Room grid types
@@ -475,7 +474,7 @@ pub fn generate_course(seed: u64) -> Course {
 
 /// Place rooms using random frontier growth from the start cell.
 fn place_rooms(rng: &mut StdRng, target_count: u32) -> Vec<PlacedRoom> {
-    let start = GridPos { col: 3, row: 0 };
+    let start = GridPos { col: 1, row: 0 };
     let mut placed = vec![PlacedRoom {
         grid_pos: start,
         theme: RoomTheme::Entrance,
@@ -741,23 +740,24 @@ fn assign_themes(mut rooms: Vec<PlacedRoom>, edges: &[RoomEdge]) -> Vec<PlacedRo
         } else if room.grid_pos == throne_pos {
             room.theme = RoomTheme::ThroneRoom;
         } else {
+            // Extended tiers for wider grid — more theme variety across longer distances
             room.theme = match dist {
-                1 => RoomTheme::Corridor,
-                2..=3 => {
+                1..=2 => RoomTheme::Corridor,
+                3..=4 => {
                     if dist % 2 == 0 {
                         RoomTheme::GreatHall
                     } else {
                         RoomTheme::Library
                     }
                 },
-                4..=5 => {
+                5..=7 => {
                     if dist % 2 == 0 {
                         RoomTheme::Armory
                     } else {
                         RoomTheme::Chapel
                     }
                 },
-                6..=7 => {
+                8..=10 => {
                     if dist % 2 == 0 {
                         RoomTheme::Tower
                     } else {

@@ -627,7 +627,8 @@ impl Renderer {
                     set_vec2(gl, &prog.u_uv_scale, 1.0, layer_rect.w - layer_rect.y);
                     set_vec4(gl, &prog.u_tint, tint);
                     set_f32(gl, &prog.u_time, self.time);
-                    set_f32(gl, &prog.u_intensity, 0.0); // sway amplitude
+                    // layer_rect.x carries sway amplitude; > 1.0 = water wave mode
+                    set_f32(gl, &prog.u_intensity, layer_rect.x);
                     set_f32(gl, &prog.u_speed, 1.0); // crossfade alpha (fully visible)
                     // Disable backface culling + depth write for background
                     gl.disable(GL::CULL_FACE);
