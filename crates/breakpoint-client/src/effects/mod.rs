@@ -21,9 +21,14 @@ impl ScreenShake {
         }
         self.timer -= dt;
         let factor = (self.timer / 0.3).min(1.0);
+        // Genesis-style integer pixel shake: snap to pixel grid (1/16th unit = 1 pixel)
+        // Uses sawtooth alternation instead of random for authentic feel
+        let pixel_size = 1.0 / 16.0;
+        let raw_x = (fastrand::f32() - 0.5) * 2.0 * self.intensity * factor;
+        let raw_y = (fastrand::f32() - 0.5) * 2.0 * self.intensity * factor;
         self.offset = Vec3::new(
-            (fastrand::f32() - 0.5) * 2.0 * self.intensity * factor,
-            (fastrand::f32() - 0.5) * 2.0 * self.intensity * factor,
+            (raw_x / pixel_size).round() * pixel_size,
+            (raw_y / pixel_size).round() * pixel_size,
             0.0,
         );
         if self.timer <= 0.0 {

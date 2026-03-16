@@ -68,6 +68,9 @@ struct ShaderProgram {
     u_saturation: Option<WebGlUniformLocation>,
     u_chromatic_aberration: Option<WebGlUniformLocation>,
     u_film_grain: Option<WebGlUniformLocation>,
+    // Genesis-style enhancements
+    u_palette_quantize: Option<WebGlUniformLocation>,
+    u_raster_distort: Option<WebGlUniformLocation>,
 }
 
 /// Cached mesh GPU buffers.
@@ -103,6 +106,10 @@ pub struct PostProcessConfig {
     pub chromatic_aberration: f32,
     /// Film grain intensity (0.0 = off).
     pub film_grain: f32,
+    /// Genesis 9-bit palette quantization (0.0 = off, 1.0 = full 3-bit-per-channel).
+    pub palette_quantize: f32,
+    /// Line scroll raster distortion intensity (0.0 = off, Genesis HBlank effect).
+    pub raster_distort: f32,
 }
 
 impl Default for PostProcessConfig {
@@ -118,6 +125,8 @@ impl Default for PostProcessConfig {
             saturation: 1.0,
             chromatic_aberration: 0.0,
             film_grain: 0.0,
+            palette_quantize: 0.0,
+            raster_distort: 0.0,
         }
     }
 }
@@ -135,8 +144,6 @@ pub struct Renderer {
     /// Texture atlases keyed by ID.
     atlases: HashMap<u8, WebGlTexture>,
     /// Palette textures keyed by ID (256x1 RGBA, for indexed color mode).
-    /// Deferred: not yet populated; infra for future indexed palette rendering.
-    #[allow(dead_code)]
     palettes: HashMap<u8, WebGlTexture>,
     /// Post-processing FBO (created lazily on first draw with post-fx).
     post_fbo: Option<PostProcessFBO>,
@@ -388,6 +395,8 @@ impl Renderer {
             || self.post_process.crt_curvature > 0.01
             || self.post_process.chromatic_aberration > 0.01
             || self.post_process.film_grain > 0.01
+            || self.post_process.palette_quantize > 0.01
+            || self.post_process.raster_distort > 0.01
             || (self.post_process.grade_contrast - 1.0).abs() > 0.01
             || (self.post_process.saturation - 1.0).abs() > 0.01;
 
@@ -546,7 +555,7 @@ impl Renderer {
                     set_f32(gl, &prog.u_use_palette, 0.0);
                     // Blend mode
                     match blend_mode {
-                        crate::scene::BlendMode::Normal => {
+                        crate::scene::BlendMode::Normal | crate::scene::BlendMode::Dithered => {
                             gl.blend_func(GL::SRC_ALPHA, GL::ONE_MINUS_SRC_ALPHA);
                             gl.blend_equation(GL::FUNC_ADD);
                         },
@@ -720,7 +729,10 @@ impl Renderer {
                     gl.enable(GL::CULL_FACE);
                 },
                 MaterialType::Sprite { blend_mode, .. } => {
-                    if !matches!(blend_mode, crate::scene::BlendMode::Normal) {
+                    if !matches!(
+                        blend_mode,
+                        crate::scene::BlendMode::Normal | crate::scene::BlendMode::Dithered
+                    ) {
                         gl.blend_func(GL::SRC_ALPHA, GL::ONE_MINUS_SRC_ALPHA);
                         gl.blend_equation(GL::FUNC_ADD);
                     }
@@ -904,6 +916,8 @@ impl Renderer {
                     .gl
                     .get_uniform_location(&program, "u_chromatic_aberration"),
                 u_film_grain: self.gl.get_uniform_location(&program, "u_film_grain"),
+                u_palette_quantize: self.gl.get_uniform_location(&program, "u_palette_quantize"),
+                u_raster_distort: self.gl.get_uniform_location(&program, "u_raster_distort"),
                 program,
             };
             self.programs.insert(name, sp);
@@ -1110,6 +1124,12 @@ impl Renderer {
         if let Some(loc) = &prog.u_film_grain {
             gl.uniform1f(Some(loc), self.post_process.film_grain);
         }
+        if let Some(loc) = &prog.u_palette_quantize {
+            gl.uniform1f(Some(loc), self.post_process.palette_quantize);
+        }
+        if let Some(loc) = &prog.u_raster_distort {
+            gl.uniform1f(Some(loc), self.post_process.raster_distort);
+        }
 
         // Draw fullscreen quad
         gl.disable(GL::DEPTH_TEST);
@@ -1248,7 +1268,7 @@ impl Renderer {
                 && *dissolve == 0.0
             {
                 let target = match blend_mode {
-                    BlendMode::Normal => &mut self.normal_verts,
+                    BlendMode::Normal | BlendMode::Dithered => &mut self.normal_verts,
                     BlendMode::Additive => &mut self.additive_verts,
                     BlendMode::Subtractive => &mut self.subtractive_verts,
                 };

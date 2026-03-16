@@ -407,6 +407,9 @@ impl App {
             self.renderer.post_process.vignette_intensity =
                 self.theme.platformer.vignette_intensity;
             self.renderer.post_process.crt_curvature = self.theme.platformer.crt_curvature;
+            // Genesis-style palette quantization and line-scroll raster distortion
+            self.renderer.post_process.palette_quantize = 0.65;
+            self.renderer.post_process.raster_distort = 1.5;
             // Apply per-room color grading from scene lighting
             self.renderer.post_process.grade_shadows = self.scene.lighting.grade_shadows;
             self.renderer.post_process.grade_highlights = self.scene.lighting.grade_highlights;
@@ -1098,10 +1101,10 @@ impl App {
         for (&pid, player) in &state.players {
             if let Some(&prev_hp) = self.prev_player_hp.get(&pid) {
                 if player.hp < prev_hp {
-                    // Player took damage
-                    self.screen_shake.trigger(0.2, 0.2);
+                    // Player took damage — Genesis-style white flash (short + bright)
+                    self.screen_shake.trigger(0.3, 0.15);
                     self.screen_flash
-                        .trigger(Vec4::new(1.0, 0.0, 0.0, 0.3), 0.15);
+                        .trigger(Vec4::new(1.0, 1.0, 1.0, 0.5), 0.08);
                     self.particle_system.emit(
                         ParticleEffect::BloodDamage,
                         player.x,

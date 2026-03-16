@@ -71,6 +71,16 @@ void main() {
         discard;
     }
 
+    // Genesis-style dithered transparency: checkerboard pixel discard
+    // Signaled by negative u_outline_width value (< -0.5)
+    if (u_outline_width < -0.5) {
+        int px = int(gl_FragCoord.x);
+        int py = int(gl_FragCoord.y);
+        if ((px + py) % 2 == 0) {
+            discard;
+        }
+    }
+
     // Pixel-dissolve death effect: hash-based noise discard
     if (u_dissolve > 0.0) {
         float noise = fract(sin(dot(floor(v_uv * 40.0), vec2(12.9898, 78.233))) * 43758.5453);

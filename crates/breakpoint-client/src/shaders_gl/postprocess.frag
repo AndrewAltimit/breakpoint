@@ -16,6 +16,9 @@ uniform float u_grade_contrast;          // contrast (1.0 = neutral)
 uniform float u_saturation;              // saturation (1.0 = neutral)
 uniform float u_chromatic_aberration;    // pixel offset (0.0 = off)
 uniform float u_film_grain;             // grain intensity (0.0 = off)
+// Genesis-style enhancements
+uniform float u_palette_quantize;       // 0.0 = off, 1.0 = full Genesis 9-bit color
+uniform float u_raster_distort;         // 0.0 = off, line scroll raster intensity
 
 out vec4 frag_color;
 
@@ -36,6 +39,21 @@ void main() {
             frag_color = vec4(0.0, 0.0, 0.0, 1.0);
             return;
         }
+    }
+
+    // ── Line scroll raster distortion (Genesis HBlank effect) ──
+    // Per-scanline horizontal offset — creates wavy water, heat haze
+    if (u_raster_distort > 0.01) {
+        float scanline_y = gl_FragCoord.y;
+        // Multi-frequency waves for organic look (like Sonic water)
+        float wave1 = sin(scanline_y * 0.04 + u_time * 2.5) * 2.0;
+        float wave2 = sin(scanline_y * 0.09 - u_time * 1.8) * 1.2;
+        float wave3 = sin(scanline_y * 0.15 + u_time * 3.2) * 0.6;
+        float offset = (wave1 + wave2 + wave3) * u_raster_distort / u_resolution.x;
+        // Apply stronger distortion in lower screen half (underwater)
+        float screen_y = gl_FragCoord.y / u_resolution.y;
+        float intensity = smoothstep(0.7, 0.3, screen_y); // stronger at bottom
+        uv.x += offset * intensity;
     }
 
     // ── Chromatic aberration (damage effect) ──
@@ -89,14 +107,36 @@ void main() {
         color = mix(vec3(gray), color, u_saturation);
     }
 
-    // ── CRT scanlines ──
+    // ── Per-scanline palette cycling (Genesis DMA color cycling) ──
+    // Subtle hue rotation per scanline for animated water/sky
+    if (u_palette_quantize > 0.01) {
+        float scanline = gl_FragCoord.y;
+        // Cycle speed varies by scanline group (mimics per-line palette DMA)
+        float cycle = sin(scanline * 0.03 + u_time * 1.2) * 0.02 * u_palette_quantize;
+        // Rotate hue slightly: approximate by shifting R/B channels
+        float shifted_r = color.r * cos(cycle) - color.b * sin(cycle);
+        float shifted_b = color.r * sin(cycle) + color.b * cos(cycle);
+        color.r = shifted_r;
+        color.b = shifted_b;
+    }
+
+    // ── Genesis 9-bit color quantization ──
+    // Mega Drive CRAM: 3 bits per channel (8 levels: 0/2/4/6/8/A/C/E mapped to 0-255)
+    if (u_palette_quantize > 0.01) {
+        float levels = mix(256.0, 8.0, u_palette_quantize); // 8 = full Genesis, 256 = off
+        color = floor(color * levels + 0.5) / levels;
+    }
+
+    // ── CRT scanlines (Genesis-accurate: every 2nd line, lighter than CRT) ──
     if (u_scanline_intensity > 0.01) {
-        float scanline = 0.8 + 0.2 * sin(gl_FragCoord.y * 3.14159);
-        color *= mix(1.0, scanline, u_scanline_intensity);
-        // RGB sub-pixel shift
+        // Genesis had 224 active lines; use every-other-line darkening
+        float line = mod(gl_FragCoord.y, 2.0);
+        float scanline_factor = 1.0 - step(1.0, line) * u_scanline_intensity * 0.15;
+        color *= scanline_factor;
+        // RGB sub-pixel shift (horizontal offset for CRT phosphor simulation)
         float shift = 0.5 / u_resolution.x * u_scanline_intensity;
-        color.r = texture(u_scene, uv + vec2(shift, 0.0)).r;
-        color.b = texture(u_scene, uv - vec2(shift, 0.0)).b;
+        color.r = texture(u_scene, uv + vec2(shift, 0.0)).r * scanline_factor;
+        color.b = texture(u_scene, uv - vec2(shift, 0.0)).b * scanline_factor;
     }
 
     // ── Film grain ──

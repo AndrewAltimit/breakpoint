@@ -170,24 +170,33 @@ fn squash_stretch_scale(
     let is_running = player.anim_state == AnimState::Walk
         && player.active_powerup == Some(breakpoint_platformer::powerups::PowerUpKind::SpeedBoots);
 
+    // Genesis-style discrete frame stepping: snap animations to 4-frame steps
+    // instead of smooth sine interpolation, matching 16-bit console cadence.
+    let snap_frame = |t: f32, fps: f32, frames: u32| -> f32 {
+        let frame = (t * fps) as u32 % frames;
+        frame as f32 / frames as f32
+    };
+
     match player.anim_state {
-        AnimState::Jump => (0.85, 1.2), // Stretch upward
-        AnimState::Fall => (0.9, 1.15), // Slight stretch
+        AnimState::Jump => (0.85, 1.2), // Stretch upward (1 held frame)
+        AnimState::Fall => (0.9, 1.15), // Slight stretch (1 held frame)
         AnimState::Idle if vs.was_falling && vs.time_since_transition < 0.15 => {
-            // Landing squash with spring-back
-            let t = vs.time_since_transition / 0.15;
-            let squash = 1.0 + (1.0 - t) * 0.12;
-            let stretch = 1.0 - (1.0 - t) * 0.15;
+            // Landing squash: 3-frame snap (squash→recover→neutral)
+            let frame = snap_frame(vs.time_since_transition, 20.0, 3);
+            let squash = 1.0 + (1.0 - frame) * 0.12;
+            let stretch = 1.0 - (1.0 - frame) * 0.15;
             (squash, stretch)
         },
         AnimState::Walk if is_running => {
-            // More pronounced bob when running
-            let bob = (player.anim_time * 16.0).sin() * 0.04;
+            // 4-frame run cycle with discrete steps
+            let phase = snap_frame(player.anim_time, 16.0, 4);
+            let bob = (phase * std::f32::consts::TAU).sin() * 0.04;
             (1.0 + bob, 1.0 - bob * 0.5)
         },
         AnimState::Walk => {
-            // Subtle sine bob
-            let bob = (player.anim_time * 12.0).sin() * 0.03;
+            // 4-frame walk cycle with discrete steps
+            let phase = snap_frame(player.anim_time, 12.0, 4);
+            let bob = (phase * std::f32::consts::TAU).sin() * 0.03;
             (1.0 + bob, 1.0 - bob)
         },
         _ => (1.0, 1.0),
@@ -752,6 +761,14 @@ fn render_enemies(
                 blend_mode: crate::scene::BlendMode::Normal,
             },
         );
+        // Ghost enemies use Genesis-style dithered transparency
+        let blend = if enemy.enemy_type == breakpoint_platformer::enemies::EnemyType::Ghost
+            && enemy.alive
+        {
+            crate::scene::BlendMode::Dithered
+        } else {
+            crate::scene::BlendMode::Normal
+        };
         // Enemy sprite
         add_sprite_region_with_dissolve(
             scene,
@@ -765,7 +782,7 @@ fn render_enemies(
                 tint,
                 flip_x: !enemy.facing_right,
                 outline: 1.0,
-                blend_mode: crate::scene::BlendMode::Normal,
+                blend_mode: blend,
             },
             dissolve,
         );

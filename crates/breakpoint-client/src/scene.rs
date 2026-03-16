@@ -74,6 +74,9 @@ pub enum BlendMode {
     Normal,
     Additive,
     Subtractive,
+    /// Genesis-style checkerboard dithered transparency.
+    /// Discards alternating pixels for a hardware-accurate translucency effect.
+    Dithered,
 }
 
 /// Material types matching the GLSL shader programs.
@@ -314,12 +317,13 @@ impl Scene {
         let tg = tint.y;
         let tb = tint.z;
         let ta = tint.w;
-        let ol = outline;
 
-        let buf = match blend_mode {
-            BlendMode::Normal => &mut self.batch_normal,
-            BlendMode::Additive => &mut self.batch_additive,
-            BlendMode::Subtractive => &mut self.batch_subtractive,
+        // Dithered mode uses the normal blend buffer with a negative outline signal
+        let (buf, ol) = match blend_mode {
+            BlendMode::Normal => (&mut self.batch_normal, outline),
+            BlendMode::Additive => (&mut self.batch_additive, outline),
+            BlendMode::Subtractive => (&mut self.batch_subtractive, outline),
+            BlendMode::Dithered => (&mut self.batch_normal, -1.0),
         };
         // 10 floats per vertex: pos(3) + uv(2) + tint(4) + outline(1)
         // Triangle 1: bottom-left, top-right, bottom-right

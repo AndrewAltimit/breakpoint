@@ -52,6 +52,16 @@ void main() {
         discard;
     }
 
+    // Genesis-style dithered transparency: checkerboard pixel discard
+    // Signaled by negative v_outline value (< -0.5)
+    if (v_outline < -0.5) {
+        int px = int(gl_FragCoord.x);
+        int py = int(gl_FragCoord.y);
+        if ((px + py) % 2 == 0) {
+            discard;
+        }
+    }
+
     // GBA-style color ramp: map luminance through a 3-point palette
     bool ramp_active = (u_ramp_shadow.r + u_ramp_shadow.g + u_ramp_shadow.b) > 0.01;
     if (ramp_active) {
