@@ -1198,17 +1198,18 @@ fn render_godrays(
 /// Per-room ambient color (RGB) for atmospheric tinting.
 fn room_ambient_color(theme: breakpoint_platformer::course_gen::RoomTheme) -> [f32; 3] {
     use breakpoint_platformer::course_gen::RoomTheme;
+    // Bright and clean like Sonic — vibrant tints, not dark and muddy
     match theme {
-        RoomTheme::Entrance => [0.90, 0.78, 0.55],   // warm amber
-        RoomTheme::Corridor => [0.72, 0.70, 0.68],   // dim stone
-        RoomTheme::GreatHall => [0.85, 0.72, 0.50],  // golden
-        RoomTheme::Library => [0.78, 0.68, 0.50],    // warm brown
-        RoomTheme::Armory => [0.78, 0.50, 0.32],     // forge red
-        RoomTheme::Chapel => [0.85, 0.75, 0.50],     // sacred gold
-        RoomTheme::Crypt => [0.50, 0.55, 0.85],      // cold blue
-        RoomTheme::Tower => [0.75, 0.75, 0.85],      // open sky
-        RoomTheme::Dungeon => [0.55, 0.58, 0.48],    // sickly green
-        RoomTheme::ThroneRoom => [0.68, 0.45, 0.85], // royal purple
+        RoomTheme::Entrance => [1.0, 0.90, 0.70], // bright warm amber
+        RoomTheme::Corridor => [0.88, 0.86, 0.84], // light stone
+        RoomTheme::GreatHall => [1.0, 0.88, 0.65], // bright golden
+        RoomTheme::Library => [0.92, 0.82, 0.65], // warm brown
+        RoomTheme::Armory => [0.95, 0.65, 0.45],  // bright forge
+        RoomTheme::Chapel => [1.0, 0.90, 0.65],   // bright sacred gold
+        RoomTheme::Crypt => [0.65, 0.72, 1.0],    // clear blue
+        RoomTheme::Tower => [0.88, 0.90, 1.0],    // bright sky
+        RoomTheme::Dungeon => [0.72, 0.78, 0.62], // muted green
+        RoomTheme::ThroneRoom => [0.82, 0.62, 1.0], // bright purple
     }
 }
 
@@ -1343,11 +1344,11 @@ fn collect_torch_lights(
         grade_highlights,
         grade_contrast,
         saturation,
-        // GBA Castlevania color ramp: mauve shadows → bronze midtones → gold highlights
-        ramp_shadow: [0.40, 0.35, 0.48],
-        ramp_mid: [0.85, 0.68, 0.45],
-        ramp_highlight: [1.0, 0.90, 0.35],
-        posterize: 48.0, // Subtle banding for GBA-style look
+        // Clean Genesis ramp: subtle and bright, not muddy
+        ramp_shadow: [0.55, 0.50, 0.60],
+        ramp_mid: [0.90, 0.80, 0.65],
+        ramp_highlight: [1.0, 0.95, 0.80],
+        posterize: 64.0, // Very subtle banding — clean look
         fog_color,
     }
 }
@@ -1355,14 +1356,12 @@ fn collect_torch_lights(
 /// 7-layer parallax configuration: (scroll_factor, z_depth, v_start, v_height, alpha, sway).
 /// Sonic-style multi-speed scrolling with animated water layer.
 /// sway > 1.0 signals the shader to use water wave animation mode.
-const PARALLAX_LAYERS: [(f32, f32, f32, f32, f32, f32); 7] = [
+const PARALLAX_LAYERS: [(f32, f32, f32, f32, f32, f32); 5] = [
     (0.02, -7.0, 0.0, 1.0 / 6.0, 0.50, 0.0), // Layer 0: deep sky + stars (near-static)
     (0.08, -6.0, 1.0 / 6.0, 1.0 / 6.0, 0.55, 0.0), // Layer 1: distant mountains
     (0.20, -4.5, 2.0 / 6.0, 1.0 / 6.0, 0.65, 0.0), // Layer 2: mid castle walls
-    (0.40, -3.0, 3.0 / 6.0, 1.0 / 6.0, 0.75, 0.3), // Layer 3: near architecture (sway)
-    (0.30, -3.2, 4.0 / 6.0, 1.0 / 6.0, 0.40, 2.0), // Layer 4: water/moat (animated)
-    (1.15, 0.4, 3.0 / 6.0, 1.0 / 6.0, 0.10, 0.0), // Layer 5: foreground pillars
-    (1.4, 0.5, 5.0 / 6.0, 1.0 / 6.0, 0.06, 0.0), // Layer 6: close mist
+    (0.40, -3.0, 3.0 / 6.0, 1.0 / 6.0, 0.75, 0.0), // Layer 3: near architecture
+    (0.25, -3.2, 4.0 / 6.0, 1.0 / 6.0, 0.35, 2.0), // Layer 4: water/moat (animated)
 ];
 
 /// Add parallax background layers (7 layers, Sonic-style) to the scene.

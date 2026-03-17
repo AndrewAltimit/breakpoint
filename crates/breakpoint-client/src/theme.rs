@@ -210,11 +210,11 @@ impl Default for PlatformerTheme {
             hp_empty: [0.2, 0.15, 0.15],
             enemy_tint: [0.85, 0.82, 0.78],
             invincibility_flash: [1.0, 0.9, 0.6],
-            scanline_intensity: 0.05,
-            bloom_intensity: 0.45,
-            vignette_intensity: 0.20,
-            crt_curvature: 0.08,
-            torch_ambient: 0.15,
+            scanline_intensity: 0.03,
+            bloom_intensity: 0.20,
+            vignette_intensity: 0.08,
+            crt_curvature: 0.03,
+            torch_ambient: 0.55,
             water_color: [0.08, 0.2, 0.4, 0.65],
         }
     }

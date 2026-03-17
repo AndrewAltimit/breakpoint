@@ -97,8 +97,8 @@ void main() {
         } else {
             ramped = mix(u_ramp_mid, u_ramp_highlight, (lum - 0.5) * 2.0);
         }
-        // Blend ramp with original tinted color to preserve some texture detail
-        color.rgb = mix(color.rgb, ramped, 0.35);
+        // Subtle ramp blend — clean Genesis look, not muddy
+        color.rgb = mix(color.rgb, ramped, 0.15);
     }
 
     // Apply dynamic lighting if lights are present

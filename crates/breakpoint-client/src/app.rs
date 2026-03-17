@@ -408,8 +408,9 @@ impl App {
                 self.theme.platformer.vignette_intensity;
             self.renderer.post_process.crt_curvature = self.theme.platformer.crt_curvature;
             // Genesis-style palette quantization and line-scroll raster distortion
-            self.renderer.post_process.palette_quantize = 0.65;
-            self.renderer.post_process.raster_distort = 1.5;
+            // Subtle values — Sonic games are clean and readable, not crushed
+            self.renderer.post_process.palette_quantize = 0.35;
+            self.renderer.post_process.raster_distort = 0.4;
             // Apply per-room color grading from scene lighting
             self.renderer.post_process.grade_shadows = self.scene.lighting.grade_shadows;
             self.renderer.post_process.grade_highlights = self.scene.lighting.grade_highlights;
@@ -1238,7 +1239,7 @@ impl App {
                     || self.input.is_key_just_pressed("ArrowUp")
                     || self.input.is_key_just_pressed("KeyW");
                 if jump_pressed {
-                    self.audio_events.push(AudioEvent::PlatformerJump);
+                    // Jump sound removed — too repetitive and distracting
                 }
                 let powerup_pressed = self.input.is_key_just_pressed("KeyE");
                 if powerup_pressed {
