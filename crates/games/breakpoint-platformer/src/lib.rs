@@ -770,6 +770,7 @@ mod tests {
             jump: true,
             use_powerup: false,
             attack: false,
+            ..Default::default()
         };
         let data = rmp_serde::to_vec(&input).unwrap();
         game.apply_input(1, &data);
@@ -902,6 +903,7 @@ mod tests {
                 jump: false,
                 use_powerup: false,
                 attack: false,
+                ..Default::default()
             };
             let data = rmp_serde::to_vec(&input).unwrap();
             game.apply_input(1, &data);
@@ -921,6 +923,7 @@ mod tests {
                 jump: false,
                 use_powerup: false,
                 attack: false,
+                ..Default::default()
             };
             let data = rmp_serde::to_vec(&input).unwrap();
             game2.apply_input(1, &data);
@@ -1143,6 +1146,7 @@ mod tests {
             jump: true,
             use_powerup: false,
             attack: false,
+            ..Default::default()
         };
         let data_jump = rmp_serde::to_vec(&input_jump).unwrap();
         game.apply_input(1, &data_jump);
@@ -1153,6 +1157,7 @@ mod tests {
             jump: false,
             use_powerup: false,
             attack: false,
+            ..Default::default()
         };
         let data_no_jump = rmp_serde::to_vec(&input_no_jump).unwrap();
         game.apply_input(1, &data_no_jump);
@@ -1174,6 +1179,7 @@ mod tests {
             jump: false,
             use_powerup: false,
             attack: true,
+            ..Default::default()
         };
         let data = rmp_serde::to_vec(&input_attack).unwrap();
         game.apply_input(1, &data);
@@ -1183,6 +1189,7 @@ mod tests {
             jump: false,
             use_powerup: false,
             attack: false,
+            ..Default::default()
         };
         let data = rmp_serde::to_vec(&input_no_attack).unwrap();
         game.apply_input(1, &data);
@@ -1208,6 +1215,7 @@ mod tests {
             jump: false,
             use_powerup: false,
             attack: false,
+            ..Default::default()
         };
         let data = rmp_serde::to_vec(&input).unwrap();
         game.apply_input(1, &data);
@@ -1225,6 +1233,7 @@ mod tests {
             jump: false,
             use_powerup: false,
             attack: false,
+            ..Default::default()
         };
         let data = rmp_serde::to_vec(&input).unwrap();
         game.apply_input(1, &data);
@@ -1330,6 +1339,7 @@ mod tests {
             jump: false,
             use_powerup: false,
             attack: false,
+            ..Default::default()
         };
         let data = rmp_serde::to_vec(&input).unwrap();
         for _ in 0..10 {
@@ -1439,6 +1449,7 @@ mod tests {
                 jump: false,
                 use_powerup: false,
                 attack: false,
+                ..Default::default()
             };
             let data = rmp_serde::to_vec(&input).unwrap();
             game.apply_input(1, &data);
@@ -1467,6 +1478,7 @@ mod tests {
             jump: true,
             use_powerup: false,
             attack: false,
+            ..Default::default()
         };
         let data = rmp_serde::to_vec(&input).unwrap();
         game.apply_input(1, &data);
@@ -1492,6 +1504,7 @@ mod tests {
             jump: true,
             use_powerup: true,
             attack: true,
+            ..Default::default()
         };
         let encoded = rmp_serde::to_vec(&input).unwrap();
         let decoded: PlatformerInput = rmp_serde::from_slice(&encoded).unwrap();
@@ -1511,6 +1524,7 @@ mod tests {
             jump: true,
             use_powerup: false,
             attack: true,
+            ..Default::default()
         };
         let input_data = rmp_serde::to_vec(&input).unwrap();
         let msg = ClientMessage::PlayerInput(PlayerInputMsg {
@@ -1545,6 +1559,7 @@ mod tests {
             jump: false,
             use_powerup: false,
             attack: false,
+            ..Default::default()
         };
         let data = rmp_serde::to_vec(&input).unwrap();
         game.apply_input(1, &data);
@@ -1574,6 +1589,7 @@ mod tests {
             jump: false,
             use_powerup: false,
             attack: false,
+            ..Default::default()
         };
         let data = rmp_serde::to_vec(&input).unwrap();
         breakpoint_core::test_helpers::contract_apply_input_changes_state(&mut game, &data, 1);

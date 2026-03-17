@@ -45,6 +45,62 @@ struct PlayerVisualState {
     was_falling: bool,
 }
 
+/// SotN-style afterimage trail entry.
+#[derive(Clone)]
+struct Afterimage {
+    x: f32,
+    y: f32,
+    sprite_rect: Vec4,
+    flip_x: bool,
+    /// Remaining lifetime (starts at 1.0, decays to 0.0).
+    life: f32,
+    /// Base color tint (player palette).
+    base_r: f32,
+    base_g: f32,
+    base_b: f32,
+}
+
+/// Per-player afterimage trail state.
+struct AfterimageTrail {
+    images: Vec<Afterimage>,
+    /// Frame counter for spawn throttling (spawn every N frames).
+    spawn_counter: u8,
+}
+
+impl AfterimageTrail {
+    fn new() -> Self {
+        Self {
+            images: Vec::with_capacity(16),
+            spawn_counter: 0,
+        }
+    }
+}
+
+/// Global afterimage trails per player ID.
+fn afterimage_trails() -> &'static Mutex<HashMap<u64, AfterimageTrail>> {
+    static TRAILS: OnceLock<Mutex<HashMap<u64, AfterimageTrail>>> = OnceLock::new();
+    TRAILS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Lightning flash state for atmospheric outdoor/tower rooms.
+struct LightningState {
+    /// Timer until next flash (seconds).
+    next_flash: f32,
+    /// Current flash intensity (0.0 = no flash, 1.0 = peak).
+    flash_intensity: f32,
+}
+
+/// Global lightning flash state.
+fn lightning_state() -> &'static Mutex<LightningState> {
+    static STATE: OnceLock<Mutex<LightningState>> = OnceLock::new();
+    STATE.get_or_init(|| {
+        Mutex::new(LightningState {
+            next_flash: 4.0,
+            flash_intensity: 0.0,
+        })
+    })
+}
+
 /// Global visual state tracker per player ID.
 fn visual_states() -> &'static Mutex<HashMap<u64, PlayerVisualState>> {
     static STATES: OnceLock<Mutex<HashMap<u64, PlayerVisualState>>> = OnceLock::new();
@@ -167,9 +223,6 @@ fn squash_stretch_scale(
         vs.time_since_transition += dt;
     }
 
-    let is_running = player.anim_state == AnimState::Walk
-        && player.active_powerup == Some(breakpoint_platformer::powerups::PowerUpKind::SpeedBoots);
-
     // Genesis-style discrete frame stepping: snap animations to 4-frame steps
     // instead of smooth sine interpolation, matching 16-bit console cadence.
     let snap_frame = |t: f32, fps: f32, frames: u32| -> f32 {
@@ -178,16 +231,26 @@ fn squash_stretch_scale(
     };
 
     match player.anim_state {
-        AnimState::Jump => (0.85, 1.2), // Stretch upward (1 held frame)
-        AnimState::Fall => (0.9, 1.15), // Slight stretch (1 held frame)
+        AnimState::Jump => (0.85, 1.2),      // Stretch upward
+        AnimState::Fall => (0.9, 1.15),      // Slight stretch
+        AnimState::WallSlide => (1.1, 0.9),  // Squash against wall
+        AnimState::Backdash => (1.15, 0.85), // Wide backdash pose
+        AnimState::Slide => (1.3, 0.5),      // Flat slide
+        AnimState::HardLanding => {
+            // Heavy squash on hard landing
+            let t = vs.time_since_transition.min(0.15) / 0.15;
+            let squash = 1.0 + (1.0 - t) * 0.2;
+            let stretch = 1.0 - (1.0 - t) * 0.25;
+            (squash, stretch)
+        },
         AnimState::Idle if vs.was_falling && vs.time_since_transition < 0.15 => {
-            // Landing squash: 3-frame snap (squash→recover→neutral)
+            // Landing squash: 3-frame snap
             let frame = snap_frame(vs.time_since_transition, 20.0, 3);
             let squash = 1.0 + (1.0 - frame) * 0.12;
             let stretch = 1.0 - (1.0 - frame) * 0.15;
             (squash, stretch)
         },
-        AnimState::Walk if is_running => {
+        AnimState::Run => {
             // 4-frame run cycle with discrete steps
             let phase = snap_frame(player.anim_time, 16.0, 4);
             let bob = (phase * std::f32::consts::TAU).sin() * 0.04;
@@ -297,36 +360,20 @@ fn add_sprite(scene: &mut Scene, name: &str, x: f32, y: f32, w: f32, h: f32, tin
 /// Uses full player state to select contextual animations (run, wall-slide, etc.)
 fn player_sprite_region(
     player: &breakpoint_platformer::physics::PlatformerPlayerState,
-    course: &breakpoint_platformer::course_gen::Course,
+    _course: &breakpoint_platformer::course_gen::Course,
 ) -> SpriteRegion {
-    use breakpoint_platformer::physics::{AnimState, PLAYER_WIDTH, TILE_SIZE};
-    use breakpoint_platformer::powerups::PowerUpKind;
+    use breakpoint_platformer::physics::AnimState;
 
     let anims = animations();
     let key = match player.anim_state {
-        AnimState::Idle => "player_idle",
-        AnimState::Walk => {
-            if player.active_powerup == Some(PowerUpKind::SpeedBoots) {
-                "player_run"
-            } else {
-                "player_walk"
-            }
-        },
+        AnimState::Idle | AnimState::HardLanding => "player_idle",
+        AnimState::Walk => "player_walk",
+        AnimState::Run => "player_run",
         AnimState::Jump => "player_jump",
-        AnimState::Fall => {
-            // Detect wall-slide: falling while touching a solid wall
-            let half_w = PLAYER_WIDTH / 2.0;
-            let tx_l = ((player.x - half_w - 0.05) / TILE_SIZE).floor() as i32;
-            let tx_r = ((player.x + half_w + 0.05) / TILE_SIZE).floor() as i32;
-            let ty = (player.y / TILE_SIZE).floor() as i32;
-            let touching_wall = breakpoint_platformer::physics::is_solid(course.get_tile(tx_l, ty))
-                || breakpoint_platformer::physics::is_solid(course.get_tile(tx_r, ty));
-            if touching_wall && player.vy < -0.5 {
-                "player_wall_slide"
-            } else {
-                "player_fall"
-            }
-        },
+        AnimState::Fall => "player_fall",
+        AnimState::WallSlide => "player_wall_slide",
+        AnimState::Backdash => "player_hurt", // Reuse hurt pose for backdash
+        AnimState::Slide => "player_fall",    // Reuse fall pose for slide (crouched)
         AnimState::Attack => "player_attack",
         AnimState::Hurt => "player_hurt",
         AnimState::Dead => "player_dead",
@@ -337,8 +384,8 @@ fn player_sprite_region(
         None => {
             // Fallback chain: try base state, then default
             let fallback = match player.anim_state {
-                AnimState::Walk => "player_walk",
-                AnimState::Fall => "player_fall",
+                AnimState::Walk | AnimState::Run => "player_walk",
+                AnimState::Fall | AnimState::WallSlide | AnimState::Slide => "player_fall",
                 _ => "player_idle",
             };
             anims
@@ -357,10 +404,12 @@ fn player_sprite_region_simple(
     use breakpoint_platformer::physics::AnimState;
     let anims = animations();
     let key = match anim_state {
-        AnimState::Idle => "player_idle",
+        AnimState::Idle | AnimState::HardLanding => "player_idle",
         AnimState::Walk => "player_walk",
+        AnimState::Run => "player_run",
         AnimState::Jump => "player_jump",
-        AnimState::Fall => "player_fall",
+        AnimState::Fall | AnimState::WallSlide | AnimState::Slide => "player_fall",
+        AnimState::Backdash => "player_hurt",
         AnimState::Attack => "player_attack",
         AnimState::Hurt => "player_hurt",
         AnimState::Dead => "player_dead",
@@ -575,6 +624,36 @@ pub fn sync_platformer_scene(
         time,
         theme.platformer.torch_ambient,
     );
+
+    // SotN-style lightning flash for Tower/outdoor rooms
+    {
+        use breakpoint_platformer::course_gen::RoomTheme;
+        let is_outdoor = matches!(camera_theme, RoomTheme::Tower | RoomTheme::Entrance);
+        let mut lightning = lightning_state().lock().unwrap_or_else(|e| e.into_inner());
+
+        if is_outdoor {
+            lightning.next_flash -= dt;
+            if lightning.next_flash <= 0.0 {
+                // Flash! Boost ambient briefly
+                lightning.flash_intensity = 1.0;
+                // Random delay: 3-8 seconds (deterministic from time)
+                lightning.next_flash = 3.0 + (time * 7.3).sin().abs() * 5.0;
+            }
+            if lightning.flash_intensity > 0.0 {
+                // Flash decay
+                lightning.flash_intensity -= dt * 8.0;
+                if lightning.flash_intensity < 0.0 {
+                    lightning.flash_intensity = 0.0;
+                }
+                // Boost ambient during flash (bluish-white)
+                let boost = lightning.flash_intensity;
+                scene.lighting.ambient += boost * 0.6;
+                scene.lighting.ambient_color[0] += boost * 0.3;
+                scene.lighting.ambient_color[1] += boost * 0.3;
+                scene.lighting.ambient_color[2] += boost * 0.5;
+            }
+        }
+    }
 
     // Render course tiles
     let wc = &theme.platformer.water_color;
@@ -874,6 +953,10 @@ fn render_players(
     time: f32,
     dt: f32,
 ) {
+    let mut trails = afterimage_trails()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
     for (pid, player) in &state.players {
         if player.eliminated {
             continue;
@@ -885,10 +968,15 @@ fn render_players(
             continue;
         }
 
-        // Golden pulsing tint during invincibility (instead of blink-skip)
+        // SotN-style invincibility palette cycling (4-phase color shift)
         let inv_tint = if player.invincibility_timer > 0.0 {
-            let alpha = 0.5 + 0.3 * (player.invincibility_timer * 8.0).sin();
-            Some(Vec4::new(1.0, 0.9, 0.5, alpha))
+            let phase = ((player.invincibility_timer * 12.0) as u32) % 4;
+            match phase {
+                0 => Some(Vec4::new(1.0, 0.85, 0.85, 0.9)), // Red shift
+                1 => Some(Vec4::new(0.85, 0.85, 1.0, 0.9)), // Blue shift
+                2 => Some(Vec4::new(1.2, 1.15, 1.0, 1.0)),  // Bright
+                _ => None,                                  // Normal
+            }
         } else {
             None
         };
@@ -899,6 +987,66 @@ fn render_players(
 
         // Squash/stretch scaling based on movement state
         let (sx, sy) = squash_stretch_scale(player, *pid, dt);
+
+        // --- SotN Afterimage Trail ---
+        let trail = trails.entry(*pid).or_insert_with(AfterimageTrail::new);
+
+        // Spawn afterimage during fast movement (backdash, running, speed boost, hurt)
+        let should_trail = player.backdash_timer > 0.0
+            || player.running
+            || player.invincibility_timer > 0.0
+            || player.active_powerup
+                == Some(breakpoint_platformer::powerups::PowerUpKind::SpeedBoots);
+
+        trail.spawn_counter = trail.spawn_counter.wrapping_add(1);
+        if should_trail && trail.spawn_counter.is_multiple_of(3) && trail.images.len() < 16 {
+            trail.images.push(Afterimage {
+                x: player.x,
+                y: player.y,
+                sprite_rect: region.to_vec4(),
+                flip_x: !player.facing_right,
+                life: 1.0,
+                base_r: base_tint.x,
+                base_g: base_tint.y,
+                base_b: base_tint.z,
+            });
+        }
+
+        // Update and render afterimages (behind player)
+        trail.images.retain_mut(|img| {
+            img.life -= dt * 4.0; // ~0.25s total lifetime
+            if img.life <= 0.0 {
+                return false;
+            }
+
+            // SotN color decay: red drops, blue increases
+            let decay = img.life;
+            let r = img.base_r * decay * 0.7;
+            let g = img.base_g * decay * 0.5;
+            let b = (img.base_b + (1.0 - decay) * 0.4).min(1.0);
+            let alpha = decay * 0.5;
+
+            // Switch to additive blend in final phase (like SotN)
+            let blend = if decay < 0.3 {
+                crate::scene::BlendMode::Additive
+            } else {
+                crate::scene::BlendMode::Normal
+            };
+
+            scene.add_batch_sprite(
+                img.x,
+                img.y,
+                Z_PLAYERS - 0.01,
+                tile_size,
+                tile_size * 2.0,
+                img.sprite_rect,
+                Vec4::new(r, g, b, alpha),
+                img.flip_x,
+                0.0,
+                blend,
+            );
+            true
+        });
 
         // Shadow underneath player
         add_sprite_region(
@@ -1306,16 +1454,21 @@ fn collect_torch_lights(
 
     for y in min_row..max_row {
         for x in min_col..max_col {
-            if lights.len() >= 32 {
+            if lights.len() >= 31 {
+                // Reserve slot 32 for lightning
                 break;
             }
             if state.course.get_tile(x as i32, y as i32) == Tile::DecoTorch {
                 let wx = x as f32 * tile_size + tile_size / 2.0;
                 let wy = y as f32 * tile_size + tile_size / 2.0;
-                // Per-torch flicker using position hash
+                // SotN-style torch flicker: multi-frequency noise for organic feel
                 let hash = (x as f32) * 7.3 + (y as f32) * 13.1;
-                let intensity = 1.8 + 0.4 * (time * 8.0 + hash).sin();
-                let radius = 14.0;
+                let flicker1 = (time * 8.0 + hash).sin();
+                let flicker2 = (time * 13.0 + hash * 2.3).sin() * 0.5;
+                let flicker3 = (time * 21.0 + hash * 0.7).sin() * 0.25;
+                let intensity = 1.8 + 0.3 * (flicker1 + flicker2 + flicker3);
+                // Radius also pulses slightly with flicker
+                let radius = 14.0 + 1.0 * flicker1;
                 lights.push([wx, wy, intensity, radius]);
                 light_colors.push([torch_rgb[0], torch_rgb[1], torch_rgb[2], 0.0]);
             }

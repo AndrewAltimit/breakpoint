@@ -4,16 +4,58 @@ use crate::combat::{ATTACK_COOLDOWN, ATTACK_DURATION, INVINCIBILITY_DURATION};
 use crate::course_gen::{Course, Tile};
 use crate::powerups::PowerUpKind;
 
-/// Gravity acceleration (units/s^2, downward).
-pub const GRAVITY: f32 = -30.0;
-/// Horizontal move speed.
-pub const MOVE_SPEED: f32 = 8.0;
+/// Gravity acceleration (units/s^2, downward) — normal falling.
+pub const GRAVITY: f32 = -25.0;
+/// Gravity when holding jump (ascending) — SotN floaty peak feel.
+pub const GRAVITY_HOLD_JUMP: f32 = -8.0;
+/// Gravity after releasing jump while ascending — jump cut short.
+pub const GRAVITY_RELEASE_JUMP: f32 = -18.0;
+/// Gravity during hitstun — intermediate feel.
+pub const GRAVITY_HITSTUN: f32 = -15.0;
+/// Terminal velocity (max downward speed).
+pub const TERMINAL_VELOCITY: f32 = -14.0;
+/// Walk speed (units/s) — deliberate SotN pace.
+pub const MOVE_SPEED: f32 = 5.0;
+/// Run speed when holding shift (units/s).
+pub const RUN_SPEED: f32 = 9.0;
+/// Ground deceleration (units/s^2).
+pub const GROUND_DECEL: f32 = 40.0;
+/// Air deceleration (half of ground, maintains momentum).
+pub const AIR_DECEL: f32 = 20.0;
 /// Jump initial velocity.
-pub const JUMP_VELOCITY: f32 = 12.0;
+pub const JUMP_VELOCITY: f32 = 11.0;
+/// Backdash horizontal speed.
+pub const BACKDASH_SPEED: f32 = 6.0;
+/// Backdash vertical component (slight upward arc).
+pub const BACKDASH_VERTICAL: f32 = 5.0;
+/// Backdash total duration (seconds).
+pub const BACKDASH_DURATION: f32 = 0.25;
+/// Backdash invincibility frames (seconds).
+pub const BACKDASH_IFRAMES: f32 = 0.1;
+/// Slide speed.
+pub const SLIDE_SPEED: f32 = 8.0;
+/// Slide duration (seconds).
+pub const SLIDE_DURATION: f32 = 0.35;
+/// Slide deceleration (units/s^2).
+pub const SLIDE_DECEL: f32 = 15.0;
+/// Hard landing velocity threshold.
+pub const HARD_LANDING_THRESHOLD: f32 = 12.0;
+/// Hard landing lockout duration (seconds).
+pub const HARD_LANDING_DURATION: f32 = 0.15;
+/// Wall kick horizontal speed.
+pub const WALL_KICK_SPEED: f32 = 6.0;
+/// Wall kick vertical speed.
+pub const WALL_KICK_VERTICAL: f32 = 9.0;
+/// Max wall kicks before touching ground.
+pub const MAX_WALL_KICKS: u8 = 2;
+/// Wall slide max fall speed (slow descent on wall).
+pub const WALL_SLIDE_SPEED: f32 = -2.0;
 /// Player width for AABB collision.
 pub const PLAYER_WIDTH: f32 = 0.8;
 /// Player height for AABB collision.
 pub const PLAYER_HEIGHT: f32 = 1.2;
+/// Player height while sliding (reduced hitbox).
+pub const PLAYER_SLIDE_HEIGHT: f32 = 0.6;
 /// Physics substeps per tick.
 pub const SUBSTEPS: u32 = 4;
 /// Tile size in world units.
@@ -32,8 +74,17 @@ const LADDER_SPEED: f32 = 5.0;
 #[serde(default)]
 pub struct PlatformerPhysicsConfig {
     pub gravity: f32,
+    pub gravity_hold_jump: f32,
+    pub gravity_release_jump: f32,
+    pub terminal_velocity: f32,
     pub move_speed: f32,
+    pub run_speed: f32,
     pub jump_velocity: f32,
+    pub backdash_speed: f32,
+    pub backdash_duration: f32,
+    pub slide_speed: f32,
+    pub slide_duration: f32,
+    pub hard_landing_threshold: f32,
     pub player_width: f32,
     pub player_height: f32,
     pub substeps: u32,
@@ -44,8 +95,17 @@ impl Default for PlatformerPhysicsConfig {
     fn default() -> Self {
         Self {
             gravity: GRAVITY,
+            gravity_hold_jump: GRAVITY_HOLD_JUMP,
+            gravity_release_jump: GRAVITY_RELEASE_JUMP,
+            terminal_velocity: TERMINAL_VELOCITY,
             move_speed: MOVE_SPEED,
+            run_speed: RUN_SPEED,
             jump_velocity: JUMP_VELOCITY,
+            backdash_speed: BACKDASH_SPEED,
+            backdash_duration: BACKDASH_DURATION,
+            slide_speed: SLIDE_SPEED,
+            slide_duration: SLIDE_DURATION,
+            hard_landing_threshold: HARD_LANDING_THRESHOLD,
             player_width: PLAYER_WIDTH,
             player_height: PLAYER_HEIGHT,
             substeps: SUBSTEPS,
@@ -99,8 +159,13 @@ impl PlatformerConfig {
 pub enum AnimState {
     Idle,
     Walk,
+    Run,
     Jump,
     Fall,
+    WallSlide,
+    Backdash,
+    Slide,
+    HardLanding,
     Attack,
     Hurt,
     Dead,
@@ -139,6 +204,23 @@ pub struct PlatformerPlayerState {
     pub powerup_timer: f32,
     /// Current room's graph distance from start (for rubber-banding/race position).
     pub current_room_distance: u16,
+    // SotN-style movement state
+    /// Whether jump button is currently held (for variable gravity).
+    pub jump_held: bool,
+    /// Backdash timer: >0 means currently in backdash.
+    pub backdash_timer: f32,
+    /// Slide timer: >0 means currently sliding.
+    pub slide_timer: f32,
+    /// Hard landing lockout timer.
+    pub hard_landing_timer: f32,
+    /// Wall kicks used since last grounded (resets on landing).
+    pub wall_kicks_used: u8,
+    /// Whether the player is touching a wall while airborne.
+    pub touching_wall: bool,
+    /// Whether the player is running (shift held).
+    pub running: bool,
+    /// Previous frame's fall velocity (for hard landing detection).
+    pub prev_vy: f32,
 }
 
 impl PlatformerPlayerState {
@@ -170,6 +252,14 @@ impl PlatformerPlayerState {
             active_powerup: None,
             powerup_timer: 0.0,
             current_room_distance: 0,
+            jump_held: false,
+            backdash_timer: 0.0,
+            slide_timer: 0.0,
+            hard_landing_timer: 0.0,
+            wall_kicks_used: 0,
+            touching_wall: false,
+            running: false,
+            prev_vy: 0.0,
         }
     }
 
@@ -186,6 +276,13 @@ impl PlatformerPlayerState {
         self.attack_cooldown = 0.0;
         self.death_respawn_timer = 0.0;
         self.anim_state = AnimState::Idle;
+        self.backdash_timer = 0.0;
+        self.slide_timer = 0.0;
+        self.hard_landing_timer = 0.0;
+        self.wall_kicks_used = 0;
+        self.touching_wall = false;
+        self.running = false;
+        self.prev_vy = 0.0;
     }
 }
 
@@ -194,8 +291,16 @@ impl PlatformerPlayerState {
 pub struct PlatformerInput {
     pub move_dir: f32, // -1 (left), 0, +1 (right)
     pub jump: bool,
+    /// Whether jump button is held (vs just pressed) — for variable gravity.
+    pub jump_held: bool,
     pub use_powerup: bool,
     pub attack: bool,
+    /// Backdash input (double-tap back or dedicated key).
+    pub backdash: bool,
+    /// Slide input (crouch + jump or dedicated key).
+    pub slide: bool,
+    /// Run modifier (shift held).
+    pub run: bool,
 }
 
 impl Default for PlatformerInput {
@@ -203,8 +308,12 @@ impl Default for PlatformerInput {
         Self {
             move_dir: 0.0,
             jump: false,
+            jump_held: false,
             use_powerup: false,
             attack: false,
+            backdash: false,
+            slide: false,
+            run: false,
         }
     }
 }
@@ -241,6 +350,21 @@ pub fn tick_player(
     // Tick animation time
     player.anim_time += dt;
 
+    // Track jump held state
+    player.jump_held = input.jump_held;
+    player.running = input.run;
+
+    // Hard landing lockout: player can't move during landing recovery
+    if player.hard_landing_timer > 0.0 {
+        player.hard_landing_timer -= dt;
+        if player.hard_landing_timer < 0.0 {
+            player.hard_landing_timer = 0.0;
+        }
+        player.anim_state = AnimState::HardLanding;
+        player.vx = 0.0;
+        return;
+    }
+
     // Attack state machine
     if player.attack_cooldown > 0.0 {
         player.attack_cooldown -= dt;
@@ -255,8 +379,13 @@ pub fn tick_player(
             player.attack_cooldown = ATTACK_COOLDOWN;
         }
     }
-    // Start attack if requested and not in cooldown/active attack
-    if input.attack && player.attack_timer <= 0.0 && player.attack_cooldown <= 0.0 {
+    // Start attack if requested and not in cooldown/active attack/backdash/slide
+    if input.attack
+        && player.attack_timer <= 0.0
+        && player.attack_cooldown <= 0.0
+        && player.backdash_timer <= 0.0
+        && player.slide_timer <= 0.0
+    {
         player.attack_timer = ATTACK_DURATION;
     }
 
@@ -273,60 +402,180 @@ pub fn tick_player(
         0.0
     };
 
-    // Update facing direction
-    if move_dir > 0.01 {
-        player.facing_right = true;
-    } else if move_dir < -0.01 {
-        player.facing_right = false;
+    // Update facing direction (not during backdash)
+    if player.backdash_timer <= 0.0 {
+        if move_dir > 0.01 {
+            player.facing_right = true;
+        } else if move_dir < -0.01 {
+            player.facing_right = false;
+        }
+    }
+
+    // Detect wall contact for wall slide/kick
+    let half_w = PLAYER_WIDTH / 2.0;
+    let tx_l = ((player.x - half_w - 0.05) / TILE_SIZE).floor() as i32;
+    let tx_r = ((player.x + half_w + 0.05) / TILE_SIZE).floor() as i32;
+    let ty_mid = (player.y / TILE_SIZE).floor() as i32;
+    let wall_left = is_solid(course.get_tile(tx_l, ty_mid));
+    let wall_right = is_solid(course.get_tile(tx_r, ty_mid));
+    player.touching_wall = !player.grounded && (wall_left || wall_right);
+
+    // Store previous vy for hard landing detection
+    player.prev_vy = player.vy;
+
+    // --- Backdash ---
+    if player.backdash_timer > 0.0 {
+        player.backdash_timer -= dt;
+        let dir = if player.facing_right { -1.0 } else { 1.0 };
+        player.vx = dir * BACKDASH_SPEED;
+        // Apply gravity during backdash (but lighter, SotN-style arc)
+        player.vy += GRAVITY_HOLD_JUMP * dt;
+        player.vy = player.vy.max(TERMINAL_VELOCITY);
+
+        player.x += player.vx * dt;
+        player.y += player.vy * dt;
+        resolve_collisions(player, course);
+        check_tile_effects(player, course);
+        update_anim_state(player);
+        return;
+    }
+
+    // Start backdash
+    if input.backdash
+        && player.slide_timer <= 0.0
+        && player.attack_timer <= 0.0
+        && player.backdash_timer <= 0.0
+    {
+        player.backdash_timer = BACKDASH_DURATION;
+        player.vy = BACKDASH_VERTICAL;
+        player.grounded = false;
+        // Brief i-frames during backdash startup
+        if player.invincibility_timer < BACKDASH_IFRAMES {
+            player.invincibility_timer = BACKDASH_IFRAMES;
+        }
+        player.anim_state = AnimState::Backdash;
+        return;
+    }
+
+    // --- Slide ---
+    if player.slide_timer > 0.0 {
+        player.slide_timer -= dt;
+        // Decelerate slide
+        let dir = if player.facing_right { 1.0 } else { -1.0 };
+        let remaining_factor = (player.slide_timer / SLIDE_DURATION).max(0.0);
+        player.vx = dir * SLIDE_SPEED * remaining_factor;
+        player.vy += GRAVITY * dt;
+        player.vy = player.vy.max(TERMINAL_VELOCITY);
+
+        player.x += player.vx * dt;
+        player.y += player.vy * dt;
+        resolve_collisions(player, course);
+        check_tile_effects(player, course);
+        update_anim_state(player);
+        return;
+    }
+
+    // Start slide (grounded only)
+    if input.slide && player.grounded && player.attack_timer <= 0.0 && player.backdash_timer <= 0.0
+    {
+        player.slide_timer = SLIDE_DURATION;
+        // Brief i-frames at slide start
+        if player.invincibility_timer < 0.05 {
+            player.invincibility_timer = 0.05;
+        }
+        player.anim_state = AnimState::Slide;
+        return;
     }
 
     if on_ladder {
         // Ladder movement: disable gravity, allow vertical movement
-        player.vx = move_dir * MOVE_SPEED * 0.5; // Slower horizontal on ladder
+        player.vx = move_dir * MOVE_SPEED * 0.5;
         player.vy = 0.0;
 
         if input.jump {
-            player.vy = LADDER_SPEED; // Climb up
+            player.vy = LADDER_SPEED;
         }
-        // Can also move down by not pressing jump (just fall slowly or hold move_dir)
-        // If not pressing anything, hold position
         if !input.jump && move_dir.abs() < 0.01 {
-            player.vy = -LADDER_SPEED * 0.3; // Slow slide down when idle on ladder
+            player.vy = -LADDER_SPEED * 0.3;
         }
 
         // Jump off ladder with sufficient horizontal input
         if move_dir.abs() > 0.5 && input.jump {
             player.vy = JUMP_VELOCITY * 0.7;
             player.grounded = false;
-            // Let normal physics take over below
         }
     } else if in_water {
         // Water movement: slower speed, reduced jump, buoyancy
         use crate::course_gen::{WATER_BUOYANCY, WATER_JUMP_FACTOR, WATER_SPEED_FACTOR};
-        player.vx = move_dir * MOVE_SPEED * WATER_SPEED_FACTOR;
+        let speed = if input.run { RUN_SPEED } else { MOVE_SPEED };
+        player.vx = move_dir * speed * WATER_SPEED_FACTOR;
 
-        // Jump (reduced in water)
         if input.jump && player.jumps_remaining > 0 {
             player.vy = JUMP_VELOCITY * WATER_JUMP_FACTOR;
             player.jumps_remaining -= 1;
             player.grounded = false;
         }
 
-        // Apply gravity with buoyancy (buoyancy counters ~30% of gravity)
         player.vy += (GRAVITY + WATER_BUOYANCY) * dt;
     } else {
-        // Normal movement
-        player.vx = move_dir * MOVE_SPEED;
+        // Normal movement — SotN-style with variable gravity
+        let speed = if input.run { RUN_SPEED } else { MOVE_SPEED };
 
-        // Jump
-        if input.jump && player.jumps_remaining > 0 {
+        if player.grounded {
+            // Ground movement: instant direction change
+            player.vx = move_dir * speed;
+        } else {
+            // Air movement: maintain momentum, allow steering
+            let target_vx = move_dir * speed;
+            let diff = target_vx - player.vx;
+            let max_change = AIR_DECEL * dt;
+            player.vx += diff.clamp(-max_change, max_change);
+        }
+
+        // Wall slide: slow descent when pressing into a wall while falling
+        if player.touching_wall && player.vy < 0.0 {
+            let pressing_into_wall =
+                (wall_left && move_dir < -0.01) || (wall_right && move_dir > 0.01);
+            if pressing_into_wall {
+                player.vy = player.vy.max(WALL_SLIDE_SPEED);
+            }
+        }
+
+        // Wall kick: jump while touching wall + pressing toward it
+        if input.jump
+            && player.touching_wall
+            && !player.grounded
+            && player.wall_kicks_used < MAX_WALL_KICKS
+        {
+            let kick_dir = if wall_left { 1.0 } else { -1.0 };
+            player.vx = kick_dir * WALL_KICK_SPEED;
+            player.vy = WALL_KICK_VERTICAL;
+            player.wall_kicks_used += 1;
+            player.facing_right = kick_dir > 0.0;
+        }
+        // Normal jump
+        else if input.jump && player.jumps_remaining > 0 {
             player.vy = JUMP_VELOCITY;
             player.jumps_remaining -= 1;
             player.grounded = false;
         }
 
-        // Apply gravity
-        player.vy += GRAVITY * dt;
+        // Variable gravity (SotN's key feel)
+        let gravity = if player.vy > 0.0 && input.jump_held {
+            // Ascending while holding jump: floaty peak
+            GRAVITY_HOLD_JUMP
+        } else if player.vy > 0.0 {
+            // Ascending after releasing jump: cut short
+            GRAVITY_RELEASE_JUMP
+        } else if player.invincibility_timer > INVINCIBILITY_DURATION - 0.3 {
+            // Hitstun: intermediate gravity
+            GRAVITY_HITSTUN
+        } else {
+            // Normal falling
+            GRAVITY
+        };
+        player.vy += gravity * dt;
+        player.vy = player.vy.max(TERMINAL_VELOCITY);
     }
 
     // Move
@@ -334,7 +583,18 @@ pub fn tick_player(
     player.y += player.vy * dt;
 
     // Tile collisions
+    let was_grounded = player.grounded;
     resolve_collisions(player, course);
+
+    // Hard landing detection: just landed with high velocity
+    if player.grounded && !was_grounded && player.prev_vy < -HARD_LANDING_THRESHOLD {
+        player.hard_landing_timer = HARD_LANDING_DURATION;
+    }
+
+    // Reset wall kicks on landing
+    if player.grounded {
+        player.wall_kicks_used = 0;
+    }
 
     // Check special tiles
     check_tile_effects(player, course);
@@ -345,6 +605,24 @@ pub fn tick_player(
 
 /// Update the player's animation state based on their current status.
 fn update_anim_state(player: &mut PlatformerPlayerState) {
+    // Hard landing overrides everything
+    if player.hard_landing_timer > 0.0 {
+        player.anim_state = AnimState::HardLanding;
+        return;
+    }
+
+    // Backdash overrides
+    if player.backdash_timer > 0.0 {
+        player.anim_state = AnimState::Backdash;
+        return;
+    }
+
+    // Slide overrides
+    if player.slide_timer > 0.0 {
+        player.anim_state = AnimState::Slide;
+        return;
+    }
+
     // Attack overrides everything while active
     if player.attack_timer > 0.0 {
         player.anim_state = AnimState::Attack;
@@ -359,7 +637,9 @@ fn update_anim_state(player: &mut PlatformerPlayerState) {
 
     // Airborne states
     if !player.grounded {
-        if player.vy > 0.0 {
+        if player.touching_wall && player.vy < 0.0 {
+            player.anim_state = AnimState::WallSlide;
+        } else if player.vy > 0.0 {
             player.anim_state = AnimState::Jump;
         } else {
             player.anim_state = AnimState::Fall;
@@ -369,7 +649,11 @@ fn update_anim_state(player: &mut PlatformerPlayerState) {
 
     // Grounded states
     if player.vx.abs() > 0.1 {
-        player.anim_state = AnimState::Walk;
+        if player.running {
+            player.anim_state = AnimState::Run;
+        } else {
+            player.anim_state = AnimState::Walk;
+        }
     } else {
         player.anim_state = AnimState::Idle;
     }
@@ -1177,6 +1461,7 @@ mod tests {
             jump: false,
             use_powerup: false,
             attack: false,
+            ..Default::default()
         };
         tick_player(&mut player, &input, &course, 0.1);
 
